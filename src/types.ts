@@ -161,8 +161,6 @@ export const CLIENT_SECRET = atob("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQ
 export const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 export const ANTIGRAVITY_ENDPOINTS = [
-	"https://daily-cloudcode-pa.sandbox.googleapis.com",
-	"https://autopush-cloudcode-pa.sandbox.googleapis.com",
 	"https://cloudcode-pa.googleapis.com",
 ] as const;
 

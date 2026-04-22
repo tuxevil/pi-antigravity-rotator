@@ -122,22 +122,36 @@ async function forwardRequest(
 	delete forwardHeaders["transfer-encoding"];
 	delete forwardHeaders["content-length"];
 
-	// Try endpoints with cascade on 403/404
+	// Try endpoints with cascade on 401/403/404
 	for (let endpointIdx = 0; endpointIdx < ANTIGRAVITY_ENDPOINTS.length; endpointIdx++) {
 		const endpoint = ANTIGRAVITY_ENDPOINTS[endpointIdx];
 		const url = `${endpoint}/v1internal:streamGenerateContent?alt=sse`;
+		const isProd = endpointIdx === ANTIGRAVITY_ENDPOINTS.length - 1;
 
 		try {
+			// Timeout non-prod endpoints after 10s to avoid long hangs
+			const controller = !isProd ? new AbortController() : undefined;
+			const timeout = controller ? setTimeout(() => controller.abort(), 10_000) : undefined;
+
+			const fetchStart = Date.now();
 			const response = await fetch(url, {
 				method: "POST",
 				headers: forwardHeaders,
 				body: requestBody,
+				signal: controller?.signal,
 			});
+			if (timeout) clearTimeout(timeout);
+
+			const fetchMs = Date.now() - fetchStart;
 
 			// On 401/403/404, try next endpoint
 			if ((response.status === 401 || response.status === 403 || response.status === 404) && endpointIdx < ANTIGRAVITY_ENDPOINTS.length - 1) {
-				log(`Endpoint ${endpoint} returned ${response.status}, cascading...`);
+				log(`Endpoint ${endpoint} returned ${response.status} (${fetchMs}ms), cascading...`);
 				continue;
+			}
+
+			if (endpointIdx > 0) {
+				log(`Using endpoint ${endpoint} (${fetchMs}ms)`);
 			}
 
 			return {
@@ -147,7 +161,7 @@ async function forwardRequest(
 			};
 		} catch (err) {
 			if (endpointIdx < ANTIGRAVITY_ENDPOINTS.length - 1) {
-				log(`Endpoint ${endpoint} failed: ${err}, cascading...`);
+				log(`Endpoint ${endpoint} failed: ${err instanceof Error ? err.message : err}, cascading...`);
 				continue;
 			}
 			throw err;

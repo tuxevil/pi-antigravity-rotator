@@ -124,8 +124,8 @@ async function forwardRequest(
 				body: requestBody,
 			});
 
-			// On 403/404, try next endpoint
-			if ((response.status === 403 || response.status === 404) && endpointIdx < ANTIGRAVITY_ENDPOINTS.length - 1) {
+			// On 401/403/404, try next endpoint
+			if ((response.status === 401 || response.status === 403 || response.status === 404) && endpointIdx < ANTIGRAVITY_ENDPOINTS.length - 1) {
 				log(`Endpoint ${endpoint} returned ${response.status}, cascading...`);
 				continue;
 			}

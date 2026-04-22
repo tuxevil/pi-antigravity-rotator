@@ -1,9 +1,15 @@
-// Standalone OAuth login helper (remote-friendly)
+// Standalone OAuth login helper (fully automated)
 // Usage: npm run login
-// Performs the Antigravity OAuth flow using copy-paste (no local callback server needed)
+// 1. Opens OAuth URL -> user pastes redirect URL
+// 2. Automatically adds account to accounts.json
+// 3. Automatically configures ~/.pi/agent/models.json and ~/.pi/agent/auth.json
 
 import { createInterface } from "node:readline";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { CLIENT_ID, CLIENT_SECRET, TOKEN_URL } from "./types.js";
+import type { AccountType } from "./types.js";
 
 const REDIRECT_URI = "http://localhost:51121/oauth-callback";
 const SCOPES = [
@@ -15,6 +21,12 @@ const SCOPES = [
 ];
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const DEFAULT_PROJECT_ID = "rising-fact-p41fc";
+
+const BASE_DIR = join(dirname(new URL(import.meta.url).pathname), "..");
+const ACCOUNTS_FILE = join(BASE_DIR, "accounts.json");
+const PI_DIR = join(homedir(), ".pi", "agent");
+const PI_MODELS_FILE = join(PI_DIR, "models.json");
+const PI_AUTH_FILE = join(PI_DIR, "auth.json");
 
 async function generatePKCE(): Promise<{ verifier: string; challenge: string }> {
 	const { randomBytes, createHash } = await import("node:crypto");
@@ -111,8 +123,127 @@ async function getUserEmail(accessToken: string): Promise<string | undefined> {
 	return undefined;
 }
 
+// =========================================================================
+// File management
+// =========================================================================
+
+interface AccountEntry {
+	email: string;
+	refreshToken: string;
+	projectId: string;
+	label: string;
+	type: AccountType;
+}
+
+interface AccountsConfig {
+	proxyPort: number;
+	requestsPerRotation: number;
+	rotateOnQuotaDrop: number;
+	quotaPollIntervalMs: number;
+	accounts: AccountEntry[];
+}
+
+function loadOrCreateAccountsConfig(): AccountsConfig {
+	if (existsSync(ACCOUNTS_FILE)) {
+		try {
+			return JSON.parse(readFileSync(ACCOUNTS_FILE, "utf-8"));
+		} catch {
+			// Corrupted, start fresh
+		}
+	}
+	return {
+		proxyPort: 51200,
+		requestsPerRotation: 5,
+		rotateOnQuotaDrop: 20,
+		quotaPollIntervalMs: 30000,
+		accounts: [],
+	};
+}
+
+function saveAccountsConfig(config: AccountsConfig): void {
+	writeFileSync(ACCOUNTS_FILE, JSON.stringify(config, null, 2) + "\n", "utf-8");
+}
+
+function addAccountToConfig(entry: AccountEntry): { isNew: boolean } {
+	const config = loadOrCreateAccountsConfig();
+	const existing = config.accounts.findIndex((a) => a.email === entry.email);
+
+	if (existing >= 0) {
+		// Update existing account
+		config.accounts[existing] = entry;
+		saveAccountsConfig(config);
+		return { isNew: false };
+	}
+
+	// Add new account
+	config.accounts.push(entry);
+	saveAccountsConfig(config);
+	return { isNew: true };
+}
+
+function ensurePiModelsConfig(): void {
+	mkdirSync(PI_DIR, { recursive: true });
+
+	let models: Record<string, unknown> = {};
+	if (existsSync(PI_MODELS_FILE)) {
+		try {
+			models = JSON.parse(readFileSync(PI_MODELS_FILE, "utf-8"));
+		} catch {
+			// Corrupted, will overwrite
+		}
+	}
+
+	// Ensure providers.google-antigravity.baseUrl is set
+	const providers = (models.providers || {}) as Record<string, Record<string, unknown>>;
+	const antigravity = providers["google-antigravity"] || {};
+
+	if (antigravity.baseUrl === "http://localhost:51200") {
+		return; // Already configured
+	}
+
+	antigravity.baseUrl = "http://localhost:51200";
+	providers["google-antigravity"] = antigravity;
+	models.providers = providers;
+
+	writeFileSync(PI_MODELS_FILE, JSON.stringify(models, null, 2) + "\n", "utf-8");
+	console.log(`  Updated ${PI_MODELS_FILE}`);
+}
+
+function ensurePiAuthConfig(): void {
+	mkdirSync(PI_DIR, { recursive: true });
+
+	let auth: Record<string, unknown> = {};
+	if (existsSync(PI_AUTH_FILE)) {
+		try {
+			auth = JSON.parse(readFileSync(PI_AUTH_FILE, "utf-8"));
+		} catch {
+			// Corrupted, will overwrite
+		}
+	}
+
+	const existing = auth["google-antigravity"] as Record<string, unknown> | undefined;
+	if (existing?.type === "oauth" && existing?.refresh === "proxy-managed") {
+		return; // Already configured
+	}
+
+	auth["google-antigravity"] = {
+		type: "oauth",
+		refresh: "proxy-managed",
+		access: "proxy-managed",
+		expires: 32503680000000, // year 3000
+		projectId: "proxy-managed",
+	};
+
+	writeFileSync(PI_AUTH_FILE, JSON.stringify(auth, null, 2) + "\n", "utf-8");
+	console.log(`  Updated ${PI_AUTH_FILE}`);
+}
+
+// =========================================================================
+// Main
+// =========================================================================
+
 async function main(): Promise<void> {
-	console.log("=== Pi Antigravity Rotator - Account Login ===");
+	console.log("=== Pi Antigravity Rotator - Add Account ===");
 	console.log();
 
 	const { verifier, challenge } = await generatePKCE();
@@ -136,11 +267,10 @@ async function main(): Promise<void> {
 	console.log(authUrl);
 	console.log();
 	console.log("2. Complete the Google sign-in.");
-	console.log("3. After sign-in, your browser will redirect to a localhost URL that won't load.");
-	console.log("4. Copy the FULL URL from your browser's address bar and paste it below.");
+	console.log("3. Copy the FULL URL from your browser (it will show a page that won't load).");
 	console.log();
 
-	const redirectUrl = await askQuestion("Paste the redirect URL here: ");
+	const redirectUrl = await askQuestion("Paste the redirect URL: ");
 
 	if (!redirectUrl) {
 		console.error("No URL provided.");
@@ -151,7 +281,6 @@ async function main(): Promise<void> {
 
 	if (!parsed.code) {
 		console.error("Could not extract authorization code from the URL.");
-		console.error("Make sure you copied the full URL including the ?code= parameter.");
 		process.exit(1);
 	}
 
@@ -193,30 +322,44 @@ async function main(): Promise<void> {
 		process.exit(1);
 	}
 
-	// Get user email and project
 	console.log("Getting user info...");
 	const email = await getUserEmail(tokenData.access_token);
 
 	console.log("Discovering project...");
 	const projectId = await discoverProject(tokenData.access_token);
 
-	console.log();
-	console.log("=== Account credentials ===");
-	console.log();
-	console.log("Add this entry to the 'accounts' array in accounts.json:");
-	console.log();
+	const label = email ? email.split("@")[0] : "Account";
 
-	const entry = {
+	// Ask account type
+	const typeAnswer = await askQuestion(`Is ${email || "this account"} a Google One AI Premium subscriber? (y/N): `);
+	const accountType: AccountType = typeAnswer.toLowerCase().startsWith("y") ? "pro" : "free";
+
+	// Save to accounts.json
+	console.log();
+	const entry: AccountEntry = {
 		email: email || "unknown@gmail.com",
 		refreshToken: tokenData.refresh_token,
 		projectId,
-		label: email ? email.split("@")[0] : "Account",
-		type: "free",
+		label,
+		type: accountType,
 	};
 
-	console.log(JSON.stringify(entry, null, 2));
+	const { isNew } = addAccountToConfig(entry);
+	console.log(`  ${isNew ? "Added" : "Updated"} ${email} [${accountType}] in ${ACCOUNTS_FILE}`);
+
+	// Configure pi
+	ensurePiModelsConfig();
+	ensurePiAuthConfig();
+
+	// Show summary
+	const config = loadOrCreateAccountsConfig();
 	console.log();
-	console.log('If this is a Google One AI Premium subscriber, change "type" to "pro".');
+	console.log(`Done. ${config.accounts.length} account(s) configured:`);
+	for (const a of config.accounts) {
+		console.log(`  [${a.type.toUpperCase()}] ${a.label} (${a.email})`);
+	}
+	console.log();
+	console.log("Run 'npm start' to start the proxy.");
 }
 
 main().catch((err) => {

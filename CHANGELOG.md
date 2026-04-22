@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-22
+
+### Added
+- PII masking mode for dashboard (`?mask` URL param or toggle button). Masks emails and labels for screen recordings.
+- Contextual help hints for flagged accounts (verification instructions, Google Account Recovery link).
+- Model-aware quota rotation: accounts with 0% quota for the requested model are skipped instead of wasting requests.
+
+### Fixed
+- Fixed `ReadableStream is locked` crash by using `Response.text()` and `Readable.fromWeb()` instead of raw ReadableStream API.
+- Fixed `ERR_HTTP_HEADERS_SENT` crash when retrying after response headers were already sent.
+- Fixed 403 fallthrough bug: non-flagging 403 responses consumed the body then fell through to streaming, causing locked stream errors.
+- Accounts needing verification (`Verify your account`) are now flagged immediately instead of retried.
+- Dashboard URL routing now handles query parameters correctly.
+
 ## [1.1.0] - 2026-04-22
 
 ### Changed

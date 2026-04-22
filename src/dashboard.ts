@@ -460,9 +460,6 @@ function renderAccounts(data) {
     var aFlagged = a.status === 'flagged' || a.status === 'disabled' ? 1 : 0;
     var bFlagged = b.status === 'flagged' || b.status === 'disabled' ? 1 : 0;
     if (aFlagged !== bFlagged) return aFlagged - bFlagged;
-    var aActive = a.status === 'active' ? 1 : 0;
-    var bActive = b.status === 'active' ? 1 : 0;
-    if (aActive !== bActive) return bActive - aActive;
     var aQuota = (a.quota || []).reduce(function(s, q) { return s + q.percentRemaining; }, 0);
     var bQuota = (b.quota || []).reduce(function(s, q) { return s + q.percentRemaining; }, 0);
     return bQuota - aQuota;

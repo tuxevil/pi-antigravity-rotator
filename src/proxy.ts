@@ -209,9 +209,17 @@ async function handleProxyRequest(
 		try {
 			const upstream = await forwardRequest(account, { ...body }, flattenHeaders(req.headers), rotator);
 
+			const readBody = async (): Promise<string> => {
+				if (!upstream.body) return "";
+				try {
+					return await streamToString(upstream.body);
+				} catch {
+					return "";
+				}
+			};
+
 			if (upstream.status === 429) {
-				// Rate limited - extract delay, mark exhausted, try next account
-				const errorText = upstream.body ? await streamToString(upstream.body) : "";
+				const errorText = await readBody();
 				const cooldownMs = capCooldown(extractRetryDelay(errorText, upstream.headers));
 				log(`[${label}] 429 rate limited, cooldown ${Math.ceil(cooldownMs / 1000)}s`);
 				rotator.markExhausted(account, cooldownMs);
@@ -220,8 +228,7 @@ async function handleProxyRequest(
 			}
 
 			if (upstream.status === 401) {
-				// Token was valid but API rejected it - account is blocked
-				const errorText = upstream.body ? await streamToString(upstream.body) : "";
+				const errorText = await readBody();
 				log(`[${label}] BLOCKED (401): ${errorText.slice(0, 200)}`);
 				rotator.markFlagged(account, `Account blocked (401): ${errorText.slice(0, 300)}`);
 				await rotator.rotateToNext(body.model);
@@ -229,7 +236,7 @@ async function handleProxyRequest(
 			}
 
 			if (upstream.status === 403) {
-				const errorText = upstream.body ? await streamToString(upstream.body) : "";
+				const errorText = await readBody();
 				const lower = errorText.toLowerCase();
 				const flagPatterns = ["infring", "suspend", "abus", "terminat", "violat", "banned", "policy", "forbidden"];
 				const isFlagged = flagPatterns.some((p) => lower.includes(p));
@@ -240,14 +247,11 @@ async function handleProxyRequest(
 					await rotator.rotateToNext(body.model);
 					continue;
 				}
-				// Non-infringement 403 falls through to cascade in forwardRequest
 			}
 
 			if (upstream.status >= 500) {
-				const errorText = upstream.body ? await streamToString(upstream.body) : "";
+				const errorText = await readBody();
 				log(`[${label}] Server error ${upstream.status}: ${errorText.slice(0, 200)}`);
-				// On 503, don't rotate -- it's a Google capacity issue, not an account issue
-				// Return the error to the agent so it can handle retries/backoff
 				if (upstream.status === 503) {
 					res.writeHead(503, { "Content-Type": "application/json" });
 					res.end(errorText || JSON.stringify({ error: "Server unavailable" }));
@@ -264,7 +268,6 @@ async function handleProxyRequest(
 			// Copy response headers
 			const responseHeaders: Record<string, string> = {};
 			upstream.headers.forEach((value, key) => {
-				// Skip hop-by-hop headers
 				if (key.toLowerCase() !== "transfer-encoding" && key.toLowerCase() !== "connection") {
 					responseHeaders[key] = value;
 				}
@@ -287,7 +290,6 @@ async function handleProxyRequest(
 			}
 			res.end();
 
-			// Rotate after response completes if threshold was hit
 			if (shouldRotate) {
 				await rotator.rotateToNext(body.model);
 			}
@@ -295,13 +297,20 @@ async function handleProxyRequest(
 		} catch (err) {
 			log(`[${label}] Request failed: ${err}`);
 			rotator.markError(account, err instanceof Error ? err.message : String(err));
+			// Don't retry if we already started sending the response
+			if (res.headersSent) {
+				res.end();
+				return;
+			}
 			await rotator.rotateToNext(body.model);
 			continue;
 		}
 	}
 
 	// All retry attempts exhausted
-	res.writeHead(502, { "Content-Type": "application/json" });
+	if (!res.headersSent) {
+		res.writeHead(502, { "Content-Type": "application/json" });
+	}
 	res.end(JSON.stringify({ error: "All retry attempts failed" }));
 }
 

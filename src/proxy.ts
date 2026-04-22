@@ -102,11 +102,16 @@ async function forwardRequest(
 	// Build headers: keep originals but swap Authorization
 	const forwardHeaders: Record<string, string> = {
 		...originalHeaders,
-		Authorization: `Bearer ${account.accessToken}`,
 		"Content-Type": "application/json",
 		Accept: "text/event-stream",
 	};
-	// Remove hop-by-hop headers
+	// Remove original authorization (any case) and hop-by-hop headers
+	for (const key of Object.keys(forwardHeaders)) {
+		if (key.toLowerCase() === "authorization") {
+			delete forwardHeaders[key];
+		}
+	}
+	forwardHeaders["Authorization"] = `Bearer ${account.accessToken}`;
 	delete forwardHeaders["host"];
 	delete forwardHeaders["connection"];
 	delete forwardHeaders["transfer-encoding"];

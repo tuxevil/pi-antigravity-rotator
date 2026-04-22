@@ -1,6 +1,7 @@
 // HTTP reverse proxy - forwards requests to Antigravity with credential rotation
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { Readable } from "node:stream";
 import { ANTIGRAVITY_ENDPOINTS } from "./types.js";
 import type { AccountRuntime } from "./types.js";
 import type { AccountRotator } from "./rotator.js";
@@ -92,14 +93,12 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 
 /**
  * Forward a request to the real Antigravity endpoint with credential swapping.
- * Handles endpoint cascade (daily -> autopush -> prod) and 429 retry.
  */
 async function forwardRequest(
 	account: AccountRuntime,
 	body: RequestBody,
 	originalHeaders: Record<string, string>,
-	rotator: AccountRotator,
-): Promise<{ status: number; headers: Headers; body: ReadableStream<Uint8Array> | null }> {
+): Promise<Response> {
 	// Swap credentials
 	body.project = account.config.projectId;
 	const requestBody = JSON.stringify(body);
@@ -129,11 +128,9 @@ async function forwardRequest(
 		const isProd = endpointIdx === ANTIGRAVITY_ENDPOINTS.length - 1;
 
 		try {
-			// Timeout non-prod endpoints after 10s to avoid long hangs
 			const controller = !isProd ? new AbortController() : undefined;
 			const timeout = controller ? setTimeout(() => controller.abort(), 10_000) : undefined;
 
-			const fetchStart = Date.now();
 			const response = await fetch(url, {
 				method: "POST",
 				headers: forwardHeaders,
@@ -142,23 +139,13 @@ async function forwardRequest(
 			});
 			if (timeout) clearTimeout(timeout);
 
-			const fetchMs = Date.now() - fetchStart;
-
-			// On 401/403/404, try next endpoint
 			if ((response.status === 401 || response.status === 403 || response.status === 404) && endpointIdx < ANTIGRAVITY_ENDPOINTS.length - 1) {
-				log(`Endpoint ${endpoint} returned ${response.status} (${fetchMs}ms), cascading...`);
+				log(`Endpoint ${endpoint} returned ${response.status}, cascading...`);
+				response.text().catch(() => {});
 				continue;
 			}
 
-			if (endpointIdx > 0) {
-				log(`Using endpoint ${endpoint} (${fetchMs}ms)`);
-			}
-
-			return {
-				status: response.status,
-				headers: response.headers,
-				body: response.body,
-			};
+			return response;
 		} catch (err) {
 			if (endpointIdx < ANTIGRAVITY_ENDPOINTS.length - 1) {
 				log(`Endpoint ${endpoint} failed: ${err instanceof Error ? err.message : err}, cascading...`);
@@ -194,7 +181,6 @@ async function handleProxyRequest(
 		return;
 	}
 
-	// Try up to MAX_ENDPOINT_RETRIES accounts on 429
 	for (let attempt = 0; attempt < MAX_ENDPOINT_RETRIES; attempt++) {
 		const account = await rotator.getActiveAccount(body.model);
 		if (!account) {
@@ -207,36 +193,27 @@ async function handleProxyRequest(
 		log(`[${label}] Forwarding ${body.model} request (attempt ${attempt + 1})`);
 
 		try {
-			const upstream = await forwardRequest(account, { ...body }, flattenHeaders(req.headers), rotator);
+			const response = await forwardRequest(account, { ...body }, flattenHeaders(req.headers));
 
-			const readBody = async (): Promise<string> => {
-				if (!upstream.body) return "";
-				try {
-					return await streamToString(upstream.body);
-				} catch {
-					return "";
-				}
-			};
-
-			if (upstream.status === 429) {
-				const errorText = await readBody();
-				const cooldownMs = capCooldown(extractRetryDelay(errorText, upstream.headers));
+			if (response.status === 429) {
+				const errorText = await response.text().catch(() => "");
+				const cooldownMs = capCooldown(extractRetryDelay(errorText, response.headers));
 				log(`[${label}] 429 rate limited, cooldown ${Math.ceil(cooldownMs / 1000)}s`);
 				rotator.markExhausted(account, cooldownMs);
 				await rotator.rotateToNext(body.model);
 				continue;
 			}
 
-			if (upstream.status === 401) {
-				const errorText = await readBody();
+			if (response.status === 401) {
+				const errorText = await response.text().catch(() => "");
 				log(`[${label}] BLOCKED (401): ${errorText.slice(0, 200)}`);
 				rotator.markFlagged(account, `Account blocked (401): ${errorText.slice(0, 300)}`);
 				await rotator.rotateToNext(body.model);
 				continue;
 			}
 
-			if (upstream.status === 403) {
-				const errorText = await readBody();
+			if (response.status === 403) {
+				const errorText = await response.text().catch(() => "");
 				const lower = errorText.toLowerCase();
 				const flagPatterns = ["infring", "suspend", "abus", "terminat", "violat", "banned", "policy", "forbidden"];
 				const isFlagged = flagPatterns.some((p) => lower.includes(p));
@@ -249,43 +226,45 @@ async function handleProxyRequest(
 				}
 			}
 
-			if (upstream.status >= 500) {
-				const errorText = await readBody();
-				log(`[${label}] Server error ${upstream.status}: ${errorText.slice(0, 200)}`);
-				if (upstream.status === 503) {
+			if (response.status >= 500) {
+				const errorText = await response.text().catch(() => "");
+				log(`[${label}] Server error ${response.status}: ${errorText.slice(0, 200)}`);
+				if (response.status === 503) {
 					res.writeHead(503, { "Content-Type": "application/json" });
 					res.end(errorText || JSON.stringify({ error: "Server unavailable" }));
 					return;
 				}
-				rotator.markError(account, `${upstream.status}: ${errorText.slice(0, 200)}`);
+				rotator.markError(account, `${response.status}: ${errorText.slice(0, 200)}`);
 				await rotator.rotateToNext(body.model);
 				continue;
 			}
 
-			// Success or client error (4xx other than 429)
+			// Success or non-error client response
 			const shouldRotate = rotator.recordRequest(account);
 
-			// Copy response headers
 			const responseHeaders: Record<string, string> = {};
-			upstream.headers.forEach((value, key) => {
+			response.headers.forEach((value, key) => {
 				if (key.toLowerCase() !== "transfer-encoding" && key.toLowerCase() !== "connection") {
 					responseHeaders[key] = value;
 				}
 			});
 
-			res.writeHead(upstream.status, responseHeaders);
+			res.writeHead(response.status, responseHeaders);
 
-			// Stream the body back to the client
-			if (upstream.body) {
-				const reader = upstream.body.getReader();
+			// Stream body using Node.js Readable (avoids ReadableStream locking issues)
+			if (response.body) {
 				try {
-					while (true) {
-						const { done, value } = await reader.read();
-						if (done) break;
-						res.write(value);
-					}
+					const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+					await new Promise<void>((resolve) => {
+						nodeStream.on("data", (chunk: Buffer) => res.write(chunk));
+						nodeStream.on("end", resolve);
+						nodeStream.on("error", (err) => {
+							log(`[${label}] Stream error: ${err}`);
+							resolve();
+						});
+					});
 				} catch (err) {
-					log(`[${label}] Stream error: ${err}`);
+					log(`[${label}] Stream setup error: ${err}`);
 				}
 			}
 			res.end();
@@ -297,7 +276,6 @@ async function handleProxyRequest(
 		} catch (err) {
 			log(`[${label}] Request failed: ${err}`);
 			rotator.markError(account, err instanceof Error ? err.message : String(err));
-			// Don't retry if we already started sending the response
 			if (res.headersSent) {
 				res.end();
 				return;
@@ -307,7 +285,6 @@ async function handleProxyRequest(
 		}
 	}
 
-	// All retry attempts exhausted
 	if (!res.headersSent) {
 		res.writeHead(502, { "Content-Type": "application/json" });
 	}
@@ -324,24 +301,11 @@ function flattenHeaders(headers: IncomingMessage["headers"]): Record<string, str
 	return flat;
 }
 
-async function streamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
-	const reader = stream.getReader();
-	const decoder = new TextDecoder();
-	let result = "";
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		result += decoder.decode(value, { stream: true });
-	}
-	return result;
-}
-
 export function startProxy(rotator: AccountRotator, port: number): void {
 	const server = createServer((req, res) => {
-		const url = req.url || "/";
-		const method = req.method || "GET";
+		const method = req.method?.toUpperCase();
+		const url = req.url || "";
 
-		// Dashboard and API routes
 		if (method === "GET" && (url === "/" || url === "/dashboard")) {
 			serveDashboard(res);
 			return;
@@ -375,24 +339,12 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			return;
 		}
 
-		// 404
 		res.writeHead(404, { "Content-Type": "application/json" });
 		res.end(JSON.stringify({ error: "Not found" }));
 	});
 
 	server.listen(port, "0.0.0.0", () => {
-		log(`Proxy listening on http://0.0.0.0:${port}`);
-		log(`Dashboard: http://localhost:${port}/dashboard`);
-		log(`API endpoint: http://localhost:${port}/v1internal:streamGenerateContent?alt=sse`);
+		console.log(`[proxy] Listening on 0.0.0.0:${port}`);
+		console.log(`[proxy] Dashboard: http://localhost:${port}/dashboard`);
 	});
-
-	// Graceful shutdown
-	const shutdown = () => {
-		log("Shutting down...");
-		rotator.saveState();
-		server.close();
-		process.exit(0);
-	};
-	process.on("SIGINT", shutdown);
-	process.on("SIGTERM", shutdown);
 }

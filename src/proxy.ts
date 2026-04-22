@@ -224,6 +224,11 @@ async function handleProxyRequest(
 					await rotator.rotateToNext(body.model);
 					continue;
 				}
+				// Non-flagging 403: return to client
+				log(`[${label}] 403: ${errorText.slice(0, 200)}`);
+				res.writeHead(403, { "Content-Type": "application/json" });
+				res.end(errorText || JSON.stringify({ error: "Forbidden" }));
+				return;
 			}
 
 			if (response.status >= 500) {

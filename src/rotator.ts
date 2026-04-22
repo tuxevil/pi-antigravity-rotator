@@ -310,6 +310,16 @@ export class AccountRotator {
 
 		const current = this.accounts[idx];
 		if (current && this.isAvailable(current, now)) {
+			// Check if this account has quota for the requested model
+			if (modelKey) {
+				const quota = this.getModelQuota(current, modelKey);
+				if (quota === 0) {
+					this.log(
+						`${current.config.label || current.config.email} [${modelKey}]: 0% quota, skipping`,
+					);
+					return this.rotateModel(modelKey);
+				}
+			}
 			await this.ensureValidToken(current);
 			return current;
 		}
@@ -333,8 +343,12 @@ export class AccountRotator {
 			const account = this.accounts[i];
 
 			if (this.isAvailable(account, now)) {
-				const priority = this.getModelTimerPriority(account, modelKey);
 				const quota = this.getModelQuota(account, modelKey);
+
+				// Skip accounts with 0% quota for this model (they will 429)
+				if (quota === 0) continue;
+
+				const priority = this.getModelTimerPriority(account, modelKey);
 
 				if (priority < bestPriority || (priority === bestPriority && quota > bestQuota)) {
 					best = account;

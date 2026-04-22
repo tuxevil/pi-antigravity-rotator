@@ -39,17 +39,17 @@ function loadConfig(): Config {
 }
 
 function main(): void {
-	console.log("=== Antigravity Rotator ===");
+	console.log("=== Pi Antigravity Rotator ===");
 	console.log();
 
 	const config = loadConfig();
 	console.log(`Loaded ${config.accounts.length} accounts`);
-	console.log(`Rotation threshold: ${config.requestsPerRotation} requests`);
+	console.log(`Rotation: ${config.requestsPerRotation} requests / ${config.rotateOnQuotaDrop}% quota drop`);
+	console.log(`Quota poll: every ${Math.round((config.quotaPollIntervalMs || 300000) / 1000)}s`);
 	console.log();
 
 	for (const account of config.accounts) {
-		const type = account.type === "pro" ? "[PRO]" : "[FREE]";
-		console.log(`  ${type} ${account.label || account.email} (${account.email})`);
+		console.log(`  ${account.label || account.email} (${account.email})`);
 	}
 	console.log();
 

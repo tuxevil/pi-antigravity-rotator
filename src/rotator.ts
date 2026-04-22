@@ -1,4 +1,4 @@
-// Account rotation and token management with real quota polling
+// Account rotation and token management with per-model routing
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -8,6 +8,7 @@ import {
 	type Config,
 	type GoogleQuotaResponse,
 	type ModelQuota,
+	type ModelRotationState,
 	type PersistedState,
 	type StatusResponse,
 	CLIENT_ID,
@@ -17,13 +18,17 @@ import {
 	QUOTA_API_URL,
 	QUOTA_USER_AGENT,
 	QUOTA_MODEL_KEYS,
+	resolveQuotaModelKey,
 } from "./types.js";
 
 const STATE_FILE = join(dirname(new URL(import.meta.url).pathname), "..", "state.json");
 
 export class AccountRotator {
 	private accounts: AccountRuntime[] = [];
-	private currentIndex = 0;
+	// Per-model active account tracking
+	private modelState = new Map<string, ModelRotationState>();
+	// Fallback for requests where model can't be resolved
+	private defaultIndex = 0;
 	private startTime = Date.now();
 	private quotaPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -41,12 +46,9 @@ export class AccountRotator {
 			requestsSinceRotation: 0,
 			totalRequests: 0,
 			cooldownUntil: 0,
-			shortTimerResetAt: 0,
-			longTimerResetAt: 0,
 			quotaExhaustedAt: 0,
 			quota: [],
 			lastQuotaPoll: 0,
-			quotaAtRotationStart: -1,
 			lastUsed: 0,
 			lastError: null,
 			consecutiveErrors: 0,
@@ -59,14 +61,26 @@ export class AccountRotator {
 		try {
 			const raw = readFileSync(STATE_FILE, "utf-8");
 			const state: PersistedState = JSON.parse(raw);
-			this.currentIndex = Math.min(state.currentIndex, this.accounts.length - 1);
+
+			// Load per-model account assignments
+			if (state.modelAccounts) {
+				for (const [model, idx] of Object.entries(state.modelAccounts)) {
+					this.modelState.set(model, {
+						activeAccountIndex: Math.min(idx, this.accounts.length - 1),
+						quotaAtRotationStart: -1,
+					});
+				}
+			}
+			// Legacy fallback
+			if (state.currentIndex !== undefined) {
+				this.defaultIndex = Math.min(state.currentIndex, this.accounts.length - 1);
+			}
+
 			for (const account of this.accounts) {
 				const saved = state.accounts[account.config.email];
 				if (saved) {
 					account.totalRequests = saved.totalRequests;
 					account.cooldownUntil = saved.cooldownUntil;
-					account.shortTimerResetAt = saved.shortTimerResetAt;
-					account.longTimerResetAt = saved.longTimerResetAt;
 					account.quotaExhaustedAt = saved.quotaExhaustedAt;
 					account.disabled = saved.disabled;
 				}
@@ -78,16 +92,20 @@ export class AccountRotator {
 	}
 
 	saveState(): void {
+		const modelAccounts: Record<string, number> = {};
+		for (const [model, state] of this.modelState.entries()) {
+			modelAccounts[model] = state.activeAccountIndex;
+		}
+
 		const state: PersistedState = {
-			currentIndex: this.currentIndex,
+			modelAccounts,
+			currentIndex: this.defaultIndex,
 			accounts: {},
 		};
 		for (const account of this.accounts) {
 			state.accounts[account.config.email] = {
 				totalRequests: account.totalRequests,
 				cooldownUntil: account.cooldownUntil,
-				shortTimerResetAt: account.shortTimerResetAt,
-				longTimerResetAt: account.longTimerResetAt,
 				quotaExhaustedAt: account.quotaExhaustedAt,
 				disabled: account.disabled,
 			};
@@ -104,7 +122,7 @@ export class AccountRotator {
 	// =========================================================================
 
 	private startQuotaPolling(): void {
-		const intervalMs = this.config.quotaPollIntervalMs || 30_000;
+		const intervalMs = this.config.quotaPollIntervalMs || 300_000;
 		this.log(`Quota polling every ${Math.round(intervalMs / 1000)}s`);
 
 		// Initial poll (delayed 2s to allow token refresh first)
@@ -131,23 +149,29 @@ export class AccountRotator {
 			}
 		}
 
-		// Check if current account needs quota-based rotation
-		const current = this.accounts[this.currentIndex];
-		if (current && this.config.rotateOnQuotaDrop > 0) {
-			const minQuota = this.getMinQuotaPercent(current);
-			if (current.quotaAtRotationStart < 0 && minQuota >= 0) {
-				// First quota reading for this rotation period
-				current.quotaAtRotationStart = minQuota;
-				this.log(
-					`${current.config.label || current.config.email}: baseline quota ${minQuota}%`,
-				);
-			} else if (current.quotaAtRotationStart >= 0 && minQuota >= 0) {
-				const drop = current.quotaAtRotationStart - minQuota;
-				if (drop >= this.config.rotateOnQuotaDrop) {
+		// Check per-model quota-based rotation
+		if (this.config.rotateOnQuotaDrop > 0) {
+			for (const [modelKey, mState] of this.modelState.entries()) {
+				const account = this.accounts[mState.activeAccountIndex];
+				if (!account) continue;
+
+				const modelQuota = this.getModelQuota(account, modelKey);
+				if (modelQuota < 0) continue; // No data yet
+
+				if (mState.quotaAtRotationStart < 0) {
+					// First reading for this rotation
+					mState.quotaAtRotationStart = modelQuota;
 					this.log(
-						`${current.config.label || current.config.email}: quota dropped ${drop}% (${current.quotaAtRotationStart}% -> ${minQuota}%), rotating`,
+						`${account.config.label || account.config.email} [${modelKey}]: baseline quota ${modelQuota}%`,
 					);
-					await this.rotateToNext();
+				} else {
+					const drop = mState.quotaAtRotationStart - modelQuota;
+					if (drop >= this.config.rotateOnQuotaDrop) {
+						this.log(
+							`${account.config.label || account.config.email} [${modelKey}]: quota dropped ${drop}% (${mState.quotaAtRotationStart}% -> ${modelQuota}%), rotating`,
+						);
+						await this.rotateModel(modelKey);
+					}
 				}
 			}
 		}
@@ -168,30 +192,11 @@ export class AccountRotator {
 				signal: AbortSignal.timeout(8000),
 			});
 
-			if (!response.ok) {
-				return; // Silently skip on error
-			}
+			if (!response.ok) return;
 
 			const data = (await response.json()) as GoogleQuotaResponse;
 			account.quota = this.extractQuotas(data);
 			account.lastQuotaPoll = Date.now();
-
-			// Update quota timers from reset times
-			for (const q of account.quota) {
-				if (q.resetTime) {
-					const resetMs = new Date(q.resetTime).getTime();
-					if (resetMs > Date.now()) {
-						// Detect short vs long timer based on duration
-						const durationMs = resetMs - Date.now();
-						if (durationMs < 6 * 60 * 60 * 1000) {
-							// Under 6h -> short timer (pro)
-							account.shortTimerResetAt = resetMs;
-						} else {
-							account.longTimerResetAt = resetMs;
-						}
-					}
-				}
-			}
 		} catch {
 			// Network error, skip
 		}
@@ -199,12 +204,11 @@ export class AccountRotator {
 
 	private extractQuotas(data: GoogleQuotaResponse): ModelQuota[] {
 		const quotas: ModelQuota[] = [];
+		const now = Date.now();
 
 		for (const [, config] of Object.entries(QUOTA_MODEL_KEYS)) {
-			// Try primary key
 			let modelInfo = data.models[config.key];
 
-			// Try alternate keys
 			if (!modelInfo) {
 				for (const altKey of config.altKeys) {
 					modelInfo = data.models[altKey];
@@ -213,11 +217,23 @@ export class AccountRotator {
 			}
 
 			if (modelInfo?.quotaInfo) {
+				const resetTime = modelInfo.quotaInfo.resetTime ?? null;
+				let timerType: ModelQuota["timerType"] = "fresh";
+
+				if (resetTime) {
+					const resetMs = new Date(resetTime).getTime();
+					if (resetMs > now) {
+						const durationMs = resetMs - now;
+						timerType = durationMs < 6 * 60 * 60 * 1000 ? "5h" : "7d";
+					}
+				}
+
 				quotas.push({
 					modelKey: config.key,
 					displayName: config.display,
 					percentRemaining: Math.round((modelInfo.quotaInfo.remainingFraction ?? 0) * 100),
-					resetTime: modelInfo.quotaInfo.resetTime ?? null,
+					resetTime,
+					timerType,
 				});
 			}
 		}
@@ -225,69 +241,73 @@ export class AccountRotator {
 		return quotas;
 	}
 
-	private getMinQuotaPercent(account: AccountRuntime): number {
-		if (account.quota.length === 0) return -1;
-		return Math.min(...account.quota.map((q) => q.percentRemaining));
+	// Get quota % for a specific model on an account. Returns -1 if no data.
+	private getModelQuota(account: AccountRuntime, modelKey: string): number {
+		const q = account.quota.find((q) => q.modelKey === modelKey);
+		return q ? q.percentRemaining : -1;
+	}
+
+	// Get timer type for a specific model on an account
+	private getModelTimerType(account: AccountRuntime, modelKey: string): "fresh" | "5h" | "7d" {
+		const q = account.quota.find((q) => q.modelKey === modelKey);
+		return q?.timerType ?? "fresh";
+	}
+
+	// Timer priority for a specific model:
+	//   1 (highest) = fresh -> start the 7d clock ASAP
+	//   2           = 7d timer -> already ticking, use it
+	//   3 (lowest)  = 5h timer -> short-lived, save for last
+	private getModelTimerPriority(account: AccountRuntime, modelKey: string): number {
+		const type = this.getModelTimerType(account, modelKey);
+		if (type === "5h") return 3;
+		if (type === "7d") return 2;
+		return 1;
 	}
 
 	// =========================================================================
-	// Account Selection
+	// Account Selection (per-model)
 	// =========================================================================
 
-	// Select the best account for the next request.
-	async getActiveAccount(): Promise<AccountRuntime | null> {
+	// Get the active account for a specific model.
+	// model is the raw model name from the request body.
+	async getActiveAccount(model?: string): Promise<AccountRuntime | null> {
 		const now = Date.now();
-		const total = this.accounts.length;
-		if (total === 0) return null;
+		if (this.accounts.length === 0) return null;
 
-		const current = this.accounts[this.currentIndex];
+		const modelKey = model ? resolveQuotaModelKey(model) : null;
+		const idx = modelKey
+			? (this.modelState.get(modelKey)?.activeAccountIndex ?? this.defaultIndex)
+			: this.defaultIndex;
+
+		const current = this.accounts[idx];
 		if (current && this.isAvailable(current, now)) {
 			await this.ensureValidToken(current);
 			return current;
 		}
 
-		return this.rotateToNext(now);
+		// Current unavailable, find next
+		return modelKey ? this.rotateModel(modelKey) : this.rotateDefault();
 	}
 
-	// Timer priority for account selection:
-	//   1 (highest) = no active timers -> start the 7d clock ASAP so it resets sooner
-	//   2           = on 7d timer only -> already ticking, use it
-	//   3 (lowest)  = on 5h timer (pro) -> short-lived, save for last (wasted if not fully consumed)
-	private getTimerPriority(account: AccountRuntime, now: number): number {
-		const has5h = account.shortTimerResetAt > now;
-		const has7d = account.longTimerResetAt > now;
+	// Rotate a specific model to the best available account.
+	async rotateModel(modelKey: string, now: number = Date.now()): Promise<AccountRuntime | null> {
+		const currentIdx = this.modelState.get(modelKey)?.activeAccountIndex ?? -1;
 
-		if (has5h) return 3; // Pro account on short timer - use last
-		if (has7d) return 2; // Already on 7d timer - use it
-		return 1; // Fresh account - start 7d clock ASAP
-	}
-
-	// Force rotation to the best available account.
-	// Priority: fresh (no timers) > 7d timer > 5h timer.
-	// Within the same priority tier, prefer higher remaining quota.
-	async rotateToNext(now: number = Date.now()): Promise<AccountRuntime | null> {
-		const total = this.accounts.length;
 		let best: AccountRuntime | null = null;
 		let bestPriority = Infinity;
-		let bestQuota = -2; // -1 means "unknown", so -2 is worse than unknown
-
+		let bestQuota = -2;
 		let bestExhausted: AccountRuntime | null = null;
 		let bestExhaustedCooldown = Infinity;
 
-		for (let i = 0; i < total; i++) {
-			// Skip current account (we're rotating away from it)
-			if (i === this.currentIndex) continue;
-
+		for (let i = 0; i < this.accounts.length; i++) {
+			if (i === currentIdx) continue;
 			const account = this.accounts[i];
-			if (this.isAvailable(account, now)) {
-				const priority = this.getTimerPriority(account, now);
-				const quota = this.getMinQuotaPercent(account);
 
-				// Pick by: best priority first, then highest quota within same priority
-				if (
-					priority < bestPriority ||
-					(priority === bestPriority && quota > bestQuota)
-				) {
+			if (this.isAvailable(account, now)) {
+				const priority = this.getModelTimerPriority(account, modelKey);
+				const quota = this.getModelQuota(account, modelKey);
+
+				if (priority < bestPriority || (priority === bestPriority && quota > bestQuota)) {
 					best = account;
 					bestPriority = priority;
 					bestQuota = quota;
@@ -302,12 +322,15 @@ export class AccountRotator {
 		}
 
 		if (best) {
-			this.currentIndex = this.accounts.indexOf(best);
-			best.requestsSinceRotation = 0;
-			best.quotaAtRotationStart = this.getMinQuotaPercent(best);
-			const priorityLabel = bestPriority === 1 ? "fresh" : bestPriority === 2 ? "7d-timer" : "5h-timer";
+			const newIdx = this.accounts.indexOf(best);
+			const quota = this.getModelQuota(best, modelKey);
+			const timerType = this.getModelTimerType(best, modelKey);
+			this.modelState.set(modelKey, {
+				activeAccountIndex: newIdx,
+				quotaAtRotationStart: quota,
+			});
 			this.log(
-				`Rotated to ${best.config.label || best.config.email} [${priorityLabel}] (quota: ${best.quotaAtRotationStart >= 0 ? best.quotaAtRotationStart + "%" : "unknown"})`,
+				`[${modelKey}] Rotated to ${best.config.label || best.config.email} [${timerType}] (quota: ${quota >= 0 ? quota + "%" : "unknown"})`,
 			);
 			this.saveState();
 			await this.ensureValidToken(best);
@@ -315,16 +338,57 @@ export class AccountRotator {
 		}
 
 		if (bestExhausted) {
-			this.currentIndex = this.accounts.indexOf(bestExhausted);
+			const newIdx = this.accounts.indexOf(bestExhausted);
+			this.modelState.set(modelKey, {
+				activeAccountIndex: newIdx,
+				quotaAtRotationStart: -1,
+			});
 			this.log(
-				`All accounts exhausted. Using ${bestExhausted.config.email} (cooldown: ${Math.ceil(bestExhaustedCooldown / 1000)}s)`,
+				`[${modelKey}] All accounts exhausted. Using ${bestExhausted.config.email} (cooldown: ${Math.ceil(bestExhaustedCooldown / 1000)}s)`,
 			);
 			await this.ensureValidToken(bestExhausted);
 			return bestExhausted;
 		}
 
-		this.log("All accounts disabled or unavailable");
+		this.log(`[${modelKey}] All accounts disabled or unavailable`);
 		return null;
+	}
+
+	// Fallback rotation when model can't be resolved
+	private async rotateDefault(now: number = Date.now()): Promise<AccountRuntime | null> {
+		let best: AccountRuntime | null = null;
+		let bestExhausted: AccountRuntime | null = null;
+		let bestExhaustedCooldown = Infinity;
+
+		for (let i = 0; i < this.accounts.length; i++) {
+			if (i === this.defaultIndex) continue;
+			const account = this.accounts[i];
+			if (this.isAvailable(account, now)) {
+				best = account;
+				break;
+			} else if (!account.disabled && account.cooldownUntil > now) {
+				const remaining = account.cooldownUntil - now;
+				if (remaining < bestExhaustedCooldown) {
+					bestExhaustedCooldown = remaining;
+					bestExhausted = account;
+				}
+			}
+		}
+
+		const selected = best || bestExhausted;
+		if (selected) {
+			this.defaultIndex = this.accounts.indexOf(selected);
+			this.log(`[default] Rotated to ${selected.config.label || selected.config.email}`);
+			this.saveState();
+			await this.ensureValidToken(selected);
+		}
+		return selected || null;
+	}
+
+	// Force rotation for a model (called from proxy on 429 etc.)
+	async rotateToNext(model?: string): Promise<AccountRuntime | null> {
+		const modelKey = model ? resolveQuotaModelKey(model) : null;
+		return modelKey ? this.rotateModel(modelKey) : this.rotateDefault();
 	}
 
 	// Record a successful request. Returns true if rotation is needed.
@@ -335,11 +399,11 @@ export class AccountRotator {
 		account.consecutiveErrors = 0;
 		account.lastError = null;
 
-		// Request-count based rotation (fallback when quota polling is not active)
 		const shouldRotate = account.requestsSinceRotation >= this.config.requestsPerRotation;
 		if (shouldRotate) {
+			account.requestsSinceRotation = 0;
 			this.log(
-				`${account.config.label || account.config.email}: hit rotation threshold (${account.requestsSinceRotation}/${this.config.requestsPerRotation})`,
+				`${account.config.label || account.config.email}: hit rotation threshold (${this.config.requestsPerRotation})`,
 			);
 		}
 		this.saveState();
@@ -352,19 +416,12 @@ export class AccountRotator {
 		account.cooldownUntil = now + cooldownMs;
 		account.quotaExhaustedAt = now;
 
-		// Set fallback timer estimates if the quota API hasn't provided real data.
-		// Real reset times are overwritten by quota polling.
-		if (account.longTimerResetAt < now) {
-			account.longTimerResetAt = now + LONG_TIMER_MS;
-		}
-
 		this.log(
 			`${account.config.label || account.config.email}: EXHAUSTED, cooldown ${Math.ceil(cooldownMs / 1000)}s`,
 		);
 		this.saveState();
 	}
 
-	// Mark an account as having an error (non-quota)
 	markError(account: AccountRuntime, error: string): void {
 		account.lastError = error;
 		account.consecutiveErrors++;
@@ -440,9 +497,25 @@ export class AccountRotator {
 
 	getStatus(): StatusResponse {
 		const now = Date.now();
-		const currentAccount = this.accounts[this.currentIndex];
+
+		// Build per-model active account map
+		const activeAccounts: Record<string, string> = {};
+		for (const [model, mState] of this.modelState.entries()) {
+			const account = this.accounts[mState.activeAccountIndex];
+			if (account) {
+				activeAccounts[model] = account.config.email;
+			}
+		}
 
 		const accounts: AccountStatus[] = this.accounts.map((a) => {
+			// Determine which models this account is active for
+			const activeForModels: string[] = [];
+			for (const [model, mState] of this.modelState.entries()) {
+				if (this.accounts[mState.activeAccountIndex] === a) {
+					activeForModels.push(model);
+				}
+			}
+
 			let status: AccountStatus["status"];
 			if (a.disabled) {
 				status = "disabled";
@@ -450,39 +523,34 @@ export class AccountRotator {
 				status = "error";
 			} else if (a.cooldownUntil > now) {
 				status = "cooldown";
-			} else if (a === currentAccount) {
+			} else if (activeForModels.length > 0) {
 				status = "active";
 			} else {
 				status = "ready";
 			}
-
-			const minQuota = this.getMinQuotaPercent(a);
 
 			return {
 				email: a.config.email,
 				label: a.config.label || a.config.email,
 				type: a.config.type || "free",
 				status,
+				activeForModels,
 				requestsSinceRotation: a.requestsSinceRotation,
 				totalRequests: a.totalRequests,
 				cooldownUntil: a.cooldownUntil,
 				cooldownRemaining: Math.max(0, a.cooldownUntil - now),
-				shortTimerResetAt: a.shortTimerResetAt,
-				longTimerResetAt: a.longTimerResetAt,
 				lastUsed: a.lastUsed,
 				lastError: a.lastError,
 				consecutiveErrors: a.consecutiveErrors,
 				hasValidToken: !!(a.accessToken && a.tokenExpires > now),
 				quota: a.quota,
-				minQuotaPercent: minQuota,
-				timerPriority: this.getTimerPriority(a, now),
 			};
 		});
 
 		return {
 			proxyPort: this.config.proxyPort,
 			requestsPerRotation: this.config.requestsPerRotation,
-			activeAccount: currentAccount?.config.email || null,
+			activeAccounts,
 			totalRequestsAllAccounts: this.accounts.reduce((sum, a) => sum + a.totalRequests, 0),
 			uptime: now - this.startTime,
 			accounts,

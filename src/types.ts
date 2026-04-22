@@ -15,7 +15,7 @@ export interface Config {
 	accounts: AccountConfig[];
 	requestsPerRotation: number;
 	proxyPort: number;
-	// Rotate when any model's quota drops by this many percentage points (0 = disabled, use request count)
+	// Rotate when a model's quota drops by this many percentage points (0 = disabled, use request count)
 	rotateOnQuotaDrop: number;
 	// How often to poll quota (ms). Default: 5min
 	quotaPollIntervalMs: number;
@@ -40,6 +40,9 @@ export interface ModelQuota {
 	displayName: string;
 	percentRemaining: number;
 	resetTime: string | null;
+	// Timer classification based on resetTime duration
+	// "fresh" = no active timer, "5h" = short timer, "7d" = long timer
+	timerType: "fresh" | "5h" | "7d";
 }
 
 // Model key mapping for the quota API
@@ -61,25 +64,35 @@ export const QUOTA_MODEL_KEYS: Record<string, { key: string; altKeys: string[]; 
 	},
 };
 
+// Map request model names to quota model keys
+export function resolveQuotaModelKey(requestModel: string): string | null {
+	const lower = requestModel.toLowerCase();
+	for (const [, config] of Object.entries(QUOTA_MODEL_KEYS)) {
+		if (lower.includes(config.key) || config.altKeys.some((alt) => lower.includes(alt))) {
+			return config.key;
+		}
+	}
+	// Broad fallback matching
+	if (lower.includes("gemini") && lower.includes("pro")) return "gemini-3.1-pro";
+	if (lower.includes("gemini") && lower.includes("flash")) return "gemini-3-flash";
+	if (lower.includes("claude")) return "claude-opus-4-6-thinking";
+	return null;
+}
+
 // Runtime state for a single account
 export interface AccountRuntime {
 	config: AccountConfig;
 	accessToken: string | null;
 	tokenExpires: number;
-	// Rotation tracking
+	// Rotation tracking (per-model via rotator)
 	requestsSinceRotation: number;
 	totalRequests: number;
 	// Cooldown / exhaustion
 	cooldownUntil: number;
-	// Pro accounts: 5-hour short timer, then 7-day long timer
-	// Free accounts: 7-day timer only
-	shortTimerResetAt: number; // pro only: 5h timer reset
-	longTimerResetAt: number; // both: 7-day timer reset
-	quotaExhaustedAt: number; // when the account was last exhausted
-	// Quota tracking (from API)
+	quotaExhaustedAt: number;
+	// Quota tracking (from API) - per-model data
 	quota: ModelQuota[];
 	lastQuotaPoll: number;
-	quotaAtRotationStart: number; // min quota % when this account became active
 	// Status
 	lastUsed: number;
 	lastError: string | null;
@@ -87,16 +100,23 @@ export interface AccountRuntime {
 	disabled: boolean; // permanently disabled (revoked token, etc.)
 }
 
+// Per-model rotation state tracked by the rotator
+export interface ModelRotationState {
+	activeAccountIndex: number;
+	quotaAtRotationStart: number; // quota % when this account became active for this model
+}
+
 // Persisted state across restarts
 export interface PersistedState {
-	currentIndex: number;
+	// Per-model active account index
+	modelAccounts: Record<string, number>;
+	// Legacy fallback
+	currentIndex?: number;
 	accounts: Record<
 		string,
 		{
 			totalRequests: number;
 			cooldownUntil: number;
-			shortTimerResetAt: number;
-			longTimerResetAt: number;
 			quotaExhaustedAt: number;
 			disabled: boolean;
 		}
@@ -107,9 +127,10 @@ export interface PersistedState {
 export interface StatusResponse {
 	proxyPort: number;
 	requestsPerRotation: number;
-	activeAccount: string | null;
 	totalRequestsAllAccounts: number;
 	uptime: number;
+	// Per-model active account
+	activeAccounts: Record<string, string>;
 	accounts: AccountStatus[];
 }
 
@@ -118,20 +139,17 @@ export interface AccountStatus {
 	label: string;
 	type: AccountType;
 	status: "active" | "ready" | "cooldown" | "exhausted" | "disabled" | "error";
+	// Which models this account is currently active for
+	activeForModels: string[];
 	requestsSinceRotation: number;
 	totalRequests: number;
 	cooldownUntil: number;
 	cooldownRemaining: number;
-	shortTimerResetAt: number;
-	longTimerResetAt: number;
 	lastUsed: number;
 	lastError: string | null;
 	consecutiveErrors: number;
 	hasValidToken: boolean;
 	quota: ModelQuota[];
-	minQuotaPercent: number;
-	// 1 = fresh (no timers), 2 = on 7d timer, 3 = on 5h timer
-	timerPriority: number;
 }
 
 // Antigravity OAuth constants (same as pi-mono)
@@ -150,5 +168,4 @@ export const ANTIGRAVITY_ENDPOINTS = [
 export const QUOTA_API_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 export const QUOTA_USER_AGENT = "antigravity/1.11.9 darwin/arm64";
 
-export const PRO_SHORT_TIMER_MS = 5 * 60 * 60 * 1000; // 5 hours
 export const LONG_TIMER_MS = 7 * 24 * 60 * 60 * 1000; // 7 days

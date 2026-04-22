@@ -172,7 +172,7 @@ async function handleProxyRequest(
 
 	// Try up to MAX_ENDPOINT_RETRIES accounts on 429
 	for (let attempt = 0; attempt < MAX_ENDPOINT_RETRIES; attempt++) {
-		const account = await rotator.getActiveAccount();
+		const account = await rotator.getActiveAccount(body.model);
 		if (!account) {
 			res.writeHead(503, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ error: "All accounts exhausted or disabled" }));
@@ -191,7 +191,7 @@ async function handleProxyRequest(
 				const cooldownMs = extractRetryDelay(errorText, upstream.headers);
 				log(`[${label}] 429 rate limited, cooldown ${Math.ceil(cooldownMs / 1000)}s`);
 				rotator.markExhausted(account, cooldownMs);
-				await rotator.rotateToNext();
+				await rotator.rotateToNext(body.model);
 				continue;
 			}
 
@@ -199,7 +199,7 @@ async function handleProxyRequest(
 				const errorText = upstream.body ? await streamToString(upstream.body) : "";
 				log(`[${label}] Server error ${upstream.status}: ${errorText.slice(0, 200)}`);
 				rotator.markError(account, `${upstream.status}: ${errorText.slice(0, 200)}`);
-				await rotator.rotateToNext();
+				await rotator.rotateToNext(body.model);
 				continue;
 			}
 
@@ -234,13 +234,13 @@ async function handleProxyRequest(
 
 			// Rotate after response completes if threshold was hit
 			if (shouldRotate) {
-				await rotator.rotateToNext();
+				await rotator.rotateToNext(body.model);
 			}
 			return;
 		} catch (err) {
 			log(`[${label}] Request failed: ${err}`);
 			rotator.markError(account, err instanceof Error ? err.message : String(err));
-			await rotator.rotateToNext();
+			await rotator.rotateToNext(body.model);
 			continue;
 		}
 	}

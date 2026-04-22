@@ -1,8 +1,8 @@
-// Standalone OAuth login helper
+// Standalone OAuth login helper (remote-friendly)
 // Usage: npm run login
-// Performs the Antigravity OAuth flow and outputs credentials to add to accounts.json
+// Performs the Antigravity OAuth flow using copy-paste (no local callback server needed)
 
-import { createServer } from "node:http";
+import { createInterface } from "node:readline";
 import { CLIENT_ID, CLIENT_SECRET, TOKEN_URL } from "./types.js";
 
 const REDIRECT_URI = "http://localhost:51121/oauth-callback";
@@ -23,38 +23,26 @@ async function generatePKCE(): Promise<{ verifier: string; challenge: string }> 
 	return { verifier, challenge };
 }
 
-async function startCallbackServer(): Promise<{ code: string; state: string }> {
-	return new Promise((resolve, reject) => {
-		const server = createServer((req, res) => {
-			const url = new URL(req.url || "", "http://localhost:51121");
-			if (url.pathname === "/oauth-callback") {
-				const code = url.searchParams.get("code");
-				const state = url.searchParams.get("state");
-				const error = url.searchParams.get("error");
+function parseRedirectUrl(input: string): { code?: string; state?: string } {
+	const value = input.trim();
+	if (!value) return {};
+	try {
+		const url = new URL(value);
+		return {
+			code: url.searchParams.get("code") ?? undefined,
+			state: url.searchParams.get("state") ?? undefined,
+		};
+	} catch {
+		return {};
+	}
+}
 
-				if (error) {
-					res.writeHead(400, { "Content-Type": "text/html" });
-					res.end(`<h2>Error: ${error}</h2>`);
-					reject(new Error(`OAuth error: ${error}`));
-					server.close();
-					return;
-				}
-
-				if (code && state) {
-					res.writeHead(200, { "Content-Type": "text/html" });
-					res.end("<h2>Login successful. You can close this tab.</h2>");
-					resolve({ code, state });
-					server.close();
-				} else {
-					res.writeHead(400, { "Content-Type": "text/html" });
-					res.end("<h2>Missing code or state</h2>");
-				}
-			}
-		});
-
-		server.on("error", reject);
-		server.listen(51121, "127.0.0.1", () => {
-			console.log("Callback server listening on port 51121...");
+function askQuestion(prompt: string): Promise<string> {
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	return new Promise((resolve) => {
+		rl.question(prompt, (answer) => {
+			rl.close();
+			resolve(answer.trim());
 		});
 	});
 }
@@ -86,11 +74,17 @@ async function discoverProject(accessToken: string): Promise<string> {
 			});
 
 			if (response.ok) {
-				const data = (await response.json()) as { cloudaicompanionProject?: string | { id?: string } };
+				const data = (await response.json()) as {
+					cloudaicompanionProject?: string | { id?: string };
+				};
 				if (typeof data.cloudaicompanionProject === "string" && data.cloudaicompanionProject) {
 					return data.cloudaicompanionProject;
 				}
-				if (data.cloudaicompanionProject && typeof data.cloudaicompanionProject === "object" && data.cloudaicompanionProject.id) {
+				if (
+					data.cloudaicompanionProject &&
+					typeof data.cloudaicompanionProject === "object" &&
+					data.cloudaicompanionProject.id
+				) {
 					return data.cloudaicompanionProject.id;
 				}
 			}
@@ -118,16 +112,10 @@ async function getUserEmail(accessToken: string): Promise<string | undefined> {
 }
 
 async function main(): Promise<void> {
-	console.log("=== Antigravity Account Login ===");
-	console.log();
-	console.log("This will open your browser to authenticate with a Google account.");
-	console.log("After login, the credentials will be printed for you to add to accounts.json.");
+	console.log("=== Pi Antigravity Rotator - Account Login ===");
 	console.log();
 
 	const { verifier, challenge } = await generatePKCE();
-
-	// Start callback server and build auth URL
-	const callbackPromise = startCallbackServer();
 
 	const authParams = new URLSearchParams({
 		client_id: CLIENT_ID,
@@ -142,29 +130,38 @@ async function main(): Promise<void> {
 	});
 
 	const authUrl = `${AUTH_URL}?${authParams.toString()}`;
-	console.log("Open this URL in your browser:");
+
+	console.log("1. Open this URL in your browser:");
 	console.log();
 	console.log(authUrl);
 	console.log();
+	console.log("2. Complete the Google sign-in.");
+	console.log("3. After sign-in, your browser will redirect to a localhost URL that won't load.");
+	console.log("4. Copy the FULL URL from your browser's address bar and paste it below.");
+	console.log();
 
-	// Try to open browser automatically
-	try {
-		const { exec } = await import("node:child_process");
-		const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-		exec(`${cmd} "${authUrl}"`);
-	} catch {
-		// Manual open
+	const redirectUrl = await askQuestion("Paste the redirect URL here: ");
+
+	if (!redirectUrl) {
+		console.error("No URL provided.");
+		process.exit(1);
 	}
 
-	console.log("Waiting for authentication...");
-	const { code, state } = await callbackPromise;
+	const parsed = parseRedirectUrl(redirectUrl);
 
-	if (state !== verifier) {
-		console.error("State mismatch - possible CSRF attack");
+	if (!parsed.code) {
+		console.error("Could not extract authorization code from the URL.");
+		console.error("Make sure you copied the full URL including the ?code= parameter.");
+		process.exit(1);
+	}
+
+	if (parsed.state && parsed.state !== verifier) {
+		console.error("State mismatch - the URL does not match this login session.");
 		process.exit(1);
 	}
 
 	// Exchange code for tokens
+	console.log();
 	console.log("Exchanging code for tokens...");
 	const tokenResponse = await fetch(TOKEN_URL, {
 		method: "POST",
@@ -172,7 +169,7 @@ async function main(): Promise<void> {
 		body: new URLSearchParams({
 			client_id: CLIENT_ID,
 			client_secret: CLIENT_SECRET,
-			code,
+			code: parsed.code,
 			grant_type: "authorization_code",
 			redirect_uri: REDIRECT_URI,
 			code_verifier: verifier,
@@ -219,7 +216,7 @@ async function main(): Promise<void> {
 
 	console.log(JSON.stringify(entry, null, 2));
 	console.log();
-	console.log("If this is a Google One AI Premium subscriber, change \"type\" to \"pro\".");
+	console.log('If this is a Google One AI Premium subscriber, change "type" to "pro".');
 }
 
 main().catch((err) => {

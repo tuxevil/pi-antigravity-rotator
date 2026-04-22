@@ -104,13 +104,27 @@ Three mechanisms trigger rotation, scoped to the specific model:
 
 3. **429 failover** (reactive) -- On rate limit or 5xx, the account is marked exhausted with a cooldown and the affected model immediately switches.
 
-### Infringement Detection
+### Account Protection
 
-On `403` responses, the proxy scans the error body for keywords indicating account flags:
+The proxy detects blocked/suspended accounts at three levels:
 
-`infring`, `suspend`, `abus`, `terminat`, `violat`, `banned`, `policy`
+1. **Quota API check** (on startup + every poll) -- If the quota API returns `403 PERMISSION_DENIED` with "violation of Terms of Service", the account is immediately flagged. This catches suspended accounts before any request is wasted.
 
-If detected, the account is **immediately flagged** and excluded from all model routing. No 5-error wait -- it's instant. The dashboard shows a red `flagged` badge with the error message. Use the Re-enable button to clear the flag after resolving the issue with Google.
+2. **API endpoint 401** (on request) -- If all 3 endpoints (daily, autopush, prod) reject the token with `401 UNAUTHENTICATED`, the account is flagged. The proxy cascades through all endpoints before giving up.
+
+3. **API endpoint 403** (on request) -- If the response body contains infringement keywords (`infring`, `suspend`, `abus`, `terminat`, `violat`, `banned`, `policy`, `forbidden`), the account is flagged.
+
+Flagged accounts are **immediately excluded** from all model routing. The dashboard shows a red `FLAGGED` badge with the error message. Use the Re-enable button or `POST /api/enable/<email>` to clear the flag after resolving the issue with Google.
+
+### Endpoint Cascade
+
+The proxy tries three Google API endpoints in order for each request:
+
+1. `daily-cloudcode-pa.sandbox.googleapis.com`
+2. `autopush-cloudcode-pa.sandbox.googleapis.com`
+3. `cloudcode-pa.googleapis.com` (prod)
+
+On `401`, `403`, or `404`, it cascades to the next endpoint. Only the final endpoint's response is used for flagging decisions.
 
 ## Configuration
 

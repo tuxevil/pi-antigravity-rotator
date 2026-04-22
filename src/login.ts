@@ -9,7 +9,6 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { CLIENT_ID, CLIENT_SECRET, TOKEN_URL } from "./types.js";
-import type { AccountType } from "./types.js";
 
 const REDIRECT_URI = "http://localhost:51121/oauth-callback";
 const SCOPES = [
@@ -132,7 +131,6 @@ interface AccountEntry {
 	refreshToken: string;
 	projectId: string;
 	label: string;
-	type: AccountType;
 }
 
 interface AccountsConfig {
@@ -330,10 +328,6 @@ async function main(): Promise<void> {
 
 	const label = email ? email.split("@")[0] : "Account";
 
-	// Ask account type
-	const typeAnswer = await askQuestion(`Is ${email || "this account"} a Google One AI Premium subscriber? (y/N): `);
-	const accountType: AccountType = typeAnswer.toLowerCase().startsWith("y") ? "pro" : "free";
-
 	// Save to accounts.json
 	console.log();
 	const entry: AccountEntry = {
@@ -341,11 +335,10 @@ async function main(): Promise<void> {
 		refreshToken: tokenData.refresh_token,
 		projectId,
 		label,
-		type: accountType,
 	};
 
 	const { isNew } = addAccountToConfig(entry);
-	console.log(`  ${isNew ? "Added" : "Updated"} ${email} [${accountType}] in ${ACCOUNTS_FILE}`);
+	console.log(`  ${isNew ? "Added" : "Updated"} ${email} in ${ACCOUNTS_FILE}`);
 
 	// Configure pi
 	ensurePiModelsConfig();
@@ -356,7 +349,7 @@ async function main(): Promise<void> {
 	console.log();
 	console.log(`Done. ${config.accounts.length} account(s) configured:`);
 	for (const a of config.accounts) {
-		console.log(`  [${a.type.toUpperCase()}] ${a.label} (${a.email})`);
+		console.log(`  ${a.label} (${a.email})`);
 	}
 	console.log();
 	console.log("Run 'npm start' to start the proxy.");

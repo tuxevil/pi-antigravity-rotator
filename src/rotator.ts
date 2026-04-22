@@ -13,7 +13,6 @@ import {
 	CLIENT_ID,
 	CLIENT_SECRET,
 	TOKEN_URL,
-	PRO_SHORT_TIMER_MS,
 	LONG_TIMER_MS,
 	QUOTA_API_URL,
 	QUOTA_USER_AGENT,
@@ -353,21 +352,14 @@ export class AccountRotator {
 		account.cooldownUntil = now + cooldownMs;
 		account.quotaExhaustedAt = now;
 
-		if (account.config.type === "pro") {
-			if (account.shortTimerResetAt < now) {
-				account.shortTimerResetAt = now + PRO_SHORT_TIMER_MS;
-			}
-			if (account.longTimerResetAt < now) {
-				account.longTimerResetAt = now + LONG_TIMER_MS;
-			}
-		} else {
-			if (account.longTimerResetAt < now) {
-				account.longTimerResetAt = now + LONG_TIMER_MS;
-			}
+		// Set fallback timer estimates if the quota API hasn't provided real data.
+		// Real reset times are overwritten by quota polling.
+		if (account.longTimerResetAt < now) {
+			account.longTimerResetAt = now + LONG_TIMER_MS;
 		}
 
 		this.log(
-			`${account.config.label || account.config.email}: EXHAUSTED, cooldown ${Math.ceil(cooldownMs / 1000)}s (type: ${account.config.type})`,
+			`${account.config.label || account.config.email}: EXHAUSTED, cooldown ${Math.ceil(cooldownMs / 1000)}s`,
 		);
 		this.saveState();
 	}
@@ -469,7 +461,7 @@ export class AccountRotator {
 			return {
 				email: a.config.email,
 				label: a.config.label || a.config.email,
-				type: a.config.type,
+				type: a.config.type || "free",
 				status,
 				requestsSinceRotation: a.requestsSinceRotation,
 				totalRequests: a.totalRequests,

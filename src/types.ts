@@ -7,7 +7,8 @@ export interface AccountConfig {
 	refreshToken: string;
 	projectId: string;
 	label?: string;
-	type: AccountType;
+	// Optional - pro/free is detected dynamically from quota API reset times
+	type?: AccountType;
 }
 
 export interface Config {

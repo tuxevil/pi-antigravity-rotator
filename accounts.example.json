@@ -1,0 +1,22 @@
+{
+  "proxyPort": 51200,
+  "requestsPerRotation": 5,
+  "rotateOnQuotaDrop": 20,
+  "quotaPollIntervalMs": 30000,
+  "accounts": [
+    {
+      "email": "account1@gmail.com",
+      "refreshToken": "1//paste-refresh-token-here",
+      "projectId": "paste-project-id-here",
+      "label": "Account 1",
+      "type": "free"
+    },
+    {
+      "email": "account2@gmail.com",
+      "refreshToken": "1//paste-refresh-token-here",
+      "projectId": "paste-project-id-here",
+      "label": "Account 2",
+      "type": "pro"
+    }
+  ]
+}

@@ -456,7 +456,18 @@ function renderAccounts(data) {
   renderModelRouting(data.activeAccounts);
 
   var container = document.getElementById('accounts');
-  container.innerHTML = data.accounts.map(function(a) {
+  var sorted = data.accounts.slice().sort(function(a, b) {
+    var aFlagged = a.status === 'flagged' || a.status === 'disabled' ? 1 : 0;
+    var bFlagged = b.status === 'flagged' || b.status === 'disabled' ? 1 : 0;
+    if (aFlagged !== bFlagged) return aFlagged - bFlagged;
+    var aActive = a.status === 'active' ? 1 : 0;
+    var bActive = b.status === 'active' ? 1 : 0;
+    if (aActive !== bActive) return bActive - aActive;
+    var aQuota = (a.quota || []).reduce(function(s, q) { return s + q.percentRemaining; }, 0);
+    var bQuota = (b.quota || []).reduce(function(s, q) { return s + q.percentRemaining; }, 0);
+    return bQuota - aQuota;
+  });
+  container.innerHTML = sorted.map(function(a) {
     var isActive = a.status === 'active';
     var isCooldown = a.status === 'cooldown' || a.status === 'exhausted';
     var isDisabled = a.status === 'disabled' || a.status === 'flagged';

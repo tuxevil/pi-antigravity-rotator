@@ -74,7 +74,7 @@ Visit `http://localhost:51200/dashboard` to monitor account status.
 | `proxyPort` | Proxy listen port (default: 51200) |
 | `requestsPerRotation` | Requests per account before rotating (default: 5) |
 | `rotateOnQuotaDrop` | Rotate when any model's quota drops this many percentage points (default: 20). Set to 0 to disable quota-based rotation. |
-| `quotaPollIntervalMs` | How often to poll Google's quota API in milliseconds (default: 30000) |
+| `quotaPollIntervalMs` | How often to poll Google's quota API in milliseconds (default: 300000 / 5min) |
 | `accounts[].email` | Google account email |
 | `accounts[].refreshToken` | OAuth refresh token (from `npm run login`) |
 | `accounts[].projectId` | Cloud project ID (auto-discovered during login) |

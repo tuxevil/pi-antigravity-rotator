@@ -17,7 +17,7 @@ export interface Config {
 	proxyPort: number;
 	// Rotate when any model's quota drops by this many percentage points (0 = disabled, use request count)
 	rotateOnQuotaDrop: number;
-	// How often to poll quota (ms). Default: 30s
+	// How often to poll quota (ms). Default: 5min
 	quotaPollIntervalMs: number;
 }
 

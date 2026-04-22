@@ -29,7 +29,7 @@ function loadConfig(): Config {
 		config.proxyPort = config.proxyPort || 51200;
 		config.requestsPerRotation = config.requestsPerRotation || 5;
 		config.rotateOnQuotaDrop = config.rotateOnQuotaDrop ?? 20;
-		config.quotaPollIntervalMs = config.quotaPollIntervalMs || 30_000;
+		config.quotaPollIntervalMs = config.quotaPollIntervalMs || 300_000;
 
 		return config;
 	} catch (err) {

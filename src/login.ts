@@ -153,7 +153,7 @@ function loadOrCreateAccountsConfig(): AccountsConfig {
 		proxyPort: 51200,
 		requestsPerRotation: 5,
 		rotateOnQuotaDrop: 20,
-		quotaPollIntervalMs: 30000,
+		quotaPollIntervalMs: 300000,
 		accounts: [],
 	};
 }

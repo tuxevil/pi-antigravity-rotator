@@ -284,14 +284,14 @@ export class AccountRotator {
 	}
 
 	// Timer priority for a specific model:
-	//   1 (highest) = fresh -> start the 7d clock ASAP
+	//   1 (highest) = 5h timer -> drain Pro quota before reset to maximize the +40% recharge
 	//   2           = 7d timer -> already ticking, use it
-	//   3 (lowest)  = 5h timer -> short-lived, save for last
+	//   3 (lowest)  = fresh -> no timer yet, save for when others are exhausted
 	private getModelTimerPriority(account: AccountRuntime, modelKey: string): number {
 		const type = this.getModelTimerType(account, modelKey);
-		if (type === "5h") return 3;
+		if (type === "5h") return 1;
 		if (type === "7d") return 2;
-		return 1;
+		return 3;
 	}
 
 	// =========================================================================

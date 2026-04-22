@@ -375,7 +375,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <div class="header-stats">
     Uptime: <span id="uptime">--</span> |
     Port: <span id="port">--</span> |
-    Rotation: <span id="rotation">--</span> reqs
+    Rotation: <span id="rotation">--</span> reqs |
+    <button id="maskBtn" onclick="toggleMask()" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;">PII: Visible</button>
   </div>
 </div>
 
@@ -454,7 +455,7 @@ function renderModelRouting(activeAccounts) {
     return '<div class="model-route">' +
       '<span class="model-name">' + e[0] + '</span>' +
       '<span class="route-arrow">-></span>' +
-      '<span class="account-name">' + e[1] + '</span>' +
+      '<span class="account-name">' + maskText(e[1]) + '</span>' +
     '</div>';
   }).join('');
   container.innerHTML = '<div class="model-routing-title">Model Routing</div>' + rows;
@@ -498,13 +499,13 @@ function renderAccounts(data) {
 
     return '<div class="account-card ' + a.status + '">' +
       '<div class="card-header">' +
-        '<div class="card-label">' + a.label + '</div>' +
+        '<div class="card-label">' + maskText(a.label) + '</div>' +
         '<div class="card-badges">' +
           '<span class="badge badge-' + a.status + (isActive ? ' pulse' : '') + '">' + a.status + '</span>' +
           modelBadges +
         '</div>' +
       '</div>' +
-      '<div class="card-email">' + a.email + '</div>' +
+      '<div class="card-email">' + maskEmail(a.email) + '</div>' +
       (a.quota && a.quota.length > 0 ? renderQuotaBars(a.quota) : '') +
       '<div class="card-stats">' +
         '<div class="card-stat"><div class="stat-label">Requests</div><div class="stat-value">' +
@@ -530,6 +531,25 @@ function renderAccounts(data) {
   }).join('');
 }
 
+var MASK_MODE = new URLSearchParams(window.location.search).has('mask');
+var maskCounter = 0;
+var maskMap = {};
+
+function maskText(text) {
+  if (!MASK_MODE) return text;
+  if (!maskMap[text]) {
+    maskCounter++;
+    maskMap[text] = 'Account ' + maskCounter;
+  }
+  return maskMap[text];
+}
+
+function maskEmail(email) {
+  if (!MASK_MODE) return email;
+  var masked = maskText(email.split('@')[0]);
+  return masked.toLowerCase().replace(/ /g, '-') + '@***.com';
+}
+
 async function enableAccount(email) {
   await fetch('/api/enable/' + encodeURIComponent(email), { method: 'POST' });
   refresh();
@@ -540,9 +560,21 @@ async function refresh() {
     var res = await fetch('/api/status');
     var data = await res.json();
     renderAccounts(data);
+    var btn = document.getElementById('maskBtn');
+    if (btn) btn.textContent = MASK_MODE ? 'PII: Hidden' : 'PII: Visible';
   } catch (err) {
     console.error('Status fetch failed:', err);
   }
+}
+
+function toggleMask() {
+  var url = new URL(window.location);
+  if (MASK_MODE) {
+    url.searchParams.delete('mask');
+  } else {
+    url.searchParams.set('mask', '1');
+  }
+  window.location.href = url.toString();
 }
 
 refresh();

@@ -91,6 +91,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     flex: 1;
   }
 
+  .header-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+
   .header h1 {
     font-size: 22px;
     font-weight: 700;
@@ -113,6 +121,25 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     font-family: 'JetBrains Mono', monospace;
     color: var(--text);
     font-weight: 500;
+  }
+
+  .mask-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+    line-height: 1;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
+  }
+
+  .mask-btn:hover {
+    border-color: #35354b;
+    color: var(--text);
+    background: rgba(255,255,255,0.04);
   }
 
   .header-actions {
@@ -183,52 +210,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   .header-icon-badge.attention { background: var(--yellow); color: #17120a; }
   .header-icon-badge.advisor { background: var(--accent); }
-
-  .header-route-list {
-    display: inline-flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    max-width: 100%;
-  }
-
-  .header-route-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    max-width: 220px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: rgba(255,255,255,0.03);
-    font-size: 11px;
-  }
-
-  .header-route-pill .model-name {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 700;
-    color: var(--text);
-    white-space: nowrap;
-  }
-
-  .header-route-pill .route-arrow {
-    color: var(--text-dim);
-  }
-
-  .header-route-pill .account-name {
-    color: var(--accent);
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 240px;
-  }
-
-  .header-route-empty {
-    font-size: 11px;
-    color: var(--text-dim);
-  }
 
   .accounts-grid {
     display: grid;
@@ -778,8 +759,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     body { padding: 18px; }
     .header { flex-direction: column; align-items: stretch; }
     .header-actions { justify-content: flex-start; }
-    .header-route-list { width: 100%; }
-    .header-route-pill { max-width: none; }
   }
 </style>
 </head>
@@ -787,15 +766,16 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
 <div class="header">
   <div class="header-main">
-    <h1>Pi Antigravity Rotator</h1>
+    <div class="header-title-row">
+      <h1>Pi Antigravity Rotator</h1>
+      <button id="maskBtn" class="mask-btn" onclick="toggleMask()">PII: Visible</button>
+    </div>
     <div class="header-stats">
       Uptime: <span id="uptime">--</span> |
       Port: <span id="port">--</span> |
       Rotation: <span id="rotation">--</span> reqs |
       Updated: <span id="lastRefresh">--</span> |
-      Requests: <span id="totalRequests">0</span> |
-      Routing: <span id="modelRoutingSummary" class="header-route-list"><span class="header-route-empty">No model assignments yet.</span></span> |
-      <button id="maskBtn" onclick="toggleMask()" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;">PII: Visible</button>
+      Requests: <span id="totalRequests">0</span>
     </div>
   </div>
   <div class="header-actions">
@@ -885,29 +865,6 @@ function renderQuotaBars(quota) {
   return '<div class="quota-section"><div class="quota-section-title">Quota (per model)</div>' + rows + '</div>';
 }
 
-function renderModelRouting(activeAccounts) {
-  var container = document.getElementById('modelRoutingSummary');
-  var entries = Object.entries(activeAccounts || {});
-  if (entries.length === 0) {
-    container.innerHTML = '<span class="header-route-empty">No model assignments yet.</span>';
-    return;
-  }
-  function compactModelName(name) {
-    if (name.indexOf('gemini-3.1-pro') >= 0 || name.indexOf('gemini-3-pro') >= 0) return 'G3Pro';
-    if (name.indexOf('gemini-3-flash') >= 0) return 'G3Flash';
-    if (name.indexOf('claude') >= 0) return 'Claude';
-    return name;
-  }
-  var rows = entries.map(function(e) {
-    return '<span class="header-route-pill">' +
-      '<span class="model-name">' + compactModelName(e[0]) + '</span>' +
-      '<span class="route-arrow">-></span>' +
-      '<span class="account-name">' + maskText(e[1]) + '</span>' +
-    '</span>';
-  }).join('');
-  container.innerHTML = rows;
-}
-
 function renderAccounts(data) {
   var now = Date.now();
   document.getElementById('uptime').textContent = formatDuration(data.uptime);
@@ -967,7 +924,6 @@ function renderAccounts(data) {
     '</div>' +
     '<div class="ops-warning">' + freshPolicyHint + '</div>';
 
-  renderModelRouting(data.activeAccounts);
   renderAttentionPanel(data);
   renderRecentEvents(data.recentEvents);
 

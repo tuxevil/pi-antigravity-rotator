@@ -103,7 +103,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .header-stats {
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 14px;
     flex-wrap: wrap;
     font-size: 13px;
     color: var(--text-dim);
@@ -113,44 +113,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     font-family: 'JetBrains Mono', monospace;
     color: var(--text);
     font-weight: 500;
-  }
-
-  .header-compact {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 12px;
-  }
-
-  .compact-chip {
-    min-width: 0;
-    max-width: 190px;
-    padding: 8px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: rgba(255,255,255,0.03);
-  }
-
-  .compact-chip .label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.7px;
-    color: var(--text-dim);
-    margin-bottom: 5px;
-  }
-
-  .compact-chip .value {
-    font-size: 18px;
-    font-weight: 700;
-    line-height: 1;
-    font-family: 'JetBrains Mono', monospace;
-  }
-
-  .compact-chip .hint {
-    margin-top: 5px;
-    font-size: 10px;
-    color: var(--text-dim);
-    line-height: 1.2;
   }
 
   .header-actions {
@@ -222,39 +184,39 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .header-icon-badge.attention { background: var(--yellow); color: #17120a; }
   .header-icon-badge.advisor { background: var(--accent); }
 
-  .header-routing {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 12px;
-  }
-
-  .route-chip {
+  .header-route-list {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    min-width: 0;
+    flex-wrap: wrap;
+    gap: 6px;
     max-width: 100%;
-    padding: 9px 11px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: rgba(255,255,255,0.03);
-    font-size: 12px;
   }
 
-  .route-chip .model-name {
+  .header-route-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 220px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    font-size: 11px;
+  }
+
+  .header-route-pill .model-name {
     font-family: 'JetBrains Mono', monospace;
     font-weight: 700;
     color: var(--text);
     white-space: nowrap;
   }
 
-  .route-chip .route-arrow {
+  .header-route-pill .route-arrow {
     color: var(--text-dim);
   }
 
-  .route-chip .account-name {
+  .header-route-pill .account-name {
     color: var(--accent);
     font-weight: 500;
     white-space: nowrap;
@@ -263,12 +225,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     max-width: 240px;
   }
 
-  .route-empty {
-    font-size: 12px;
+  .header-route-empty {
+    font-size: 11px;
     color: var(--text-dim);
-    padding: 10px 12px;
-    border-radius: 12px;
-    border: 1px dashed var(--border);
   }
 
   .accounts-grid {
@@ -819,8 +778,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     body { padding: 18px; }
     .header { flex-direction: column; align-items: stretch; }
     .header-actions { justify-content: flex-start; }
-    .route-chip { width: 100%; }
-    .route-chip .account-name { max-width: none; }
+    .header-route-list { width: 100%; }
+    .header-route-pill { max-width: none; }
   }
 </style>
 </head>
@@ -834,27 +793,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       Port: <span id="port">--</span> |
       Rotation: <span id="rotation">--</span> reqs |
       Updated: <span id="lastRefresh">--</span> |
+      Requests: <span id="totalRequests">0</span> |
+      Routing: <span id="modelRoutingSummary" class="header-route-list"><span class="header-route-empty">No model assignments yet.</span></span> |
       <button id="maskBtn" onclick="toggleMask()" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;">PII: Visible</button>
-    </div>
-    <div class="header-compact">
-      <div class="compact-chip">
-        <div class="label">Total Requests</div>
-        <div class="value" id="totalRequests">0</div>
-        <div class="hint" id="requestHint">served total</div>
-      </div>
-      <div class="compact-chip">
-        <div class="label">Accounts</div>
-        <div class="value" id="accountCounts">0</div>
-        <div class="hint" id="accountBreakdown">0 active pool members visible to the rotator.</div>
-      </div>
-      <div class="compact-chip">
-        <div class="label">Healthy</div>
-        <div class="value" id="healthyCount" style="color:var(--green)">0</div>
-        <div class="hint" id="healthyHint">0 accounts are ready to serve immediately.</div>
-      </div>
-    </div>
-    <div class="header-routing" id="modelRouting">
-      <div class="route-empty">No model assignments yet.</div>
     </div>
   </div>
   <div class="header-actions">
@@ -945,10 +886,10 @@ function renderQuotaBars(quota) {
 }
 
 function renderModelRouting(activeAccounts) {
-  var container = document.getElementById('modelRouting');
+  var container = document.getElementById('modelRoutingSummary');
   var entries = Object.entries(activeAccounts || {});
   if (entries.length === 0) {
-    container.innerHTML = '<div class="route-empty">No model assignments yet (waiting for first request).</div>';
+    container.innerHTML = '<span class="header-route-empty">No model assignments yet.</span>';
     return;
   }
   function compactModelName(name) {
@@ -958,32 +899,22 @@ function renderModelRouting(activeAccounts) {
     return name;
   }
   var rows = entries.map(function(e) {
-    return '<div class="route-chip">' +
+    return '<span class="header-route-pill">' +
       '<span class="model-name">' + compactModelName(e[0]) + '</span>' +
       '<span class="route-arrow">-></span>' +
       '<span class="account-name">' + maskText(e[1]) + '</span>' +
-    '</div>';
+    '</span>';
   }).join('');
   container.innerHTML = rows;
 }
 
 function renderAccounts(data) {
   var now = Date.now();
-  var healthyCount = data.accounts.filter(function(a) { return a.status === 'active' || a.status === 'ready'; }).length;
   document.getElementById('uptime').textContent = formatDuration(data.uptime);
   document.getElementById('port').textContent = data.proxyPort;
   document.getElementById('rotation').textContent = data.requestsPerRotation;
   document.getElementById('lastRefresh').textContent = new Date(now).toLocaleTimeString();
   document.getElementById('totalRequests').textContent = data.totalRequestsAllAccounts;
-  document.getElementById('accountCounts').textContent = data.accounts.length;
-  document.getElementById('requestHint').textContent = 'served total';
-  document.getElementById('healthyCount').textContent = healthyCount;
-  document.getElementById('accountBreakdown').textContent =
-    (data.accounts.length - (data.routingHealth.flaggedCount || 0) - (data.routingHealth.disabledCount || 0)) +
-    ' active pool • ' +
-    (data.routingHealth.flaggedCount || 0) + ' flagged';
-  document.getElementById('healthyHint').textContent =
-    healthyCount + ' ready now • ' + (data.routingHealth.cooldownCount || 0) + ' cooling';
 
   var routingHealth = document.getElementById('routingHealth');
   var health = data.routingHealth || {};

@@ -22,6 +22,23 @@ export function serveEnableApi(res: ServerResponse, rotator: AccountRotator, ema
 	res.end(JSON.stringify({ ok, email }));
 }
 
+export function serveFreshWindowStartsApi(res: ServerResponse, rotator: AccountRotator, enabled: boolean): void {
+	const changed = rotator.setAllowFreshWindowStarts(enabled);
+	res.writeHead(200, { "Content-Type": "application/json" });
+	res.end(JSON.stringify({ ok: true, changed, allowFreshWindowStarts: enabled }));
+}
+
+export function serveAccountFreshWindowStartsApi(
+	res: ServerResponse,
+	rotator: AccountRotator,
+	email: string,
+	enabled: boolean,
+): void {
+	const ok = rotator.setAccountAllowFreshWindowStartsOverride(email, enabled);
+	res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
+	res.end(JSON.stringify({ ok, email, allowFreshWindowStartsOverride: enabled }));
+}
+
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -699,6 +716,10 @@ function quotaBarColor(pct) {
   return 'var(--red)';
 }
 
+function timerDisplayLabel(timerType) {
+  return timerType === 'fresh' ? 'idle' : timerType;
+}
+
 function renderQuotaBars(quota) {
   if (!quota || quota.length === 0) return '';
   var rows = quota.map(function(q) {
@@ -711,7 +732,7 @@ function renderQuotaBars(quota) {
     }
     return '<div class="quota-row">' +
       '<span class="quota-model">' + q.displayName + '</span>' +
-      '<span class="quota-timer ' + timerClass + '">' + q.timerType + '</span>' +
+      '<span class="quota-timer ' + timerClass + '">' + timerDisplayLabel(q.timerType) + '</span>' +
       '<div class="quota-bar-bg"><div class="quota-bar-fill" style="width:' + q.percentRemaining + '%;background:' + color + '"></div></div>' +
       '<span class="quota-pct" style="color:' + color + '">' + q.percentRemaining + '%</span>' +
       '<span class="quota-reset">' + (resetLabel || '--') + '</span>' +
@@ -750,6 +771,7 @@ function renderAccounts(data) {
 
   var routingHealth = document.getElementById('routingHealth');
   var health = data.routingHealth || {};
+  var controls = data.operatorControls || {};
   var state = health.state || 'stopped';
   var stateColor = {
     healthy: 'var(--green)',
@@ -763,6 +785,12 @@ function renderAccounts(data) {
   var pauseWindow = data.protectivePauseRemaining > 0
     ? '<div style="margin-top:6px;">Protective pause: <span style="font-family:JetBrains Mono, monospace;">' + formatDuration(data.protectivePauseRemaining) + '</span> remaining</div>'
     : '';
+  var freshPolicy = controls.allowFreshWindowStarts
+    ? '<div style="margin-top:6px;">Fresh windows: <span style="font-family:JetBrains Mono, monospace;color:var(--green)">allowed</span></div>'
+    : '<div style="margin-top:6px;">Fresh windows: <span style="font-family:JetBrains Mono, monospace;color:var(--yellow)">blocked</span></div>';
+  var freshPolicyHint = controls.allowFreshWindowStarts
+    ? 'The rotator may start fresh windows when they are the best available option.'
+    : 'Fresh windows are being held back. Timed 5h buckets still win first, timed 7d buckets still run, but the rotator will not open fresh windows until you re-enable them.';
   var healthGrid =
     '<div class="health-grid">' +
       renderHealthPill('Available', health.availableCount || 0) +
@@ -779,12 +807,16 @@ function renderAccounts(data) {
     '<div>' + (health.reason || 'No routing health information available') + '</div>' +
     nextRetry +
     pauseWindow +
+    freshPolicy +
     (data.protectivePauseReason && data.protectivePauseRemaining > 0 ? '<div style="margin-top:6px;color:var(--text-dim);font-family:JetBrains Mono, monospace;">' + data.protectivePauseReason.slice(0, 220) + '</div>' : '') +
     healthGrid +
     '<div class="ops-buttons">' +
       '<button class="btn-secondary" onclick="refresh()">Refresh</button>' +
+      '<button class="btn-secondary" onclick="setFreshWindowStarts(' + (!controls.allowFreshWindowStarts) + ')">' +
+        (controls.allowFreshWindowStarts ? 'Block Fresh Windows' : 'Allow Fresh Windows') +
+      '</button>' +
     '</div>' +
-    '<div class="ops-warning">When routing stops, that is intentional. The dashboard now surfaces the stop reason, retry window, protective pause, and blocker counts here so the operator does not need to rely on system logs.</div>';
+    '<div class="ops-warning">When routing stops, that is intentional. The dashboard now surfaces the stop reason, retry window, protective pause, and blocker counts here so the operator does not need to rely on system logs. ' + freshPolicyHint + '</div>';
 
   renderModelRouting(data.activeAccounts);
   renderAttentionPanel(data);
@@ -836,6 +868,9 @@ function renderAccounts(data) {
         '<div class="card-stat"><div class="stat-label">Token</div><div class="stat-value" style="color:' +
           (a.hasValidToken ? 'var(--green)' : 'var(--text-dim)') + '">' +
           (a.hasValidToken ? 'Valid' : 'Expired') + '</div></div>' +
+        '<div class="card-stat"><div class="stat-label">Fresh Policy</div><div class="stat-value" style="color:' +
+          (a.effectiveFreshWindowStartsAllowed ? 'var(--green)' : 'var(--yellow)') + '">' +
+          (a.allowFreshWindowStartsOverride ? 'Override ON' : (a.effectiveFreshWindowStartsAllowed ? 'Global ON' : 'Blocked')) + '</div></div>' +
       '</div>' +
       (a.lastError ? '<div class="card-error">' + a.lastError.slice(0, 150) + '</div>' +
         (a.lastError.toLowerCase().includes('verif') ?
@@ -844,7 +879,12 @@ function renderAccounts(data) {
           '<div class="card-hint">This account was suspended by Google. Submit an appeal at <a href="https://support.google.com/accounts/troubleshooter/2402620" target="_blank" style="color:var(--blue)">Google Account Recovery</a> and keep it out of rotation unless Google explicitly restores access.</div>' :
           '') : '') +
       (isCooldown ? '<div class="card-hint">Cooling down after a provider rate-limit response. The rotator will wait for the retry window instead of forcing more traffic into this account.</div>' : '') +
-      (a.status === 'disabled' ? '<div class="card-actions"><button class="btn-enable" onclick="enableAccount(\\'' + a.email + '\\')">Re-enable</button></div>' : '') +
+      '<div class="card-actions">' +
+        (a.status === 'disabled' ? '<button class="btn-enable" onclick="enableAccount(\\'' + a.email + '\\')">Re-enable</button>' : '') +
+        '<button class="btn-enable" onclick="setAccountFreshWindowOverride(\\'' + a.email + '\\', ' + (!a.allowFreshWindowStartsOverride) + ')">' +
+          (a.allowFreshWindowStartsOverride ? 'Use Global Fresh Policy' : 'Allow Fresh On This Account') +
+        '</button>' +
+      '</div>' +
       (isCooldown && cooldownPercent > 0 ? '<div class="cooldown-bar" style="width:' + cooldownPercent + '%"></div>' : '') +
     '</div>';
   }).join('');
@@ -993,6 +1033,16 @@ function setEventFilter(filter) {
 
 async function enableAccount(email) {
   await fetch('/api/enable/' + encodeURIComponent(email), { method: 'POST' });
+  refresh();
+}
+
+async function setFreshWindowStarts(enabled) {
+  await fetch('/api/settings/fresh-window-starts/' + (enabled ? 'on' : 'off'), { method: 'POST' });
+  refresh();
+}
+
+async function setAccountFreshWindowOverride(email, enabled) {
+  await fetch('/api/account-fresh-window-starts/' + encodeURIComponent(email) + '/' + (enabled ? 'on' : 'off'), { method: 'POST' });
   refresh();
 }
 

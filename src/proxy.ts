@@ -9,6 +9,8 @@ import {
 	serveDashboard,
 	serveStatusApi,
 	serveEnableApi,
+	serveFreshWindowStartsApi,
+	serveAccountFreshWindowStartsApi,
 } from "./dashboard.js";
 import { handleHostedCallback, serveLoginLanding, startHostedLogin } from "./onboarding.js";
 
@@ -390,6 +392,23 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 		if (method === "POST" && url.startsWith("/api/enable/")) {
 			const email = decodeURIComponent(url.slice("/api/enable/".length));
 			serveEnableApi(res, rotator, email);
+			return;
+		}
+
+		if (method === "POST" && (url === "/api/settings/fresh-window-starts/on" || url === "/api/settings/fresh-window-starts/off")) {
+			serveFreshWindowStartsApi(res, rotator, url.endsWith("/on"));
+			return;
+		}
+
+		if (
+			method === "POST" &&
+			(url.startsWith("/api/account-fresh-window-starts/") && (url.endsWith("/on") || url.endsWith("/off")))
+		) {
+			const rest = url.slice("/api/account-fresh-window-starts/".length);
+			const lastSlash = rest.lastIndexOf("/");
+			const email = decodeURIComponent(rest.slice(0, lastSlash));
+			const enabled = rest.slice(lastSlash + 1) === "on";
+			serveAccountFreshWindowStartsApi(res, rotator, email, enabled);
 			return;
 		}
 

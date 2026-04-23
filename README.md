@@ -11,6 +11,7 @@ Multi-account rotation proxy for Google Antigravity. Distributes API usage acros
 - **Infringement detection** -- On 403 with infringement/abuse/suspension keywords, the account is immediately flagged and excluded from routing
 - **Automatic failover** -- On 429 rate limits, instantly switches the affected model to the next available account
 - **Concurrency guardrails** -- Limits each account to one in-flight request by default to avoid bursty pressure
+- **Operator fresh-window controls** -- You can block new `fresh` window starts globally, then selectively allow specific accounts to override that policy
 - **Protective pause** -- Pauses all routing for several hours after serious ToS/abuse-style flags so the rest of the pool is not burned
 - **Token auto-refresh** -- Tokens are refreshed automatically before expiry; no manual management
 - **Endpoint cascade** -- Tries daily, autopush, and prod API endpoints for resilience
@@ -97,8 +98,9 @@ The dashboard shows:
 - **Account cards** sorted by total quota (highest first), flagged/disabled last:
   - Status badge: `active`, `ready`, `cooldown`, `flagged`, `disabled`, or `error`
   - Model badges: which models this account is currently serving
-  - Per-model quota bars with timer type (`fresh`/`7d`/`5h`) and reset countdown
+  - Per-model quota bars with timer type (`idle`/`7d`/`5h`) and reset countdown
   - Request counts, last used time, token status
+  - Fresh-window policy status plus a per-account override button
   - Error messages for flagged/errored accounts
   - Re-enable button for disabled accounts
 
@@ -136,7 +138,7 @@ Within the same priority tier, the account with the most remaining quota for tha
 
 Timer meanings:
 
-- `fresh` -- no future `resetTime` is currently reported for that model on that account. In practice, this means no active reset window is known yet.
+- `fresh` -- no future `resetTime` is currently reported for that model on that account. In practice, this means no active reset window is visible in quota polling yet. The dashboard labels this as `idle` to avoid implying that it is automatically safe to start.
 - `5h` -- `resetTime` is less than 6 hours away.
 - `7d` -- `resetTime` is 6 hours or more away.
 
@@ -149,6 +151,27 @@ Three mechanisms trigger rotation, scoped to the specific model:
 2. **Request-count** (fallback) -- After `requestsPerRotation` successful requests (default: 5), the rotator asks for a rotation on the model that served that request. By default this fallback is only used when quota data for that model is still unknown.
 
 3. **429 failover** (reactive) -- On rate limit, the account is marked exhausted with a parsed retry cooldown and the affected model immediately switches.
+
+### Fresh Windows
+
+The quota polling API only exposes one visible `quotaInfo` block per model. If a model has no visible `resetTime`, the rotator classifies it as `fresh` internally and the dashboard shows it as `idle`.
+
+Operationally, `idle` means:
+
+- no timer window is currently visible for that model in quota polling
+- starting that account may open a new quota window
+- because the provider does not expose all parallel buckets explicitly, the rotator cannot guarantee ahead of time whether that new visible window will behave like a short `5h` opportunity or a longer `7d` runway
+
+For that reason, the rotator has two operator controls:
+
+- a **global fresh-window toggle** that blocks opening new `idle` windows by default
+- a **per-account override** that allows specific accounts to ignore the global block when you intentionally want them available
+
+When fresh-window starts are blocked:
+
+- visible `5h` timers still have highest priority
+- visible `7d` timers are still used normally
+- `idle` accounts are held back unless you explicitly enable their per-account override
 
 ### Account Protection
 
@@ -186,6 +209,7 @@ The dashboard is intended to replace day-to-day `journalctl` digging for normal 
 - The exact stop or wait reason
 - The next retry window when cooldowns are active
 - Protective pause remaining time and the provider signal that triggered it
+- The global fresh-window policy and a button to block or allow new `idle` window starts
 - Pool counts for available, ready, active, cooldown, busy, flagged, disabled, and error accounts
 - An `Attention Needed` section summarizing flagged, cooling, disabled, and error accounts
 - A recent event feed with the latest rotator/proxy incidents that led to the current state
@@ -253,6 +277,10 @@ pi-antigravity-rotator start --config-dir /path/to/config
 | `GET` | `/login` | Hosted account-link landing page |
 | `GET` | `/api/status` | JSON status: accounts, quotas, model routing, flags |
 | `POST` | `/api/enable/<email>` | Re-enable a disabled account after its underlying issue is fixed |
+| `POST` | `/api/settings/fresh-window-starts/on` | Allow opening new `idle`/fresh windows globally |
+| `POST` | `/api/settings/fresh-window-starts/off` | Block opening new `idle`/fresh windows globally |
+| `POST` | `/api/account-fresh-window-starts/<email>/on` | Allow one account to override the global fresh-window block |
+| `POST` | `/api/account-fresh-window-starts/<email>/off` | Return one account to the global fresh-window policy |
 | `POST` | `/v1internal:streamGenerateContent` | Proxy endpoint (used by pi) |
 
 ## Running as a Service

@@ -110,6 +110,7 @@ export interface AccountRuntime {
 	disabled: boolean; // permanently disabled (revoked token, etc.)
 	flagged: boolean; // flagged for infringement/abuse by Google
 	inFlightRequests: number;
+	allowFreshWindowStartsOverride: boolean;
 }
 
 // Per-model rotation state tracked by the rotator
@@ -126,6 +127,7 @@ export interface PersistedState {
 	currentIndex?: number;
 	protectivePauseUntil?: number;
 	protectivePauseReason?: string | null;
+	allowFreshWindowStarts?: boolean;
 	accounts: Record<
 		string,
 		{
@@ -134,6 +136,7 @@ export interface PersistedState {
 			quotaExhaustedAt: number;
 			disabled: boolean;
 			flagged: boolean;
+			allowFreshWindowStartsOverride?: boolean;
 		}
 	>;
 }
@@ -150,6 +153,9 @@ export interface StatusResponse {
 	protectivePauseUntil: number;
 	protectivePauseRemaining: number;
 	protectivePauseReason: string | null;
+	operatorControls: {
+		allowFreshWindowStarts: boolean;
+	};
 	routingHealth: {
 		state: "healthy" | "paused" | "cooldown_wait" | "busy" | "stopped";
 		reason: string;
@@ -191,6 +197,8 @@ export interface AccountStatus {
 	// Pro family sharing
 	proDetected: boolean;
 	familyManager: boolean;
+	allowFreshWindowStartsOverride: boolean;
+	effectiveFreshWindowStartsAllowed: boolean;
 }
 
 // Pro advisor suggestion

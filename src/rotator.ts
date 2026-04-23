@@ -35,6 +35,7 @@ export class AccountRotator {
 	private quotaPollTimer: ReturnType<typeof setInterval> | null = null;
 	private protectivePauseUntil = 0;
 	private protectivePauseReason: string | null = null;
+	private allowFreshWindowStarts = true;
 	private recentEvents: StatusResponse["recentEvents"] = [];
 	private static readonly RECENT_EVENT_LIMIT = 40;
 
@@ -61,6 +62,7 @@ export class AccountRotator {
 			disabled: false,
 			flagged: false,
 			inFlightRequests: 0,
+			allowFreshWindowStartsOverride: false,
 		}));
 	}
 
@@ -85,6 +87,7 @@ export class AccountRotator {
 			}
 			this.protectivePauseUntil = state.protectivePauseUntil ?? 0;
 			this.protectivePauseReason = state.protectivePauseReason ?? null;
+			this.allowFreshWindowStarts = state.allowFreshWindowStarts ?? true;
 
 			for (const account of this.accounts) {
 				const saved = state.accounts[account.config.email];
@@ -94,6 +97,7 @@ export class AccountRotator {
 					account.quotaExhaustedAt = saved.quotaExhaustedAt;
 					account.disabled = saved.disabled;
 					account.flagged = saved.flagged ?? false;
+					account.allowFreshWindowStartsOverride = saved.allowFreshWindowStartsOverride ?? false;
 				}
 			}
 			// Cap any stale cooldowns to 30 min max from now
@@ -121,6 +125,7 @@ export class AccountRotator {
 			currentIndex: this.defaultIndex,
 			protectivePauseUntil: this.protectivePauseUntil,
 			protectivePauseReason: this.protectivePauseReason,
+			allowFreshWindowStarts: this.allowFreshWindowStarts,
 			accounts: {},
 		};
 		for (const account of this.accounts) {
@@ -130,6 +135,7 @@ export class AccountRotator {
 				quotaExhaustedAt: account.quotaExhaustedAt,
 				disabled: account.disabled,
 				flagged: account.flagged,
+				allowFreshWindowStartsOverride: account.allowFreshWindowStartsOverride,
 			};
 		}
 			try {
@@ -297,14 +303,62 @@ export class AccountRotator {
 	}
 
 	// Timer priority for a specific model:
-	//   1 (highest) = 5h timer -> drain Pro quota before reset to maximize the +40% recharge
-	//   2           = 7d timer -> already ticking, use it
-	//   3 (lowest)  = fresh -> no timer yet, save for when others are exhausted
+	//   1 (highest) = 5h timer -> only class with hard quota loss if underused before reset
+	//   2           = 7d timer -> already ticking, keep those long windows moving
+	//   3 (lowest)  = fresh -> no visible timer is running yet
 	private getModelTimerPriority(account: AccountRuntime, modelKey: string): number {
 		const type = this.getModelTimerType(account, modelKey);
 		if (type === "5h") return 1;
 		if (type === "7d") return 2;
 		return 3;
+	}
+
+	private isFreshWindowAllowed(account: AccountRuntime, modelKey: string): boolean {
+		if (this.allowFreshWindowStarts) return true;
+		if (account.allowFreshWindowStartsOverride) return true;
+		return this.getModelTimerType(account, modelKey) !== "fresh";
+	}
+
+	private isEffectiveFreshWindowAllowed(account: AccountRuntime): boolean {
+		return this.allowFreshWindowStarts || account.allowFreshWindowStartsOverride;
+	}
+
+	private isTimedWindow(account: AccountRuntime, modelKey: string): boolean {
+		return this.getModelTimerType(account, modelKey) !== "fresh";
+	}
+
+	private hasTimedCandidate(modelKey: string, now: number, excludeIdx: number = -1): boolean {
+		return this.accounts.some((account, idx) => {
+			if (idx === excludeIdx) return false;
+			if (!this.isAvailable(account, now)) return false;
+			if (this.getModelQuota(account, modelKey) === 0) return false;
+			return this.isTimedWindow(account, modelKey);
+		});
+	}
+
+	private pickBestModelAccount(modelKey: string, now: number, excludeIdx: number = -1): AccountRuntime | null {
+		let best: AccountRuntime | null = null;
+		let bestPriority = Infinity;
+		let bestQuota = -2;
+
+		for (let i = 0; i < this.accounts.length; i++) {
+			if (i === excludeIdx) continue;
+			const account = this.accounts[i];
+			if (!this.isAvailable(account, now)) continue;
+
+			const quota = this.getModelQuota(account, modelKey);
+			if (quota === 0) continue;
+			if (!this.isFreshWindowAllowed(account, modelKey)) continue;
+
+			const priority = this.getModelTimerPriority(account, modelKey);
+			if (priority < bestPriority || (priority === bestPriority && quota > bestQuota)) {
+				best = account;
+				bestPriority = priority;
+				bestQuota = quota;
+			}
+		}
+
+		return best;
 	}
 
 	// =========================================================================
@@ -319,9 +373,8 @@ export class AccountRotator {
 		if (this.isProtectivePauseActive(now)) return null;
 
 		const modelKey = model ? resolveQuotaModelKey(model) : null;
-		const idx = modelKey
-			? (this.modelState.get(modelKey)?.activeAccountIndex ?? this.defaultIndex)
-			: this.defaultIndex;
+		const state = modelKey ? this.modelState.get(modelKey) : null;
+		const idx = state?.activeAccountIndex ?? this.defaultIndex;
 
 		const current = this.accounts[idx];
 		if (current && this.isAvailable(current, now)) {
@@ -331,6 +384,16 @@ export class AccountRotator {
 				if (quota === 0) {
 					this.log(
 						`${current.config.label || current.config.email} [${modelKey}]: 0% quota, skipping`,
+					);
+					return this.rotateModel(modelKey);
+				}
+				if (!this.isFreshWindowAllowed(current, modelKey)) {
+					const label = current.config.label || current.config.email;
+					this.log(
+						this.hasTimedCandidate(modelKey, now, idx)
+							? `${label} [${modelKey}]: skipping fresh window because fresh starts are disabled and timed buckets are available`
+							: `${label} [${modelKey}]: fresh window blocked by operator toggle`,
+						"warn",
 					);
 					return this.rotateModel(modelKey);
 				}
@@ -345,37 +408,20 @@ export class AccountRotator {
 			}
 		}
 
-		// Current unavailable, find next
-		return modelKey ? this.rotateModel(modelKey) : this.rotateDefault();
+		// Current unavailable, or no per-model assignment yet
+		if (modelKey) {
+			return this.rotateModel(modelKey, now, state ? idx : -1);
+		}
+		return this.rotateDefault();
 	}
 
 	// Rotate a specific model to the best available account.
-	async rotateModel(modelKey: string, now: number = Date.now()): Promise<AccountRuntime | null> {
-		const currentIdx = this.modelState.get(modelKey)?.activeAccountIndex ?? -1;
-
-		let best: AccountRuntime | null = null;
-		let bestPriority = Infinity;
-		let bestQuota = -2;
-
-		for (let i = 0; i < this.accounts.length; i++) {
-			if (i === currentIdx) continue;
-			const account = this.accounts[i];
-
-			if (this.isAvailable(account, now)) {
-				const quota = this.getModelQuota(account, modelKey);
-
-				// Skip accounts with 0% quota for this model (they will 429)
-				if (quota === 0) continue;
-
-				const priority = this.getModelTimerPriority(account, modelKey);
-
-				if (priority < bestPriority || (priority === bestPriority && quota > bestQuota)) {
-					best = account;
-					bestPriority = priority;
-					bestQuota = quota;
-				}
-			}
-		}
+	async rotateModel(
+		modelKey: string,
+		now: number = Date.now(),
+		excludeIdx: number = this.modelState.get(modelKey)?.activeAccountIndex ?? -1,
+	): Promise<AccountRuntime | null> {
+		const best = this.pickBestModelAccount(modelKey, now, excludeIdx);
 
 		if (best) {
 			const newIdx = this.accounts.indexOf(best);
@@ -397,6 +443,19 @@ export class AccountRotator {
 				this.finishRequest(best);
 				throw err;
 			}
+		}
+
+		if (!this.allowFreshWindowStarts && this.accounts.some((account, idx) => {
+			if (idx === excludeIdx) return false;
+			if (!this.isAvailable(account, now)) return false;
+			if (this.getModelQuota(account, modelKey) === 0) return false;
+			return this.getModelTimerType(account, modelKey) === "fresh";
+		})) {
+			this.log(
+				`[${modelKey}] Fresh windows are available but blocked by operator toggle; keeping routing on existing timed buckets only`,
+				"warn",
+			);
+			return null;
 		}
 
 		const shortestCooldown = this.accounts.reduce<number | null>((bestRemaining, account) => {
@@ -523,6 +582,34 @@ export class AccountRotator {
 		account.cooldownUntil = 0;
 		this.saveState();
 		this.log(`${email}: re-enabled`);
+		return true;
+	}
+
+	setAllowFreshWindowStarts(enabled: boolean): boolean {
+		if (this.allowFreshWindowStarts === enabled) return false;
+		this.allowFreshWindowStarts = enabled;
+		this.saveState();
+		this.log(
+			enabled
+				? "Operator enabled fresh window starts; the rotator may seed new timer windows again"
+				: "Operator disabled fresh window starts; the rotator will only use buckets whose timers are already running",
+			"warn",
+		);
+		return true;
+	}
+
+	setAccountAllowFreshWindowStartsOverride(email: string, enabled: boolean): boolean {
+		const account = this.accounts.find((a) => a.config.email === email);
+		if (!account) return false;
+		if (account.allowFreshWindowStartsOverride === enabled) return true;
+		account.allowFreshWindowStartsOverride = enabled;
+		this.saveState();
+		this.log(
+			enabled
+				? `${email}: operator override enabled fresh window starts for this account`
+				: `${email}: operator override cleared; this account now follows the global fresh-window policy`,
+			"warn",
+		);
 		return true;
 	}
 
@@ -658,6 +745,8 @@ export class AccountRotator {
 				inFlightRequests: a.inFlightRequests,
 				proDetected: this.isProAccount(a),
 				familyManager: !!a.config.familyManager,
+				allowFreshWindowStartsOverride: a.allowFreshWindowStartsOverride,
+				effectiveFreshWindowStartsAllowed: this.isEffectiveFreshWindowAllowed(a),
 			};
 		});
 
@@ -672,6 +761,9 @@ export class AccountRotator {
 			protectivePauseUntil: this.protectivePauseUntil,
 			protectivePauseRemaining: Math.max(0, this.protectivePauseUntil - now),
 			protectivePauseReason: this.isProtectivePauseActive(now) ? this.protectivePauseReason : null,
+			operatorControls: {
+				allowFreshWindowStarts: this.allowFreshWindowStarts,
+			},
 			routingHealth,
 			accounts,
 			proAdvisor: this.getProAdvisor(),
@@ -713,6 +805,7 @@ export class AccountRotator {
 				disabled: false,
 				flagged: false,
 				inFlightRequests: 0,
+				allowFreshWindowStartsOverride: false,
 			};
 			this.accounts.push(runtime);
 			this.config.accounts.push(runtime.config);
@@ -863,11 +956,18 @@ export class AccountRotator {
 		const busyCount = accounts.filter(
 			(a) => a.status !== "disabled" && a.status !== "flagged" && a.inFlightRequests > 0,
 		).length;
-		const availableCount = this.accounts.filter((a) => this.isAvailable(a, now)).length;
+		const rawAvailableCount = this.accounts.filter((a) => this.isAvailable(a, now)).length;
+		const timedAvailableCount = this.accounts.filter((account) => {
+			if (!this.isAvailable(account, now)) return false;
+			const hasTimedQuota = account.quota.some((q) => q.percentRemaining !== 0 && q.timerType !== "fresh");
+			return hasTimedQuota || account.allowFreshWindowStartsOverride;
+		}).length;
+		const availableCount = this.allowFreshWindowStarts ? rawAvailableCount : timedAvailableCount;
 		const shortestCooldown = accounts
 			.filter((a) => a.cooldownRemaining > 0)
 			.reduce((best, account) => (best === 0 || account.cooldownRemaining < best ? account.cooldownRemaining : best), 0);
 		const pauseRemaining = Math.max(0, this.protectivePauseUntil - now);
+		const freshOnlyBlocked = !this.allowFreshWindowStarts && rawAvailableCount > 0 && timedAvailableCount === 0;
 
 		if (pauseRemaining > 0) {
 			return {
@@ -886,9 +986,28 @@ export class AccountRotator {
 		}
 
 		if (availableCount > 0) {
+			const freshPolicyNote = !this.allowFreshWindowStarts
+				? " Fresh window starts are currently disabled by the operator."
+				: "";
 			return {
 				state: "healthy",
-				reason: "Routing can serve requests",
+				reason: `Routing can serve requests.${freshPolicyNote}`,
+				nextRetryIn: 0,
+				availableCount,
+				readyCount,
+				activeCount,
+				cooldownCount,
+				busyCount,
+				flaggedCount,
+				disabledCount,
+				errorCount,
+			};
+		}
+
+		if (freshOnlyBlocked) {
+			return {
+				state: "stopped",
+				reason: "Only fresh windows remain, and the operator toggle is preventing the rotator from opening them right now.",
 				nextRetryIn: 0,
 				availableCount,
 				readyCount,
@@ -935,7 +1054,9 @@ export class AccountRotator {
 
 		return {
 			state: "stopped",
-			reason: "No account is currently routable. All accounts are flagged, disabled, or unavailable.",
+			reason: !this.allowFreshWindowStarts
+				? "No timed bucket is currently routable. Fresh window starts are disabled, so the rotator is waiting for an already-running timer, cooldown recovery, or operator action."
+				: "No account is currently routable. All accounts are flagged, disabled, or unavailable.",
 			nextRetryIn: 0,
 			availableCount,
 			readyCount,

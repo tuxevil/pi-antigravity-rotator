@@ -5,7 +5,11 @@ import { Readable } from "node:stream";
 import { ANTIGRAVITY_ENDPOINTS } from "./types.js";
 import type { AccountRuntime } from "./types.js";
 import type { AccountRotator } from "./rotator.js";
-import { serveDashboard, serveStatusApi, serveEnableApi, serveResetCooldownsApi } from "./dashboard.js";
+import {
+	serveDashboard,
+	serveStatusApi,
+	serveEnableApi,
+} from "./dashboard.js";
 
 const MAX_ENDPOINT_RETRIES = 3;
 const MAX_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes max cooldown
@@ -158,9 +162,10 @@ async function forwardRequest(
 	throw new Error("All endpoints failed");
 }
 
-function log(msg: string): void {
+function log(msg: string, rotator?: AccountRotator, level: "info" | "warn" | "error" = "info"): void {
 	const ts = new Date().toISOString().slice(11, 19);
 	console.log(`[${ts}] [proxy] ${msg}`);
+	rotator?.recordProxyEvent(msg, level);
 }
 
 /**
@@ -181,16 +186,32 @@ async function handleProxyRequest(
 		return;
 	}
 
+	const proxyLog = (msg: string, level: "info" | "warn" | "error" = "info"): void => {
+		log(msg, rotator, level);
+	};
+
+	const sendNoAccountsAvailable = (reason: string): void => {
+		proxyLog(`[${body.model}] No healthy account available: ${reason}`, "warn");
+		res.writeHead(503, { "Content-Type": "application/json" });
+		res.end(JSON.stringify({ error: "All accounts exhausted or disabled", reason, model: body.model }));
+	};
+	const rotateAndRelease = async (): Promise<AccountRuntime | null> => {
+		const nextAccount = await rotator.rotateToNext(body.model);
+		if (nextAccount) {
+			rotator.finishRequest(nextAccount);
+		}
+		return nextAccount;
+	};
+
 	for (let attempt = 0; attempt < MAX_ENDPOINT_RETRIES; attempt++) {
 		const account = await rotator.getActiveAccount(body.model);
 		if (!account) {
-			res.writeHead(503, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "All accounts exhausted or disabled" }));
+			sendNoAccountsAvailable("rotation returned no available account");
 			return;
 		}
 
 		const label = account.config.label || account.config.email;
-		log(`[${label}] Forwarding ${body.model} request (attempt ${attempt + 1})`);
+		proxyLog(`[${label}] Forwarding ${body.model} request (attempt ${attempt + 1})`);
 
 		try {
 			const response = await forwardRequest(account, { ...body }, flattenHeaders(req.headers));
@@ -198,17 +219,25 @@ async function handleProxyRequest(
 			if (response.status === 429) {
 				const errorText = await response.text().catch(() => "");
 				const cooldownMs = capCooldown(extractRetryDelay(errorText, response.headers));
-				log(`[${label}] 429 rate limited, cooldown ${Math.ceil(cooldownMs / 1000)}s`);
+				proxyLog(`[${label}] 429 rate limited, cooldown ${Math.ceil(cooldownMs / 1000)}s`, "warn");
 				rotator.markExhausted(account, cooldownMs);
-				await rotator.rotateToNext(body.model);
+				const nextAccount = await rotateAndRelease();
+				if (!nextAccount) {
+					sendNoAccountsAvailable(`all candidate accounts are cooling down after ${label} was rate limited`);
+					return;
+				}
 				continue;
 			}
 
-			if (response.status === 401) {
-				const errorText = await response.text().catch(() => "");
-				log(`[${label}] BLOCKED (401): ${errorText.slice(0, 200)}`);
-				rotator.markFlagged(account, `Account blocked (401): ${errorText.slice(0, 300)}`);
-				await rotator.rotateToNext(body.model);
+				if (response.status === 401) {
+					const errorText = await response.text().catch(() => "");
+					proxyLog(`[${label}] BLOCKED (401): ${errorText.slice(0, 200)}`, "error");
+					rotator.markFlagged(account, `Account blocked (401): ${errorText.slice(0, 300)}`);
+				const nextAccount = await rotateAndRelease();
+				if (!nextAccount) {
+					sendNoAccountsAvailable(`no replacement account remained after ${label} was flagged with 401`);
+					return;
+				}
 				continue;
 			}
 
@@ -216,36 +245,44 @@ async function handleProxyRequest(
 				const errorText = await response.text().catch(() => "");
 				const lower = errorText.toLowerCase();
 				const flagPatterns = ["infring", "suspend", "abus", "terminat", "violat", "banned", "policy", "forbidden", "verif"];
-				const isFlagged = flagPatterns.some((p) => lower.includes(p));
+					const isFlagged = flagPatterns.some((p) => lower.includes(p));
 
-				if (isFlagged) {
-					log(`[${label}] FLAGGED: ${errorText.slice(0, 200)}`);
-					rotator.markFlagged(account, errorText.slice(0, 300));
-					await rotator.rotateToNext(body.model);
+					if (isFlagged) {
+						proxyLog(`[${label}] FLAGGED: ${errorText.slice(0, 200)}`, "error");
+						rotator.markFlagged(account, errorText.slice(0, 300));
+					const nextAccount = await rotateAndRelease();
+					if (!nextAccount) {
+						sendNoAccountsAvailable(`no replacement account remained after ${label} was flagged with 403`);
+						return;
+					}
 					continue;
-				}
-				// Non-flagging 403: return to client
-				log(`[${label}] 403: ${errorText.slice(0, 200)}`);
-				res.writeHead(403, { "Content-Type": "application/json" });
+					}
+					// Non-flagging 403: return to client
+					proxyLog(`[${label}] 403: ${errorText.slice(0, 200)}`, "warn");
+					res.writeHead(403, { "Content-Type": "application/json" });
 				res.end(errorText || JSON.stringify({ error: "Forbidden" }));
 				return;
 			}
 
-			if (response.status >= 500) {
-				const errorText = await response.text().catch(() => "");
-				log(`[${label}] Server error ${response.status}: ${errorText.slice(0, 200)}`);
+				if (response.status >= 500) {
+					const errorText = await response.text().catch(() => "");
+					proxyLog(`[${label}] Server error ${response.status}: ${errorText.slice(0, 200)}`, "warn");
 				if (response.status === 503) {
 					res.writeHead(503, { "Content-Type": "application/json" });
 					res.end(errorText || JSON.stringify({ error: "Server unavailable" }));
 					return;
 				}
 				rotator.markError(account, `${response.status}: ${errorText.slice(0, 200)}`);
-				await rotator.rotateToNext(body.model);
+				const nextAccount = await rotateAndRelease();
+				if (!nextAccount) {
+					sendNoAccountsAvailable(`no replacement account remained after ${label} failed with ${response.status}`);
+					return;
+				}
 				continue;
 			}
 
 			// Success or non-error client response
-			const shouldRotate = rotator.recordRequest(account);
+			const shouldRotate = rotator.recordRequest(account, body.model);
 
 			const responseHeaders: Record<string, string> = {};
 			response.headers.forEach((value, key) => {
@@ -260,33 +297,39 @@ async function handleProxyRequest(
 			if (response.body) {
 				try {
 					const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
-					await new Promise<void>((resolve) => {
-						nodeStream.on("data", (chunk: Buffer) => res.write(chunk));
-						nodeStream.on("end", resolve);
-						nodeStream.on("error", (err) => {
-							log(`[${label}] Stream error: ${err}`);
-							resolve();
+						await new Promise<void>((resolve) => {
+							nodeStream.on("data", (chunk: Buffer) => res.write(chunk));
+							nodeStream.on("end", resolve);
+							nodeStream.on("error", (err) => {
+								proxyLog(`[${label}] Stream error: ${err}`, "warn");
+								resolve();
+							});
 						});
-					});
-				} catch (err) {
-					log(`[${label}] Stream setup error: ${err}`);
+					} catch (err) {
+						proxyLog(`[${label}] Stream setup error: ${err}`, "warn");
+					}
 				}
-			}
 			res.end();
 
 			if (shouldRotate) {
-				await rotator.rotateToNext(body.model);
-			}
-			return;
-		} catch (err) {
-			log(`[${label}] Request failed: ${err}`);
-			rotator.markError(account, err instanceof Error ? err.message : String(err));
+				await rotateAndRelease();
+				}
+				return;
+			} catch (err) {
+				proxyLog(`[${label}] Request failed: ${err}`, "error");
+				rotator.markError(account, err instanceof Error ? err.message : String(err));
 			if (res.headersSent) {
 				res.end();
 				return;
 			}
-			await rotator.rotateToNext(body.model);
+			const nextAccount = await rotateAndRelease();
+			if (!nextAccount) {
+				sendNoAccountsAvailable(`no replacement account remained after ${label} request error`);
+				return;
+			}
 			continue;
+		} finally {
+			rotator.finishRequest(account);
 		}
 	}
 
@@ -328,15 +371,10 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			return;
 		}
 
-		if (method === "POST" && url === "/api/reset-cooldowns") {
-			serveResetCooldownsApi(res, rotator);
-			return;
-		}
-
 		// Proxy route
 		if (method === "POST" && url.includes("v1internal")) {
 			handleProxyRequest(req, res, rotator).catch((err) => {
-				log(`Unhandled error: ${err}`);
+				log(`Unhandled error: ${err}`, rotator, "error");
 				if (!res.headersSent) {
 					res.writeHead(500, { "Content-Type": "application/json" });
 				}
@@ -350,7 +388,7 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 	});
 
 	server.listen(port, "0.0.0.0", () => {
-		console.log(`[proxy] Listening on 0.0.0.0:${port}`);
-		console.log(`[proxy] Dashboard: http://localhost:${port}/dashboard`);
+		log(`Listening on 0.0.0.0:${port}`, rotator);
+		log(`Dashboard: http://localhost:${port}/dashboard`, rotator);
 	});
 }

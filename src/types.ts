@@ -23,6 +23,12 @@ export interface Config {
 	quotaPollIntervalMs: number;
 	// Max simultaneous Pro accounts (owner + members). Default: 6
 	proSlots?: number;
+	// Hard cap on parallel requests per account. Conservative default is 1.
+	maxConcurrentRequestsPerAccount?: number;
+	// Pause all routing after a serious provider flag. Default: 6h.
+	protectivePauseMs?: number;
+	// Use request-count rotation only before quota data is available. Default: true.
+	useRequestCountRotationWhenQuotaUnknownOnly?: boolean;
 }
 
 // Quota API response from Google
@@ -103,6 +109,7 @@ export interface AccountRuntime {
 	consecutiveErrors: number;
 	disabled: boolean; // permanently disabled (revoked token, etc.)
 	flagged: boolean; // flagged for infringement/abuse by Google
+	inFlightRequests: number;
 }
 
 // Per-model rotation state tracked by the rotator
@@ -117,6 +124,8 @@ export interface PersistedState {
 	modelAccounts: Record<string, number>;
 	// Legacy fallback
 	currentIndex?: number;
+	protectivePauseUntil?: number;
+	protectivePauseReason?: string | null;
 	accounts: Record<
 		string,
 		{
@@ -138,12 +147,29 @@ export interface StatusResponse {
 	// Per-model active account
 	activeAccounts: Record<string, string>;
 	accounts: AccountStatus[];
+	protectivePauseUntil: number;
+	protectivePauseRemaining: number;
+	protectivePauseReason: string | null;
+	routingHealth: {
+		state: "healthy" | "paused" | "cooldown_wait" | "busy" | "stopped";
+		reason: string;
+		nextRetryIn: number;
+		availableCount: number;
+		readyCount: number;
+		activeCount: number;
+		cooldownCount: number;
+		busyCount: number;
+		flaggedCount: number;
+		disabledCount: number;
+		errorCount: number;
+	};
 	// Pro family sharing advisor
 	proAdvisor: {
 		currentProCount: number;
 		maxProSlots: number;
 		actions: ProAdvisorAction[];
 	};
+	recentEvents: RecentEvent[];
 }
 
 export interface AccountStatus {
@@ -161,6 +187,7 @@ export interface AccountStatus {
 	consecutiveErrors: number;
 	hasValidToken: boolean;
 	quota: ModelQuota[];
+	inFlightRequests: number;
 	// Pro family sharing
 	proDetected: boolean;
 	familyManager: boolean;
@@ -172,6 +199,13 @@ export interface ProAdvisorAction {
 	email: string;
 	label: string;
 	reason: string;
+}
+
+export interface RecentEvent {
+	timestamp: number;
+	source: "rotator" | "proxy";
+	level: "info" | "warn" | "error";
+	message: string;
 }
 
 // Antigravity OAuth constants (same as pi-mono)

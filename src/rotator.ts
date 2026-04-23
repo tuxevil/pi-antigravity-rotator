@@ -32,6 +32,10 @@ export class AccountRotator {
 	private defaultIndex = 0;
 	private startTime = Date.now();
 	private quotaPollTimer: ReturnType<typeof setInterval> | null = null;
+	private protectivePauseUntil = 0;
+	private protectivePauseReason: string | null = null;
+	private recentEvents: StatusResponse["recentEvents"] = [];
+	private static readonly RECENT_EVENT_LIMIT = 40;
 
 	constructor(private config: Config) {
 		this.initAccounts();
@@ -55,6 +59,7 @@ export class AccountRotator {
 			consecutiveErrors: 0,
 			disabled: false,
 			flagged: false,
+			inFlightRequests: 0,
 		}));
 	}
 
@@ -77,6 +82,8 @@ export class AccountRotator {
 			if (state.currentIndex !== undefined) {
 				this.defaultIndex = Math.min(state.currentIndex, this.accounts.length - 1);
 			}
+			this.protectivePauseUntil = state.protectivePauseUntil ?? 0;
+			this.protectivePauseReason = state.protectivePauseReason ?? null;
 
 			for (const account of this.accounts) {
 				const saved = state.accounts[account.config.email];
@@ -85,7 +92,7 @@ export class AccountRotator {
 					account.cooldownUntil = saved.cooldownUntil;
 					account.quotaExhaustedAt = saved.quotaExhaustedAt;
 					account.disabled = saved.disabled;
-				account.flagged = saved.flagged ?? false;
+					account.flagged = saved.flagged ?? false;
 				}
 			}
 			// Cap any stale cooldowns to 30 min max from now
@@ -111,6 +118,8 @@ export class AccountRotator {
 		const state: PersistedState = {
 			modelAccounts,
 			currentIndex: this.defaultIndex,
+			protectivePauseUntil: this.protectivePauseUntil,
+			protectivePauseReason: this.protectivePauseReason,
 			accounts: {},
 		};
 		for (const account of this.accounts) {
@@ -119,14 +128,14 @@ export class AccountRotator {
 				cooldownUntil: account.cooldownUntil,
 				quotaExhaustedAt: account.quotaExhaustedAt,
 				disabled: account.disabled,
-			flagged: account.flagged,
+				flagged: account.flagged,
 			};
 		}
-		try {
-			writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
-		} catch (err) {
-			this.log(`Failed to save state: ${err}`);
-		}
+			try {
+				writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+			} catch (err) {
+				this.log(`Failed to save state: ${err}`, "error");
+			}
 	}
 
 	// =========================================================================
@@ -151,7 +160,10 @@ export class AccountRotator {
 	}
 
 	private async pollAllQuotas(): Promise<void> {
-		const available = this.accounts.filter((a) => !a.disabled);
+		if (this.isProtectivePauseActive(Date.now())) {
+			return;
+		}
+		const available = this.accounts.filter((a) => !a.disabled && !a.flagged);
 		for (const account of available) {
 			try {
 				await this.ensureValidToken(account);
@@ -303,6 +315,7 @@ export class AccountRotator {
 	async getActiveAccount(model?: string): Promise<AccountRuntime | null> {
 		const now = Date.now();
 		if (this.accounts.length === 0) return null;
+		if (this.isProtectivePauseActive(now)) return null;
 
 		const modelKey = model ? resolveQuotaModelKey(model) : null;
 		const idx = modelKey
@@ -321,8 +334,14 @@ export class AccountRotator {
 					return this.rotateModel(modelKey);
 				}
 			}
-			await this.ensureValidToken(current);
-			return current;
+			this.startRequest(current);
+			try {
+				await this.ensureValidToken(current);
+				return current;
+			} catch (err) {
+				this.finishRequest(current);
+				throw err;
+			}
 		}
 
 		// Current unavailable, find next
@@ -336,8 +355,6 @@ export class AccountRotator {
 		let best: AccountRuntime | null = null;
 		let bestPriority = Infinity;
 		let bestQuota = -2;
-		let bestExhausted: AccountRuntime | null = null;
-		let bestExhaustedCooldown = Infinity;
 
 		for (let i = 0; i < this.accounts.length; i++) {
 			if (i === currentIdx) continue;
@@ -356,12 +373,6 @@ export class AccountRotator {
 					bestPriority = priority;
 					bestQuota = quota;
 				}
-			} else if (!account.disabled && account.cooldownUntil > now) {
-				const remaining = account.cooldownUntil - now;
-				if (remaining < bestExhaustedCooldown) {
-					bestExhaustedCooldown = remaining;
-					bestExhausted = account;
-				}
 			}
 		}
 
@@ -377,32 +388,36 @@ export class AccountRotator {
 				`[${modelKey}] Rotated to ${best.config.label || best.config.email} [${timerType}] (quota: ${quota >= 0 ? quota + "%" : "unknown"})`,
 			);
 			this.saveState();
-			await this.ensureValidToken(best);
-			return best;
+			this.startRequest(best);
+			try {
+				await this.ensureValidToken(best);
+				return best;
+			} catch (err) {
+				this.finishRequest(best);
+				throw err;
+			}
 		}
 
-		if (bestExhausted) {
-			const newIdx = this.accounts.indexOf(bestExhausted);
-			this.modelState.set(modelKey, {
-				activeAccountIndex: newIdx,
-				quotaAtRotationStart: -1,
-			});
+		const shortestCooldown = this.accounts.reduce<number | null>((bestRemaining, account) => {
+			if (account.disabled || account.flagged || account.cooldownUntil <= now) return bestRemaining;
+			const remaining = account.cooldownUntil - now;
+			if (bestRemaining === null || remaining < bestRemaining) return remaining;
+			return bestRemaining;
+		}, null);
+
+		if (shortestCooldown !== null) {
 			this.log(
-				`[${modelKey}] All accounts exhausted. Using ${bestExhausted.config.email} (cooldown: ${Math.ceil(bestExhaustedCooldown / 1000)}s)`,
+				`[${modelKey}] All accounts exhausted. Waiting ${Math.ceil(shortestCooldown / 1000)}s for cooldown`,
 			);
-			await this.ensureValidToken(bestExhausted);
-			return bestExhausted;
+		} else {
+			this.log(`[${modelKey}] All accounts disabled or unavailable`);
 		}
-
-		this.log(`[${modelKey}] All accounts disabled or unavailable`);
 		return null;
 	}
 
 	// Fallback rotation when model can't be resolved
 	private async rotateDefault(now: number = Date.now()): Promise<AccountRuntime | null> {
 		let best: AccountRuntime | null = null;
-		let bestExhausted: AccountRuntime | null = null;
-		let bestExhaustedCooldown = Infinity;
 
 		for (let i = 0; i < this.accounts.length; i++) {
 			if (i === this.defaultIndex) continue;
@@ -410,40 +425,56 @@ export class AccountRotator {
 			if (this.isAvailable(account, now)) {
 				best = account;
 				break;
-			} else if (!account.disabled && account.cooldownUntil > now) {
-				const remaining = account.cooldownUntil - now;
-				if (remaining < bestExhaustedCooldown) {
-					bestExhaustedCooldown = remaining;
-					bestExhausted = account;
-				}
 			}
 		}
 
-		const selected = best || bestExhausted;
-		if (selected) {
-			this.defaultIndex = this.accounts.indexOf(selected);
-			this.log(`[default] Rotated to ${selected.config.label || selected.config.email}`);
+		if (best) {
+			this.defaultIndex = this.accounts.indexOf(best);
+			this.log(`[default] Rotated to ${best.config.label || best.config.email}`);
 			this.saveState();
-			await this.ensureValidToken(selected);
+			this.startRequest(best);
+			try {
+				await this.ensureValidToken(best);
+				return best;
+			} catch (err) {
+				this.finishRequest(best);
+				throw err;
+			}
 		}
-		return selected || null;
+
+		const shortestCooldown = this.accounts.reduce<number | null>((bestRemaining, account) => {
+			if (account.disabled || account.flagged || account.cooldownUntil <= now) return bestRemaining;
+			const remaining = account.cooldownUntil - now;
+			if (bestRemaining === null || remaining < bestRemaining) return remaining;
+			return bestRemaining;
+		}, null);
+
+		if (shortestCooldown !== null) {
+			this.log(`[default] All accounts exhausted. Waiting ${Math.ceil(shortestCooldown / 1000)}s for cooldown`);
+		} else {
+			this.log("[default] All accounts disabled or unavailable");
+		}
+		return null;
 	}
 
 	// Force rotation for a model (called from proxy on 429 etc.)
 	async rotateToNext(model?: string): Promise<AccountRuntime | null> {
+		if (this.isProtectivePauseActive(Date.now())) return null;
 		const modelKey = model ? resolveQuotaModelKey(model) : null;
 		return modelKey ? this.rotateModel(modelKey) : this.rotateDefault();
 	}
 
 	// Record a successful request. Returns true if rotation is needed.
-	recordRequest(account: AccountRuntime): boolean {
+	recordRequest(account: AccountRuntime, model?: string): boolean {
 		account.requestsSinceRotation++;
 		account.totalRequests++;
 		account.lastUsed = Date.now();
 		account.consecutiveErrors = 0;
 		account.lastError = null;
 
-		const shouldRotate = account.requestsSinceRotation >= this.config.requestsPerRotation;
+		const shouldRotate =
+			this.shouldUseRequestCountRotation(account, model) &&
+			account.requestsSinceRotation >= this.config.requestsPerRotation;
 		if (shouldRotate) {
 			account.requestsSinceRotation = 0;
 			this.log(
@@ -460,25 +491,30 @@ export class AccountRotator {
 		account.cooldownUntil = now + cooldownMs;
 		account.quotaExhaustedAt = now;
 
-		this.log(
-			`${account.config.label || account.config.email}: EXHAUSTED, cooldown ${Math.ceil(cooldownMs / 1000)}s`,
-		);
+			this.log(
+				`${account.config.label || account.config.email}: EXHAUSTED, cooldown ${Math.ceil(cooldownMs / 1000)}s`,
+				"warn",
+			);
 		this.saveState();
 	}
 
 	markError(account: AccountRuntime, error: string): void {
 		account.lastError = error;
-		account.consecutiveErrors++;
-		if (account.consecutiveErrors >= 5) {
-			account.disabled = true;
-			this.log(`${account.config.email}: DISABLED after ${account.consecutiveErrors} consecutive errors`);
-		}
+			account.consecutiveErrors++;
+			if (account.consecutiveErrors >= 5) {
+				account.disabled = true;
+				this.log(`${account.config.email}: DISABLED after ${account.consecutiveErrors} consecutive errors`, "error");
+			}
 		this.saveState();
 	}
 
 	enableAccount(email: string): boolean {
-		const account = this.accounts.find((a) => a.config.email === email);
-		if (!account) return false;
+			const account = this.accounts.find((a) => a.config.email === email);
+			if (!account) return false;
+			if (account.flagged) {
+				this.log(`${email}: refused re-enable because account is flagged; resolve the provider block first`, "warn");
+				return false;
+			}
 		account.disabled = false;
 		account.flagged = false;
 		account.consecutiveErrors = 0;
@@ -487,22 +523,6 @@ export class AccountRotator {
 		this.saveState();
 		this.log(`${email}: re-enabled`);
 		return true;
-	}
-
-	resetAllCooldowns(): number {
-		let count = 0;
-		for (const account of this.accounts) {
-			if (account.cooldownUntil > Date.now()) {
-				account.cooldownUntil = 0;
-				account.quotaExhaustedAt = 0;
-				count++;
-			}
-		}
-		if (count > 0) {
-			this.saveState();
-			this.log(`Reset cooldowns on ${count} accounts`);
-		}
-		return count;
 	}
 
 	async ensureValidToken(account: AccountRuntime): Promise<void> {
@@ -554,15 +574,33 @@ export class AccountRotator {
 		if (account.disabled) return false;
 		if (account.flagged) return false;
 		if (account.cooldownUntil > now) return false;
+		if (account.inFlightRequests >= (this.config.maxConcurrentRequestsPerAccount ?? 1)) return false;
 		return true;
 	}
 
 	// Mark an account as flagged for infringement/abuse. Immediately excluded from rotation.
 	markFlagged(account: AccountRuntime, reason: string): void {
-		account.flagged = true;
-		account.lastError = reason;
-		this.log(`${account.config.email}: FLAGGED - ${reason}`);
+			account.flagged = true;
+			account.lastError = reason;
+			account.inFlightRequests = 0;
+			this.log(`${account.config.email}: FLAGGED - ${reason}`, "error");
+			if (this.shouldTriggerProtectivePause(reason)) {
+				this.protectivePauseUntil = Date.now() + (this.config.protectivePauseMs ?? 6 * 60 * 60 * 1000);
+				this.protectivePauseReason = `${account.config.email}: ${reason}`;
+				this.log(
+					`Protective pause enabled for ${Math.ceil((this.protectivePauseUntil - Date.now()) / 1000)}s after serious provider flag`,
+					"warn",
+				);
+			}
 		this.saveState();
+	}
+
+	startRequest(account: AccountRuntime): void {
+		account.inFlightRequests++;
+	}
+
+	finishRequest(account: AccountRuntime): void {
+		account.inFlightRequests = Math.max(0, account.inFlightRequests - 1);
 	}
 
 	getStatus(): StatusResponse {
@@ -615,10 +653,13 @@ export class AccountRotator {
 				consecutiveErrors: a.consecutiveErrors,
 				hasValidToken: !!(a.accessToken && a.tokenExpires > now),
 				quota: a.quota,
+				inFlightRequests: a.inFlightRequests,
 				proDetected: this.isProAccount(a),
 				familyManager: !!a.config.familyManager,
 			};
 		});
+
+		const routingHealth = this.getRoutingHealth(now, accounts);
 
 		return {
 			proxyPort: this.config.proxyPort,
@@ -626,8 +667,13 @@ export class AccountRotator {
 			activeAccounts,
 			totalRequestsAllAccounts: this.accounts.reduce((sum, a) => sum + a.totalRequests, 0),
 			uptime: now - this.startTime,
+			protectivePauseUntil: this.protectivePauseUntil,
+			protectivePauseRemaining: Math.max(0, this.protectivePauseUntil - now),
+			protectivePauseReason: this.isProtectivePauseActive(now) ? this.protectivePauseReason : null,
+			routingHealth,
 			accounts,
 			proAdvisor: this.getProAdvisor(),
+			recentEvents: [...this.recentEvents],
 		};
 	}
 
@@ -635,9 +681,30 @@ export class AccountRotator {
 		return this.accounts.length;
 	}
 
-	private log(msg: string): void {
+	recordProxyEvent(msg: string, level: "info" | "warn" | "error" = "info"): void {
+		this.pushRecentEvent("proxy", msg, level);
+	}
+
+	private log(msg: string, level: "info" | "warn" | "error" = "info"): void {
 		const ts = new Date().toISOString().slice(11, 19);
 		console.log(`[${ts}] [rotator] ${msg}`);
+		this.pushRecentEvent("rotator", msg, level);
+	}
+
+	private pushRecentEvent(
+		source: "rotator" | "proxy",
+		message: string,
+		level: "info" | "warn" | "error",
+	): void {
+		this.recentEvents.unshift({
+			timestamp: Date.now(),
+			source,
+			level,
+			message,
+		});
+		if (this.recentEvents.length > AccountRotator.RECENT_EVENT_LIMIT) {
+			this.recentEvents.length = AccountRotator.RECENT_EVENT_LIMIT;
+		}
 	}
 
 	// =========================================================================
@@ -724,5 +791,117 @@ export class AccountRotator {
 		}
 
 		return { currentProCount, maxProSlots: maxSlots, actions };
+	}
+
+	private shouldUseRequestCountRotation(account: AccountRuntime, model?: string): boolean {
+		if (!this.config.useRequestCountRotationWhenQuotaUnknownOnly) return true;
+		const modelKey = model ? resolveQuotaModelKey(model) : null;
+		if (!modelKey) return true;
+		return this.getModelQuota(account, modelKey) < 0;
+	}
+
+	private shouldTriggerProtectivePause(reason: string): boolean {
+		const lower = reason.toLowerCase();
+		const severePatterns = ["terms of service", "violat", "suspend", "banned", "abus", "infring"];
+		return severePatterns.some((pattern) => lower.includes(pattern));
+	}
+
+	private isProtectivePauseActive(now: number): boolean {
+		return this.protectivePauseUntil > now;
+	}
+
+	private getRoutingHealth(now: number, accounts: AccountStatus[]): StatusResponse["routingHealth"] {
+		const activeCount = accounts.filter((a) => a.status === "active").length;
+		const readyCount = accounts.filter((a) => a.status === "ready").length;
+		const cooldownCount = accounts.filter((a) => a.status === "cooldown").length;
+		const flaggedCount = accounts.filter((a) => a.status === "flagged").length;
+		const disabledCount = accounts.filter((a) => a.status === "disabled").length;
+		const errorCount = accounts.filter((a) => a.status === "error").length;
+		const busyCount = accounts.filter(
+			(a) => a.status !== "disabled" && a.status !== "flagged" && a.inFlightRequests > 0,
+		).length;
+		const availableCount = this.accounts.filter((a) => this.isAvailable(a, now)).length;
+		const shortestCooldown = accounts
+			.filter((a) => a.cooldownRemaining > 0)
+			.reduce((best, account) => (best === 0 || account.cooldownRemaining < best ? account.cooldownRemaining : best), 0);
+		const pauseRemaining = Math.max(0, this.protectivePauseUntil - now);
+
+		if (pauseRemaining > 0) {
+			return {
+				state: "paused",
+				reason: this.protectivePauseReason || "Protective pause active after provider flag",
+				nextRetryIn: pauseRemaining,
+				availableCount,
+				readyCount,
+				activeCount,
+				cooldownCount,
+				busyCount,
+				flaggedCount,
+				disabledCount,
+				errorCount,
+			};
+		}
+
+		if (availableCount > 0) {
+			return {
+				state: "healthy",
+				reason: "Routing can serve requests",
+				nextRetryIn: 0,
+				availableCount,
+				readyCount,
+				activeCount,
+				cooldownCount,
+				busyCount,
+				flaggedCount,
+				disabledCount,
+				errorCount,
+			};
+		}
+
+		if (cooldownCount > 0) {
+			return {
+				state: "cooldown_wait",
+				reason: "All non-quarantined accounts are cooling down",
+				nextRetryIn: shortestCooldown,
+				availableCount,
+				readyCount,
+				activeCount,
+				cooldownCount,
+				busyCount,
+				flaggedCount,
+				disabledCount,
+				errorCount,
+			};
+		}
+
+		if (busyCount > 0) {
+			return {
+				state: "busy",
+				reason: "All available accounts are currently busy with in-flight requests",
+				nextRetryIn: 0,
+				availableCount,
+				readyCount,
+				activeCount,
+				cooldownCount,
+				busyCount,
+				flaggedCount,
+				disabledCount,
+				errorCount,
+			};
+		}
+
+		return {
+			state: "stopped",
+			reason: "No account is currently routable. All accounts are flagged, disabled, or unavailable.",
+			nextRetryIn: 0,
+			availableCount,
+			readyCount,
+			activeCount,
+			cooldownCount,
+			busyCount,
+			flaggedCount,
+			disabledCount,
+			errorCount,
+		};
 	}
 }

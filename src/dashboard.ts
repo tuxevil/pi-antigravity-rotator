@@ -18,14 +18,8 @@ export function serveStatusApi(res: ServerResponse, rotator: AccountRotator): vo
 
 export function serveEnableApi(res: ServerResponse, rotator: AccountRotator, email: string): void {
 	const ok = rotator.enableAccount(email);
-	res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
+	res.writeHead(ok ? 200 : 409, { "Content-Type": "application/json" });
 	res.end(JSON.stringify({ ok, email }));
-}
-
-export function serveResetCooldownsApi(res: ServerResponse, rotator: AccountRotator): void {
-	const count = rotator.resetAllCooldowns();
-	res.writeHead(200, { "Content-Type": "application/json" });
-	res.end(JSON.stringify({ ok: true, resetCount: count }));
 }
 
 const DASHBOARD_HTML = `<!DOCTYPE html>
@@ -442,6 +436,203 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .advisor-action-label { font-weight: 500; }
   .advisor-action-reason { color: var(--text-dim); font-size: 11px; margin-left: auto; }
   .advisor-empty { color: var(--text-dim); font-size: 12px; font-style: italic; }
+  .routing-panel {
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 24px;
+  }
+  .routing-panel strong { display: block; margin-bottom: 4px; }
+  .routing-panel.state-healthy {
+    background: rgba(52, 211, 153, 0.08);
+    border: 1px solid rgba(52, 211, 153, 0.24);
+    border-left: 4px solid var(--green);
+  }
+  .routing-panel.state-healthy strong { color: var(--green); }
+  .routing-panel.state-cooldown_wait {
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.24);
+    border-left: 4px solid var(--yellow);
+  }
+  .routing-panel.state-cooldown_wait strong { color: var(--yellow); }
+  .routing-panel.state-busy {
+    background: rgba(96, 165, 250, 0.08);
+    border: 1px solid rgba(96, 165, 250, 0.24);
+    border-left: 4px solid var(--blue);
+  }
+  .routing-panel.state-busy strong { color: var(--blue); }
+  .routing-panel.state-paused,
+  .routing-panel.state-stopped {
+    background: rgba(248, 113, 113, 0.08);
+    border: 1px solid rgba(248, 113, 113, 0.25);
+    border-left: 4px solid var(--red);
+  }
+  .routing-panel.state-paused strong,
+  .routing-panel.state-stopped strong { color: var(--red); }
+  .ops-buttons { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .ops-warning { margin-top:10px; font-size:11px; color: var(--text-dim); line-height:1.45; }
+  .btn-secondary {
+    font-size: 11px;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--font);
+    font-weight: 500;
+  }
+  .health-grid {
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .health-pill {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .health-pill .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+  }
+  .health-pill .value {
+    font-size: 15px;
+    font-family: 'JetBrains Mono', monospace;
+    margin-top: 4px;
+  }
+  .operator-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 24px;
+  }
+  .operator-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  .operator-list {
+    display: grid;
+    gap: 8px;
+  }
+  .operator-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+  }
+  .operator-item strong {
+    display: block;
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+  .operator-item span {
+    display: block;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.45;
+  }
+  .operator-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .events-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 24px;
+  }
+  .events-list {
+    display: grid;
+    gap: 8px;
+  }
+  .events-toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .event-filter {
+    font-size: 11px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    border-radius: 999px;
+    cursor: pointer;
+    font-family: var(--font);
+    font-weight: 600;
+  }
+  .event-filter.active {
+    background: rgba(124, 92, 252, 0.14);
+    border-color: rgba(124, 92, 252, 0.28);
+    color: var(--text);
+  }
+  .event-item {
+    display: grid;
+    grid-template-columns: 90px 56px 1fr;
+    gap: 10px;
+    align-items: start;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+  }
+  .event-item.level-warn {
+    border-color: rgba(251, 191, 36, 0.22);
+  }
+  .event-item.level-error {
+    border-color: rgba(248, 113, 113, 0.22);
+  }
+  .event-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .event-source {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    text-align: center;
+  }
+  .event-source.rotator {
+    background: rgba(124, 92, 252, 0.14);
+    color: var(--accent);
+  }
+  .event-source.proxy {
+    background: rgba(96, 165, 250, 0.14);
+    color: var(--blue);
+  }
+  .event-message {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    word-break: break-word;
+  }
+  .events-empty {
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 10px 2px 2px;
+  }
 </style>
 </head>
 <body>
@@ -452,6 +643,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     Uptime: <span id="uptime">--</span> |
     Port: <span id="port">--</span> |
     Rotation: <span id="rotation">--</span> reqs |
+    Updated: <span id="lastRefresh">--</span> |
     <button id="maskBtn" onclick="toggleMask()" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;">PII: Visible</button>
   </div>
 </div>
@@ -470,6 +662,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <div class="value" id="healthyCount" style="color:var(--green)">0</div>
   </div>
 </div>
+
+<div class="routing-panel state-stopped" id="routingHealth"></div>
+
+<div class="operator-panel" id="attentionPanel" style="display:none"></div>
+
+<div class="events-panel" id="recentEventsPanel" style="display:none"></div>
 
 <div class="model-routing" id="modelRouting"></div>
 
@@ -544,12 +742,53 @@ function renderAccounts(data) {
   document.getElementById('uptime').textContent = formatDuration(data.uptime);
   document.getElementById('port').textContent = data.proxyPort;
   document.getElementById('rotation').textContent = data.requestsPerRotation;
+  document.getElementById('lastRefresh').textContent = new Date(now).toLocaleTimeString();
   document.getElementById('totalRequests').textContent = data.totalRequestsAllAccounts;
   document.getElementById('accountCounts').textContent = data.accounts.length;
   document.getElementById('healthyCount').textContent =
     data.accounts.filter(function(a) { return a.status === 'active' || a.status === 'ready'; }).length;
 
+  var routingHealth = document.getElementById('routingHealth');
+  var health = data.routingHealth || {};
+  var state = health.state || 'stopped';
+  var stateColor = {
+    healthy: 'var(--green)',
+    paused: 'var(--red)',
+    cooldown_wait: 'var(--yellow)',
+    busy: 'var(--blue)',
+    stopped: 'var(--red)'
+  }[state];
+  routingHealth.className = 'routing-panel state-' + state;
+  var nextRetry = health.nextRetryIn > 0 ? '<div style="margin-top:6px;">Next retry window: <span style="font-family:JetBrains Mono, monospace;">' + formatDuration(health.nextRetryIn) + '</span></div>' : '';
+  var pauseWindow = data.protectivePauseRemaining > 0
+    ? '<div style="margin-top:6px;">Protective pause: <span style="font-family:JetBrains Mono, monospace;">' + formatDuration(data.protectivePauseRemaining) + '</span> remaining</div>'
+    : '';
+  var healthGrid =
+    '<div class="health-grid">' +
+      renderHealthPill('Available', health.availableCount || 0) +
+      renderHealthPill('Active', health.activeCount || 0) +
+      renderHealthPill('Ready', health.readyCount || 0) +
+      renderHealthPill('Cooldown', health.cooldownCount || 0) +
+      renderHealthPill('Busy', health.busyCount || 0) +
+      renderHealthPill('Flagged', health.flaggedCount || 0) +
+      renderHealthPill('Disabled', health.disabledCount || 0) +
+      renderHealthPill('Error', health.errorCount || 0) +
+    '</div>';
+  routingHealth.innerHTML =
+    '<strong style="color:' + stateColor + '">Routing: ' + String(health.state || 'unknown').replace(/_/g, ' ') + '</strong>' +
+    '<div>' + (health.reason || 'No routing health information available') + '</div>' +
+    nextRetry +
+    pauseWindow +
+    (data.protectivePauseReason && data.protectivePauseRemaining > 0 ? '<div style="margin-top:6px;color:var(--text-dim);font-family:JetBrains Mono, monospace;">' + data.protectivePauseReason.slice(0, 220) + '</div>' : '') +
+    healthGrid +
+    '<div class="ops-buttons">' +
+      '<button class="btn-secondary" onclick="refresh()">Refresh</button>' +
+    '</div>' +
+    '<div class="ops-warning">When routing stops, that is intentional. The dashboard now surfaces the stop reason, retry window, protective pause, and blocker counts here so the operator does not need to rely on system logs.</div>';
+
   renderModelRouting(data.activeAccounts);
+  renderAttentionPanel(data);
+  renderRecentEvents(data.recentEvents);
 
   var container = document.getElementById('accounts');
   var sorted = data.accounts.slice().sort(function(a, b) {
@@ -563,8 +802,6 @@ function renderAccounts(data) {
   container.innerHTML = sorted.map(function(a) {
     var isActive = a.status === 'active';
     var isCooldown = a.status === 'cooldown' || a.status === 'exhausted';
-    var isDisabled = a.status === 'disabled' || a.status === 'flagged';
-
     var cooldownPercent = 0;
     if (isCooldown && a.cooldownRemaining > 0) {
       var totalCooldown = a.cooldownUntil - (a.lastUsed || now);
@@ -594,18 +831,20 @@ function renderAccounts(data) {
           (a.lastUsed ? formatTime(a.lastUsed) : '--') + '</div></div>' +
         (isCooldown ? '<div class="card-stat"><div class="stat-label">Cooldown</div><div class="stat-value" style="color:var(--yellow)">' +
           formatDuration(a.cooldownRemaining) + '</div></div>' : '') +
+        (a.inFlightRequests > 0 ? '<div class="card-stat"><div class="stat-label">In Flight</div><div class="stat-value" style="color:var(--blue)">' +
+          a.inFlightRequests + '</div></div>' : '') +
         '<div class="card-stat"><div class="stat-label">Token</div><div class="stat-value" style="color:' +
           (a.hasValidToken ? 'var(--green)' : 'var(--text-dim)') + '">' +
           (a.hasValidToken ? 'Valid' : 'Expired') + '</div></div>' +
       '</div>' +
       (a.lastError ? '<div class="card-error">' + a.lastError.slice(0, 150) + '</div>' +
         (a.lastError.toLowerCase().includes('verif') ?
-          '<div class="card-hint">Fix: Open Antigravity IDE, sign in with this account, and complete the verification prompt. Then click Re-enable.</div>' :
+          '<div class="card-hint">Open Antigravity IDE, sign in with this account, and resolve the verification prompt outside the rotator. Keep the account quarantined until that is complete.</div>' :
         a.lastError.toLowerCase().includes('terms of service') ?
-          '<div class="card-hint">This account was suspended by Google. Submit an appeal at <a href="https://support.google.com/accounts/troubleshooter/2402620" target="_blank" style="color:var(--cyan)">Google Account Recovery</a>, then Re-enable.</div>' :
+          '<div class="card-hint">This account was suspended by Google. Submit an appeal at <a href="https://support.google.com/accounts/troubleshooter/2402620" target="_blank" style="color:var(--blue)">Google Account Recovery</a> and keep it out of rotation unless Google explicitly restores access.</div>' :
           '') : '') +
-      (isDisabled ? '<div class="card-actions"><button class="btn-enable" onclick="enableAccount(\\'' +
-        a.email + '\\')">Re-enable</button></div>' : '') +
+      (isCooldown ? '<div class="card-hint">Cooling down after a provider rate-limit response. The rotator will wait for the retry window instead of forcing more traffic into this account.</div>' : '') +
+      (a.status === 'disabled' ? '<div class="card-actions"><button class="btn-enable" onclick="enableAccount(\\'' + a.email + '\\')">Re-enable</button></div>' : '') +
       (isCooldown && cooldownPercent > 0 ? '<div class="cooldown-bar" style="width:' + cooldownPercent + '%"></div>' : '') +
     '</div>';
   }).join('');
@@ -613,7 +852,113 @@ function renderAccounts(data) {
   renderProAdvisor(data.proAdvisor);
 }
 
+function renderHealthPill(label, value) {
+  return '<div class="health-pill"><div class="label">' + label + '</div><div class="value">' + value + '</div></div>';
+}
+
+function renderAttentionPanel(data) {
+  var panel = document.getElementById('attentionPanel');
+  var accounts = data.accounts || [];
+  var flagged = accounts.filter(function(a) { return a.status === 'flagged'; });
+  var disabled = accounts.filter(function(a) { return a.status === 'disabled'; });
+  var errors = accounts.filter(function(a) { return a.status === 'error'; });
+  var cooldown = accounts
+    .filter(function(a) { return a.status === 'cooldown'; })
+    .sort(function(a, b) { return a.cooldownRemaining - b.cooldownRemaining; })
+    .slice(0, 4);
+  var items = [];
+
+  if (flagged.length > 0) {
+    items.push(renderAttentionItem(
+      'Flagged by provider',
+      flagged.length + ' account(s) are quarantined after a provider enforcement signal. Keep them out of rotation until the provider explicitly restores access.',
+      flagged.map(function(a) { return maskText(a.label); }).join(', ')
+    ));
+  }
+  if (cooldown.length > 0) {
+    items.push(renderAttentionItem(
+      'Cooling down',
+      'These are the next accounts expected to come back. Routing waits for their retry windows instead of forcing traffic into them.',
+      cooldown.map(function(a) { return maskText(a.label) + ' ' + formatDuration(a.cooldownRemaining); }).join(' | ')
+    ));
+  }
+  if (disabled.length > 0) {
+    items.push(renderAttentionItem(
+      'Disabled accounts',
+      'These accounts hit repeated operational errors and were taken out of service. Re-enable only after the underlying problem is fixed.',
+      disabled.map(function(a) { return maskText(a.label); }).join(', ')
+    ));
+  }
+  if (errors.length > 0) {
+    items.push(renderAttentionItem(
+      'Recent errors',
+      'These accounts are still visible but currently erroring. Review the per-account error details below before they escalate to disabled.',
+      errors.map(function(a) { return maskText(a.label); }).join(', ')
+    ));
+  }
+
+  if (items.length === 0) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+
+  panel.style.display = 'block';
+  panel.innerHTML = '<div class="operator-title">Attention Needed</div><div class="operator-list">' + items.join('') + '</div>';
+}
+
+function renderAttentionItem(title, description, meta) {
+  return '<div class="operator-item">' +
+    '<div><strong>' + title + '</strong><span>' + description + '</span></div>' +
+    '<div class="operator-meta">' + meta + '</div>' +
+  '</div>';
+}
+
+function renderRecentEvents(events) {
+  var panel = document.getElementById('recentEventsPanel');
+  var allEvents = events || [];
+  if (allEvents.length === 0) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+
+  var list = allEvents.filter(matchesEventFilter).slice(0, 14);
+  var toolbar =
+    '<div class="events-toolbar">' +
+      renderEventFilterButton('all', 'All') +
+      renderEventFilterButton('errors', 'Errors Only') +
+      renderEventFilterButton('proxy', 'Proxy Only') +
+      renderEventFilterButton('rotator', 'Rotator Only') +
+    '</div>';
+  var rows = list.map(function(event) {
+    return '<div class="event-item level-' + (event.level || 'info') + '">' +
+      '<div class="event-time">' + formatTime(event.timestamp) + '</div>' +
+      '<div class="event-source ' + event.source + '">' + escapeHtml(event.source) + '</div>' +
+      '<div class="event-message">' + escapeHtml(event.message) + '</div>' +
+    '</div>';
+  }).join('');
+
+  panel.style.display = 'block';
+  panel.innerHTML =
+    '<div class="operator-title">Recent Events</div>' +
+    toolbar +
+    (rows ? '<div class="events-list">' + rows + '</div>' : '<div class="events-empty">No events match the current filter.</div>');
+}
+
+function renderEventFilterButton(filter, label) {
+  return '<button class="event-filter' + (EVENT_FILTER === filter ? ' active' : '') + '" onclick="setEventFilter(&quot;' + filter + '&quot;)">' + label + '</button>';
+}
+
+function matchesEventFilter(event) {
+  if (EVENT_FILTER === 'errors') return event.level === 'error';
+  if (EVENT_FILTER === 'proxy') return event.source === 'proxy';
+  if (EVENT_FILTER === 'rotator') return event.source === 'rotator';
+  return true;
+}
+
 var MASK_MODE = new URLSearchParams(window.location.search).has('mask');
+var EVENT_FILTER = new URLSearchParams(window.location.search).get('events') || 'all';
 var maskCounter = 0;
 var maskMap = {};
 
@@ -630,6 +975,20 @@ function maskEmail(email) {
   if (!MASK_MODE) return email;
   var masked = maskText(email.split('@')[0]);
   return masked.toLowerCase().replace(/ /g, '-') + '@***.com';
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function setEventFilter(filter) {
+  EVENT_FILTER = filter;
+  refresh();
 }
 
 async function enableAccount(email) {

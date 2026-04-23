@@ -138,6 +138,9 @@ interface AccountsConfig {
 	requestsPerRotation: number;
 	rotateOnQuotaDrop: number;
 	quotaPollIntervalMs: number;
+	maxConcurrentRequestsPerAccount: number;
+	protectivePauseMs: number;
+	useRequestCountRotationWhenQuotaUnknownOnly: boolean;
 	accounts: AccountEntry[];
 }
 
@@ -154,6 +157,9 @@ function loadOrCreateAccountsConfig(): AccountsConfig {
 		requestsPerRotation: 5,
 		rotateOnQuotaDrop: 20,
 		quotaPollIntervalMs: 300000,
+		maxConcurrentRequestsPerAccount: 1,
+		protectivePauseMs: 21600000,
+		useRequestCountRotationWhenQuotaUnknownOnly: true,
 		accounts: [],
 	};
 }

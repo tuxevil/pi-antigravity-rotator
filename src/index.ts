@@ -28,6 +28,10 @@ function loadConfig(): Config {
 		config.requestsPerRotation = config.requestsPerRotation || 5;
 		config.rotateOnQuotaDrop = config.rotateOnQuotaDrop ?? 20;
 		config.quotaPollIntervalMs = config.quotaPollIntervalMs || 300_000;
+		config.maxConcurrentRequestsPerAccount = config.maxConcurrentRequestsPerAccount ?? 1;
+		config.protectivePauseMs = config.protectivePauseMs ?? 6 * 60 * 60 * 1000;
+		config.useRequestCountRotationWhenQuotaUnknownOnly =
+			config.useRequestCountRotationWhenQuotaUnknownOnly ?? true;
 
 		return config;
 	} catch (err) {
@@ -44,6 +48,8 @@ export function main(): void {
 	console.log(`Loaded ${config.accounts.length} accounts`);
 	console.log(`Rotation: ${config.requestsPerRotation} requests / ${config.rotateOnQuotaDrop}% quota drop`);
 	console.log(`Quota poll: every ${Math.round((config.quotaPollIntervalMs || 300000) / 1000)}s`);
+	console.log(`Concurrency cap: ${config.maxConcurrentRequestsPerAccount} request/account`);
+	console.log(`Protective pause: ${Math.round((config.protectivePauseMs || 0) / 3600000)}h after serious flag`);
 	console.log();
 
 	for (const account of config.accounts) {

@@ -10,6 +10,8 @@ Multi-account rotation proxy for Google Antigravity. Distributes API usage acros
 - **Smart rotation** -- Rotates only the specific model whose quota dropped, leaving other models on their current accounts
 - **Infringement detection** -- On 403 with infringement/abuse/suspension keywords, the account is immediately flagged and excluded from routing
 - **Automatic failover** -- On 429 rate limits, instantly switches the affected model to the next available account
+- **Concurrency guardrails** -- Limits each account to one in-flight request by default to avoid bursty pressure
+- **Protective pause** -- Pauses all routing for several hours after serious ToS/abuse-style flags so the rest of the pool is not burned
 - **Token auto-refresh** -- Tokens are refreshed automatically before expiry; no manual management
 - **Endpoint cascade** -- Tries daily, autopush, and prod API endpoints for resilience
 - **Web dashboard** -- Real-time view of model routing table, per-account quota bars with per-model timers, and flagged account alerts
@@ -73,7 +75,7 @@ The dashboard shows:
   - Per-model quota bars with timer type (`fresh`/`7d`/`5h`) and reset countdown
   - Request counts, last used time, token status
   - Error messages for flagged/errored accounts
-  - Re-enable button for flagged or disabled accounts
+  - Re-enable button for disabled accounts
 
 ![Dashboard](dashboard.png)
 
@@ -127,20 +129,32 @@ The proxy detects blocked/suspended accounts at three levels:
 
 3. **API 403** (on request) -- If the response body contains infringement keywords (`infring`, `suspend`, `abus`, `terminat`, `violat`, `banned`, `policy`, `forbidden`), the account is flagged.
 
-Flagged accounts are **immediately excluded** from all model routing. The dashboard shows a red `FLAGGED` badge with the error message. Use the Re-enable button or `POST /api/enable/<email>` to clear the flag.
+Flagged accounts are **immediately excluded** from all model routing. The dashboard shows a red `FLAGGED` badge with the error message and quarantine guidance. Flagged accounts are intentionally kept out of rotation until the provider explicitly restores access.
 
 ### Cooldown Management
 
 - Cooldowns are capped at **30 minutes** max
 - Stale cooldowns from previous sessions are capped on startup
-- Use `POST /api/reset-cooldowns` to clear all cooldowns at once
+- The dashboard shows why routing is waiting, how long until the next retry window, and which accounts are cooling down
 - Quota-based rotation only triggers if a healthy account is available; the proxy won't rotate away from a working account if there's no better alternative
 
 ### Error Handling
 
 - **429** (rate limit) -- account is marked exhausted with cooldown, rotates to next
-- **503** (no capacity) -- returned directly to the agent for its own retry/backoff
+- **503** (no capacity) -- returned directly to the agent when all healthy accounts are cooling down, busy, flagged, or disabled
 - **5xx** (other server errors) -- account error counter incremented, rotates to next
+
+### Dashboard Visibility
+
+The dashboard is intended to replace day-to-day `journalctl` digging for normal operations. The top status panel shows:
+
+- The current routing state (`healthy`, `cooldown_wait`, `busy`, `paused`, `stopped`)
+- The exact stop or wait reason
+- The next retry window when cooldowns are active
+- Protective pause remaining time and the provider signal that triggered it
+- Pool counts for available, ready, active, cooldown, busy, flagged, disabled, and error accounts
+- An `Attention Needed` section summarizing flagged, cooling, disabled, and error accounts
+- A recent event feed with the latest rotator/proxy incidents that led to the current state
 
 ## Configuration
 
@@ -197,8 +211,7 @@ pi-antigravity-rotator start --config-dir /path/to/config
 |--------|------|-------------|
 | `GET` | `/dashboard` | Web dashboard |
 | `GET` | `/api/status` | JSON status: accounts, quotas, model routing, flags |
-| `POST` | `/api/enable/<email>` | Clear flagged/disabled state and re-enable an account |
-| `POST` | `/api/reset-cooldowns` | Clear all cooldowns on all accounts |
+| `POST` | `/api/enable/<email>` | Re-enable a disabled account after its underlying issue is fixed |
 | `POST` | `/v1internal:streamGenerateContent` | Proxy endpoint (used by pi) |
 
 ## Running as a Service
@@ -235,7 +248,7 @@ Check the error message. Common causes: revoked OAuth consent, expired refresh t
 Quota data appears after the first poll cycle (up to 5 minutes). Ensure accounts have valid tokens.
 
 **All accounts exhausted**
-The proxy uses the account with the shortest remaining cooldown. Add more accounts or increase `requestsPerRotation`.
+The proxy now returns `503` and waits for cooldown or manual recovery. It does not reuse cooling-down accounts.
 
 **Multiple agents on different models**
 This is fully supported. Each model routes independently. Agent 1 using Gemini Pro and Agent 2 using Claude will each have their own active account and won't interfere with each other's rotation.

@@ -88,6 +88,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   .header-main {
     min-width: 0;
+    flex: 1;
   }
 
   .header h1 {
@@ -112,6 +113,44 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     font-family: 'JetBrains Mono', monospace;
     color: var(--text);
     font-weight: 500;
+  }
+
+  .header-compact {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .compact-chip {
+    min-width: 0;
+    max-width: 190px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+  }
+
+  .compact-chip .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+
+  .compact-chip .value {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .compact-chip .hint {
+    margin-top: 5px;
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.2;
   }
 
   .header-actions {
@@ -183,91 +222,53 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .header-icon-badge.attention { background: var(--yellow); color: #17120a; }
   .header-icon-badge.advisor { background: var(--accent); }
 
-  .summary-panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 18px;
-    margin-bottom: 24px;
-  }
-
-  .summary-title {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-dim);
-    margin-bottom: 14px;
-  }
-
-  .summary-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
-  }
-
-  .summary-metric {
-    min-width: 0;
-  }
-
-  .summary-metric .label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-dim);
-    margin-bottom: 6px;
-  }
-
-  .summary-metric .value {
-    font-size: 24px;
-    font-weight: 700;
-    font-family: 'JetBrains Mono', monospace;
-  }
-
-  .summary-metric .hint {
-    margin-top: 6px;
-    font-size: 11px;
-    color: var(--text-dim);
-    line-height: 1.35;
-  }
-
-  .model-routing {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px 18px;
-    margin-bottom: 24px;
-  }
-
-  .model-routing-title {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-dim);
-    margin-bottom: 10px;
-  }
-
-  .model-route {
+  .header-routing {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
-    padding: 6px 0;
-    font-size: 13px;
+    margin-top: 12px;
   }
 
-  .model-route .model-name {
+  .route-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 9px 11px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    font-size: 12px;
+  }
+
+  .route-chip .model-name {
     font-family: 'JetBrains Mono', monospace;
-    font-weight: 500;
-    width: 180px;
-    flex-shrink: 0;
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
   }
 
-  .model-route .route-arrow {
+  .route-chip .route-arrow {
     color: var(--text-dim);
   }
 
-  .model-route .account-name {
+  .route-chip .account-name {
     color: var(--accent);
     font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 240px;
+  }
+
+  .route-empty {
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px dashed var(--border);
   }
 
   .accounts-grid {
@@ -550,10 +551,26 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .advisor-empty { color: var(--text-dim); font-size: 12px; font-style: italic; }
   .routing-panel {
     border-radius: var(--radius);
-    padding: 14px 16px;
+    padding: 12px 14px;
     margin-bottom: 24px;
   }
-  .routing-panel strong { display: block; margin-bottom: 4px; }
+  .routing-panel strong { display: inline-block; margin-right: 10px; }
+  .routing-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .routing-summary div {
+    font-size: 12px;
+    color: var(--text);
+  }
+  .routing-inline-note {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-dim);
+    font-size: 11px;
+  }
   .routing-panel.state-healthy {
     background: rgba(52, 211, 153, 0.08);
     border: 1px solid rgba(52, 211, 153, 0.24);
@@ -581,7 +598,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .routing-panel.state-paused strong,
   .routing-panel.state-stopped strong { color: var(--red); }
   .ops-buttons { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
-  .ops-warning { margin-top:10px; font-size:11px; color: var(--text-dim); line-height:1.45; }
+  .ops-warning { margin-top:8px; font-size:10px; color: var(--text-dim); line-height:1.35; }
   .btn-secondary {
     font-size: 11px;
     padding: 4px 12px;
@@ -595,26 +612,26 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   }
   .health-grid {
     display:grid;
-    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-    gap: 8px;
-    margin-top: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+    gap: 6px;
+    margin-top: 8px;
   }
   .health-pill {
     background: rgba(255,255,255,0.04);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 8px 10px;
+    padding: 6px 8px;
   }
   .health-pill .label {
-    font-size: 10px;
+    font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-dim);
   }
   .health-pill .value {
-    font-size: 15px;
+    font-size: 13px;
     font-family: 'JetBrains Mono', monospace;
-    margin-top: 4px;
+    margin-top: 3px;
   }
   .operator-panel {
     background: var(--surface);
@@ -802,8 +819,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     body { padding: 18px; }
     .header { flex-direction: column; align-items: stretch; }
     .header-actions { justify-content: flex-start; }
-    .summary-grid { grid-template-columns: 1fr; gap: 14px; }
-    .model-route .model-name { width: 138px; }
+    .route-chip { width: 100%; }
+    .route-chip .account-name { max-width: none; }
   }
 </style>
 </head>
@@ -819,6 +836,26 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       Updated: <span id="lastRefresh">--</span> |
       <button id="maskBtn" onclick="toggleMask()" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;">PII: Visible</button>
     </div>
+    <div class="header-compact">
+      <div class="compact-chip">
+        <div class="label">Total Requests</div>
+        <div class="value" id="totalRequests">0</div>
+        <div class="hint" id="requestHint">served total</div>
+      </div>
+      <div class="compact-chip">
+        <div class="label">Accounts</div>
+        <div class="value" id="accountCounts">0</div>
+        <div class="hint" id="accountBreakdown">0 active pool members visible to the rotator.</div>
+      </div>
+      <div class="compact-chip">
+        <div class="label">Healthy</div>
+        <div class="value" id="healthyCount" style="color:var(--green)">0</div>
+        <div class="hint" id="healthyHint">0 accounts are ready to serve immediately.</div>
+      </div>
+    </div>
+    <div class="header-routing" id="modelRouting">
+      <div class="route-empty">No model assignments yet.</div>
+    </div>
   </div>
   <div class="header-actions">
     <button class="header-icon-btn attention" id="attentionBtn" onclick="openModal('attentionModal')" title="Attention Needed" aria-label="Open attention needed">
@@ -831,29 +868,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </button>
   </div>
 </div>
-
-<div class="summary-panel">
-  <div class="summary-title">Fleet Summary</div>
-  <div class="summary-grid">
-    <div class="summary-metric">
-      <div class="label">Total Requests</div>
-      <div class="value" id="totalRequests">0</div>
-      <div class="hint">All requests served across the current runtime and persisted account counters.</div>
-    </div>
-    <div class="summary-metric">
-      <div class="label">Accounts</div>
-      <div class="value" id="accountCounts">0</div>
-      <div class="hint" id="accountBreakdown">0 active pool members visible to the rotator.</div>
-    </div>
-    <div class="summary-metric">
-      <div class="label">Healthy</div>
-      <div class="value" id="healthyCount" style="color:var(--green)">0</div>
-      <div class="hint" id="healthyHint">0 accounts are ready to serve immediately.</div>
-    </div>
-  </div>
-</div>
-
-<div class="model-routing" id="modelRouting"></div>
 
 <div class="routing-panel state-stopped" id="routingHealth"></div>
 
@@ -934,17 +948,23 @@ function renderModelRouting(activeAccounts) {
   var container = document.getElementById('modelRouting');
   var entries = Object.entries(activeAccounts || {});
   if (entries.length === 0) {
-    container.innerHTML = '<div class="model-routing-title">Model Routing</div><div style="color:var(--text-dim);font-size:13px;">No model assignments yet (waiting for first request)</div>';
+    container.innerHTML = '<div class="route-empty">No model assignments yet (waiting for first request).</div>';
     return;
   }
+  function compactModelName(name) {
+    if (name.indexOf('gemini-3.1-pro') >= 0 || name.indexOf('gemini-3-pro') >= 0) return 'G3Pro';
+    if (name.indexOf('gemini-3-flash') >= 0) return 'G3Flash';
+    if (name.indexOf('claude') >= 0) return 'Claude';
+    return name;
+  }
   var rows = entries.map(function(e) {
-    return '<div class="model-route">' +
-      '<span class="model-name">' + e[0] + '</span>' +
+    return '<div class="route-chip">' +
+      '<span class="model-name">' + compactModelName(e[0]) + '</span>' +
       '<span class="route-arrow">-></span>' +
       '<span class="account-name">' + maskText(e[1]) + '</span>' +
     '</div>';
   }).join('');
-  container.innerHTML = '<div class="model-routing-title">Model Routing</div>' + rows;
+  container.innerHTML = rows;
 }
 
 function renderAccounts(data) {
@@ -956,14 +976,14 @@ function renderAccounts(data) {
   document.getElementById('lastRefresh').textContent = new Date(now).toLocaleTimeString();
   document.getElementById('totalRequests').textContent = data.totalRequestsAllAccounts;
   document.getElementById('accountCounts').textContent = data.accounts.length;
+  document.getElementById('requestHint').textContent = 'served total';
   document.getElementById('healthyCount').textContent = healthyCount;
   document.getElementById('accountBreakdown').textContent =
     (data.accounts.length - (data.routingHealth.flaggedCount || 0) - (data.routingHealth.disabledCount || 0)) +
-    ' non-quarantined accounts in circulation, ' +
-    (data.routingHealth.flaggedCount || 0) + ' flagged, ' +
-    (data.routingHealth.disabledCount || 0) + ' disabled.';
+    ' active pool • ' +
+    (data.routingHealth.flaggedCount || 0) + ' flagged';
   document.getElementById('healthyHint').textContent =
-    healthyCount + ' accounts are immediately usable; ' + (data.routingHealth.cooldownCount || 0) + ' are cooling down.';
+    healthyCount + ' ready now • ' + (data.routingHealth.cooldownCount || 0) + ' cooling';
 
   var routingHealth = document.getElementById('routingHealth');
   var health = data.routingHealth || {};
@@ -999,11 +1019,13 @@ function renderAccounts(data) {
       renderHealthPill('Error', health.errorCount || 0) +
     '</div>';
   routingHealth.innerHTML =
-    '<strong style="color:' + stateColor + '">Routing: ' + String(health.state || 'unknown').replace(/_/g, ' ') + '</strong>' +
-    '<div>' + (health.reason || 'No routing health information available') + '</div>' +
-    nextRetry +
-    pauseWindow +
-    freshPolicy +
+    '<div class="routing-summary">' +
+      '<strong style="color:' + stateColor + '">Routing: ' + String(health.state || 'unknown').replace(/_/g, ' ') + '</strong>' +
+      '<div>' + (health.reason || 'No routing health information available') + '</div>' +
+      (nextRetry ? '<div>' + nextRetry.replace('<div style="margin-top:6px;">', '').replace('</div>', '') + '</div>' : '') +
+      (pauseWindow ? '<div>' + pauseWindow.replace('<div style="margin-top:6px;">', '').replace('</div>', '') + '</div>' : '') +
+      '<div class="routing-inline-note">' + freshPolicy.replace('<div style="margin-top:6px;">', '').replace('</div>', '') + '</div>' +
+    '</div>' +
     (data.protectivePauseReason && data.protectivePauseRemaining > 0 ? '<div style="margin-top:6px;color:var(--text-dim);font-family:JetBrains Mono, monospace;">' + data.protectivePauseReason.slice(0, 220) + '</div>' : '') +
     healthGrid +
     '<div class="ops-buttons">' +
@@ -1012,7 +1034,7 @@ function renderAccounts(data) {
         (controls.allowFreshWindowStarts ? 'Block Fresh Windows' : 'Allow Fresh Windows') +
       '</button>' +
     '</div>' +
-    '<div class="ops-warning">When routing stops, that is intentional. The dashboard now surfaces the stop reason, retry window, protective pause, and blocker counts here so the operator does not need to rely on system logs. ' + freshPolicyHint + '</div>';
+    '<div class="ops-warning">' + freshPolicyHint + '</div>';
 
   renderModelRouting(data.activeAccounts);
   renderAttentionPanel(data);

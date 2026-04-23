@@ -2,6 +2,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import {
+	type AccountConfig,
 	type AccountRuntime,
 	type AccountStatus,
 	type Config,
@@ -11,8 +12,6 @@ import {
 	type PersistedState,
 	type ProAdvisorAction,
 	type StatusResponse,
-	CLIENT_ID,
-	CLIENT_SECRET,
 	TOKEN_URL,
 	LONG_TIMER_MS,
 	QUOTA_API_URL,
@@ -21,6 +20,8 @@ import {
 	resolveQuotaModelKey,
 } from "./types.js";
 import { getStatePath } from "./paths.js";
+import { saveAccountsConfig } from "./account-store.js";
+import { getOAuthClientConfig } from "./oauth.js";
 
 const STATE_FILE = getStatePath();
 
@@ -533,12 +534,13 @@ export class AccountRotator {
 
 		this.log(`Refreshing token for ${account.config.label || account.config.email}...`);
 		try {
+			const oauth = getOAuthClientConfig();
 			const response = await fetch(TOKEN_URL, {
 				method: "POST",
 				headers: { "Content-Type": "application/x-www-form-urlencoded" },
 				body: new URLSearchParams({
-					client_id: CLIENT_ID,
-					client_secret: CLIENT_SECRET,
+					client_id: oauth.clientId,
+					client_secret: oauth.clientSecret,
 					refresh_token: account.config.refreshToken,
 					grant_type: "refresh_token",
 				}),
@@ -679,6 +681,47 @@ export class AccountRotator {
 
 	getAccountCount(): number {
 		return this.accounts.length;
+	}
+
+	addOrUpdateAccount(accountConfig: AccountConfig): void {
+		const existingIndex = this.accounts.findIndex((account) => account.config.email === accountConfig.email);
+		if (existingIndex >= 0) {
+			const existing = this.accounts[existingIndex];
+			existing.config = { ...existing.config, ...accountConfig };
+			existing.disabled = false;
+			existing.flagged = false;
+			existing.lastError = null;
+			existing.consecutiveErrors = 0;
+			existing.accessToken = null;
+			existing.tokenExpires = 0;
+			this.config.accounts[existingIndex] = existing.config;
+			this.log(`${accountConfig.email}: account updated via hosted login`);
+		} else {
+			const runtime: AccountRuntime = {
+				config: accountConfig,
+				accessToken: null,
+				tokenExpires: 0,
+				requestsSinceRotation: 0,
+				totalRequests: 0,
+				cooldownUntil: 0,
+				quotaExhaustedAt: 0,
+				quota: [],
+				lastQuotaPoll: 0,
+				lastUsed: 0,
+				lastError: null,
+				consecutiveErrors: 0,
+				disabled: false,
+				flagged: false,
+				inFlightRequests: 0,
+			};
+			this.accounts.push(runtime);
+			this.config.accounts.push(runtime.config);
+			this.log(`${accountConfig.email}: account added via hosted login`);
+		}
+
+		saveAccountsConfig(this.config);
+		this.saveState();
+		void this.pollAllQuotas();
 	}
 
 	recordProxyEvent(msg: string, level: "info" | "warn" | "error" = "info"): void {

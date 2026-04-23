@@ -10,6 +10,7 @@ import {
 	serveStatusApi,
 	serveEnableApi,
 } from "./dashboard.js";
+import { handleHostedCallback, serveLoginLanding, startHostedLogin } from "./onboarding.js";
 
 const MAX_ENDPOINT_RETRIES = 3;
 const MAX_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes max cooldown
@@ -360,6 +361,27 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			return;
 		}
 
+		if (method === "GET" && pathname === "/login") {
+			serveLoginLanding(res);
+			return;
+		}
+
+		if (method === "GET" && pathname === "/auth/antigravity/start") {
+			startHostedLogin(req, res);
+			return;
+		}
+
+		if (method === "GET" && pathname === "/auth/antigravity/callback") {
+			handleHostedCallback(req, res, rotator).catch((err) => {
+				log(`Hosted callback error: ${err}`, rotator, "error");
+				if (!res.headersSent) {
+					res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+				}
+				res.end("<h1>Internal login error</h1>");
+			});
+			return;
+		}
+
 		if (method === "GET" && url === "/api/status") {
 			serveStatusApi(res, rotator);
 			return;
@@ -390,5 +412,6 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 	server.listen(port, "0.0.0.0", () => {
 		log(`Listening on 0.0.0.0:${port}`, rotator);
 		log(`Dashboard: http://localhost:${port}/dashboard`, rotator);
+		log(`Hosted login: http://localhost:${port}/login`, rotator);
 	});
 }

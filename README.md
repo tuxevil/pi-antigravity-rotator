@@ -62,6 +62,31 @@ The tool automatically:
 
 Re-running with the same email updates the existing entry.
 
+## Hosted Login Page
+
+This fork can also host a family-facing login page so people can connect their own account without copying a `localhost` URL by hand.
+
+Public routes:
+
+- `GET /login` -- landing page for account linking
+- `GET /auth/antigravity/start` -- starts the Google OAuth flow
+- `GET /auth/antigravity/callback` -- receives the OAuth callback and adds the account to the running rotator
+
+Required environment variables for hosted mode:
+
+```bash
+export ANTIGRAVITY_CLIENT_ID="your-oauth-client-id"
+export ANTIGRAVITY_CLIENT_SECRET="your-oauth-client-secret"
+export ANTIGRAVITY_REDIRECT_URI="https://your-domain.example.com/auth/antigravity/callback"
+```
+
+Notes:
+
+- The redirect URI must be registered on the OAuth client, or Google will reject the flow.
+- The hosted page does not modify `~/.pi/agent/*`; it only adds the account to the rotator config.
+- If those env vars are not set, `/login` still loads but explains that hosted OAuth is not configured yet.
+- Refresh token handling during normal runtime uses the same configured client ID and secret, so the hosted sign-in and later token refreshes stay aligned.
+
 ## Dashboard
 
 After starting the proxy, open `http://localhost:51200/dashboard` or `http://<your-server-ip>:51200/dashboard` from any machine on the same network (the proxy binds to `0.0.0.0`).
@@ -210,6 +235,7 @@ pi-antigravity-rotator start --config-dir /path/to/config
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/dashboard` | Web dashboard |
+| `GET` | `/login` | Hosted account-link landing page |
 | `GET` | `/api/status` | JSON status: accounts, quotas, model routing, flags |
 | `POST` | `/api/enable/<email>` | Re-enable a disabled account after its underlying issue is fixed |
 | `POST` | `/v1internal:streamGenerateContent` | Proxy endpoint (used by pi) |

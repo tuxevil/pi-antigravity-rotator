@@ -552,26 +552,32 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   }
   .health-grid {
     display:grid;
-    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
-    gap: 6px;
+    grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+    gap: 8px;
     margin-top: 8px;
   }
   .health-pill {
     background: rgba(255,255,255,0.04);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 6px 8px;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
   }
   .health-pill .label {
-    font-size: 9px;
+    font-size: 12px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.35px;
     color: var(--text-dim);
+    line-height: 1;
   }
   .health-pill .value {
-    font-size: 13px;
+    font-size: 18px;
     font-family: 'JetBrains Mono', monospace;
-    margin-top: 3px;
+    font-weight: 700;
+    line-height: 1;
   }
   .operator-panel {
     background: var(--surface);
@@ -998,7 +1004,7 @@ function renderAccounts(data) {
 }
 
 function renderHealthPill(label, value) {
-  return '<div class="health-pill"><div class="label">' + label + '</div><div class="value">' + value + '</div></div>';
+  return '<div class="health-pill"><span class="label">' + label + '</span><span class="value">' + value + '</span></div>';
 }
 
 function renderAttentionPanel(data) {

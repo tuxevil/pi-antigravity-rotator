@@ -148,7 +148,7 @@ Three mechanisms trigger rotation, scoped to the specific model:
 
 1. **Quota-based** (primary) -- Polls the Google quota API every 5 minutes. When a model's remaining quota drops by `rotateOnQuotaDrop` percentage points (default: 20%), that model rotates to the next account. Other models stay on their current accounts.
 
-2. **Request-count** (fallback) -- After `requestsPerRotation` successful requests (default: 5), the rotator asks for a rotation on the model that served that request. By default this fallback is only used when quota data for that model is still unknown.
+2. **Request-count** (fallback) -- Before forwarding a request, the rotator checks how many requests the current account has already served for that specific model and rotates once it reaches `requestsPerRotation` (default: 5). By default this fallback is only used when quota data for that model is still unknown.
 
 3. **429 failover** (reactive) -- On rate limit, the account is marked exhausted with a parsed retry cooldown and the affected model immediately switches.
 

@@ -117,6 +117,7 @@ export interface AccountRuntime {
 export interface ModelRotationState {
 	activeAccountIndex: number;
 	quotaAtRotationStart: number; // quota % when this account became active for this model
+	requestsOnActiveAccount: number;
 }
 
 // Persisted state across restarts

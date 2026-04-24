@@ -78,6 +78,7 @@ export class AccountRotator {
 					this.modelState.set(model, {
 						activeAccountIndex: Math.min(idx, this.accounts.length - 1),
 						quotaAtRotationStart: -1,
+						requestsOnActiveAccount: 0,
 					});
 				}
 			}
@@ -369,6 +370,29 @@ export class AccountRotator {
 		return best;
 	}
 
+	private countModelAssignment(modelKey: string): void {
+		const state = this.modelState.get(modelKey);
+		if (state) {
+			state.requestsOnActiveAccount++;
+		}
+	}
+
+	private shouldRotateBeforeRequest(account: AccountRuntime, modelKey: string, state: ModelRotationState | null): boolean {
+		return (
+			!!state &&
+			this.shouldUseRequestCountRotation(account, modelKey) &&
+			state.requestsOnActiveAccount >= this.config.requestsPerRotation
+		);
+	}
+
+	private async rotateModelForRequest(modelKey: string, now: number = Date.now(), excludeIdx?: number): Promise<AccountRuntime | null> {
+		const account = await this.rotateModel(modelKey, now, excludeIdx);
+		if (account) {
+			this.countModelAssignment(modelKey);
+		}
+		return account;
+	}
+
 	// =========================================================================
 	// Account Selection (per-model)
 	// =========================================================================
@@ -388,12 +412,26 @@ export class AccountRotator {
 		if (current && this.isAvailable(current, now)) {
 			// Check if this account has quota for the requested model
 			if (modelKey) {
+				if (this.shouldRotateBeforeRequest(current, modelKey, state ?? null)) {
+					this.log(
+						`${current.config.label || current.config.email} [${modelKey}]: hit rotation threshold (${this.config.requestsPerRotation})`,
+					);
+					const rotated = await this.rotateModelForRequest(modelKey, now, idx);
+					if (rotated) {
+						current.requestsSinceRotation = 0;
+						return rotated;
+					}
+					this.log(
+						`${current.config.label || current.config.email} [${modelKey}]: threshold reached but no replacement is available, staying`,
+						"warn",
+					);
+				}
 				const quota = this.getModelQuota(current, modelKey);
 				if (quota === 0) {
 					this.log(
 						`${current.config.label || current.config.email} [${modelKey}]: 0% quota, skipping`,
 					);
-					return this.rotateModel(modelKey);
+					return this.rotateModelForRequest(modelKey);
 				}
 				if (!this.isFreshWindowAllowed(current, modelKey)) {
 					const label = current.config.label || current.config.email;
@@ -403,12 +441,13 @@ export class AccountRotator {
 							: `${label} [${modelKey}]: fresh window blocked by operator toggle`,
 						"warn",
 					);
-					return this.rotateModel(modelKey);
+					return this.rotateModelForRequest(modelKey);
 				}
 			}
 			this.startRequest(current);
 			try {
 				await this.ensureValidToken(current);
+				if (modelKey) this.countModelAssignment(modelKey);
 				return current;
 			} catch (err) {
 				this.finishRequest(current);
@@ -418,7 +457,7 @@ export class AccountRotator {
 
 		// Current unavailable, or no per-model assignment yet
 		if (modelKey) {
-			return this.rotateModel(modelKey, now, state ? idx : -1);
+			return this.rotateModelForRequest(modelKey, now, state ? idx : -1);
 		}
 		return this.rotateDefault();
 	}
@@ -438,6 +477,7 @@ export class AccountRotator {
 			this.modelState.set(modelKey, {
 				activeAccountIndex: newIdx,
 				quotaAtRotationStart: quota,
+				requestsOnActiveAccount: 0,
 			});
 			this.log(
 				`[${modelKey}] Rotated to ${best.config.label || best.config.email} [${timerType}] (quota: ${quota >= 0 ? quota + "%" : "unknown"})`,
@@ -540,17 +580,8 @@ export class AccountRotator {
 		account.consecutiveErrors = 0;
 		account.lastError = null;
 
-		const shouldRotate =
-			this.shouldUseRequestCountRotation(account, model) &&
-			account.requestsSinceRotation >= this.config.requestsPerRotation;
-		if (shouldRotate) {
-			account.requestsSinceRotation = 0;
-			this.log(
-				`${account.config.label || account.config.email}: hit rotation threshold (${this.config.requestsPerRotation})`,
-			);
-		}
 		this.saveState();
-		return shouldRotate;
+		return false;
 	}
 
 	// Mark an account as exhausted (429 or quota exceeded)

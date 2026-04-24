@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-04-24
+
+### Fixed
+- Make request-count rotation deterministic by counting per-model account assignments before the next request is forwarded, instead of rotating only after a successful response completes.
+
 ## [1.3.4] - 2026-04-24
 
 ### Fixed

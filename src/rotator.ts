@@ -340,6 +340,7 @@ export class AccountRotator {
 		let best: AccountRuntime | null = null;
 		let bestPriority = Infinity;
 		let bestQuota = -2;
+		let bestDistance = Infinity;
 
 		for (let i = 0; i < this.accounts.length; i++) {
 			if (i === excludeIdx) continue;
@@ -351,10 +352,17 @@ export class AccountRotator {
 			if (!this.isFreshWindowAllowed(account, modelKey)) continue;
 
 			const priority = this.getModelTimerPriority(account, modelKey);
-			if (priority < bestPriority || (priority === bestPriority && quota > bestQuota)) {
+			const distance =
+				excludeIdx >= 0 ? (i - excludeIdx + this.accounts.length) % this.accounts.length : i + 1;
+			if (
+				priority < bestPriority ||
+				(priority === bestPriority && quota > bestQuota) ||
+				(priority === bestPriority && quota === bestQuota && distance < bestDistance)
+			) {
 				best = account;
 				bestPriority = priority;
 				bestQuota = quota;
+				bestDistance = distance;
 			}
 		}
 

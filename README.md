@@ -134,7 +134,7 @@ Each model maintains its own active account. When the proxy needs to rotate a mo
 | 2 | `7d` | Long reset window is already active for this model | Already ticking, so it is still worth using |
 | 3 (last) | `fresh` | No active reset window is known for this model yet | Save untouched quota for later if other timed pools exist |
 
-Within the same priority tier, the account with the most remaining quota for that model wins.
+Within the same priority tier, the account with the most remaining quota for that model wins. If multiple accounts tie on priority and quota, rotation advances circularly from the current account so equal candidates share traffic instead of always favoring the first configured match.
 
 Timer meanings:
 

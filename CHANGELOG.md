@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-04-24
+
+### Fixed
+- Rotate fairly among accounts that tie on model timer priority and remaining quota instead of repeatedly selecting the first matching candidate.
+
 ## [1.3.3] - 2026-04-23
 
 ### Added

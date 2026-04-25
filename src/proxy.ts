@@ -16,6 +16,7 @@ import { handleHostedCallback, serveLoginLanding, startHostedLogin } from "./onb
 
 const MAX_ENDPOINT_RETRIES = 3;
 const MAX_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes max cooldown
+const STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // Release account if a stream goes silent.
 
 interface RequestBody {
 	project: string;
@@ -101,6 +102,91 @@ function formatError(err: unknown): string {
 
 function isFetchTransportError(err: unknown): boolean {
 	return err instanceof TypeError && err.message === "fetch failed";
+}
+
+async function streamResponseBody(
+	body: Response["body"],
+	req: IncomingMessage,
+	res: ServerResponse,
+	label: string,
+	proxyLog: (msg: string, level?: "info" | "warn" | "error") => void,
+): Promise<void> {
+	if (!body) return;
+
+	const nodeStream = Readable.fromWeb(body as import("node:stream/web").ReadableStream);
+
+	await new Promise<void>((resolve) => {
+		let settled = false;
+		let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+		const cleanup = (): void => {
+			if (idleTimer) clearTimeout(idleTimer);
+			nodeStream.off("data", onData);
+			nodeStream.off("end", onEnd);
+			nodeStream.off("error", onError);
+			nodeStream.off("close", onClose);
+			req.off("aborted", onClientAbort);
+			req.off("close", onClientClose);
+			res.off("close", onResponseClose);
+			res.off("error", onResponseError);
+		};
+
+		const finish = (reason?: string): void => {
+			if (settled) return;
+			settled = true;
+			if (reason) proxyLog(`[${label}] Stream closed: ${reason}`, "warn");
+			cleanup();
+			resolve();
+		};
+
+		const resetIdleTimer = (): void => {
+			if (idleTimer) clearTimeout(idleTimer);
+			idleTimer = setTimeout(() => {
+				nodeStream.destroy(new Error(`stream idle for ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)}s`));
+				finish(`idle timeout after ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)}s`);
+			}, STREAM_IDLE_TIMEOUT_MS);
+		};
+
+		const onData = (chunk: Buffer): void => {
+			resetIdleTimer();
+			if (!res.destroyed && !res.writableEnded) {
+				res.write(chunk);
+			}
+		};
+		const onEnd = (): void => finish();
+		const onError = (err: Error): void => finish(String(err));
+		const onClose = (): void => finish();
+		const onClientAbort = (): void => {
+			nodeStream.destroy();
+			finish("client aborted");
+		};
+		const onClientClose = (): void => {
+			if (!res.writableEnded) {
+				nodeStream.destroy();
+				finish("client closed connection");
+			}
+		};
+		const onResponseClose = (): void => {
+			if (!res.writableEnded) {
+				nodeStream.destroy();
+				finish("response closed before completion");
+			}
+		};
+		const onResponseError = (err: Error): void => {
+			nodeStream.destroy(err);
+			finish(String(err));
+		};
+
+		nodeStream.on("data", onData);
+		nodeStream.once("end", onEnd);
+		nodeStream.once("error", onError);
+		nodeStream.once("close", onClose);
+		req.once("aborted", onClientAbort);
+		req.once("close", onClientClose);
+		res.once("close", onResponseClose);
+		res.once("error", onResponseError);
+		resetIdleTimer();
+	});
 }
 
 /**
@@ -313,23 +399,12 @@ async function handleProxyRequest(
 
 			res.writeHead(response.status, responseHeaders);
 
-			// Stream body using Node.js Readable (avoids ReadableStream locking issues)
-			if (response.body) {
 				try {
-					const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
-						await new Promise<void>((resolve) => {
-							nodeStream.on("data", (chunk: Buffer) => res.write(chunk));
-							nodeStream.on("end", resolve);
-							nodeStream.on("error", (err) => {
-								proxyLog(`[${label}] Stream error: ${err}`, "warn");
-								resolve();
-							});
-						});
-					} catch (err) {
-						proxyLog(`[${label}] Stream setup error: ${err}`, "warn");
-					}
+					await streamResponseBody(response.body, req, res, label, proxyLog);
+				} catch (err) {
+					proxyLog(`[${label}] Stream setup error: ${err}`, "warn");
 				}
-			res.end();
+				res.end();
 
 			if (shouldRotate) {
 				await rotateAndRelease();

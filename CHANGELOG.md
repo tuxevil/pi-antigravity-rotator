@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-04-25
+
+### Fixed
+- Release in-flight account reservations when a streaming response closes early, the client disconnects, or the upstream stream goes idle, preventing accounts from getting stuck as busy indefinitely.
+
 ## [1.3.6] - 2026-04-24
 
 ### Fixed

@@ -1214,13 +1214,13 @@ function exportData(format) {
     a.download = "rotator-token-usage.json";
     a.click();
   } else if (format === 'csv') {
-    var csv = "Tier,Period,Model,InputTokens,OutputTokens,Requests\n";
+    var csv = "Tier,Period,Model,InputTokens,OutputTokens,Requests\\n";
     ['months', 'days', 'hours', 'minutes'].forEach(function(tier) {
       (usage[tier] || []).forEach(function(b) {
         if (!b.byModel) return;
         Object.keys(b.byModel).forEach(function(m) {
           var d = b.byModel[m];
-          csv += tier + "," + b.period + "," + m + "," + d.inputTokens + "," + d.outputTokens + "," + d.requests + "\n";
+          csv += tier + "," + b.period + "," + m + "," + d.inputTokens + "," + d.outputTokens + "," + d.requests + "\\n";
         });
       });
     });
@@ -1319,14 +1319,17 @@ function renderTokenChart(tokenUsage) {
   });
   if (maxTokens === 0) maxTokens = 1;
 
-  var barWidth = Math.max(16, Math.min(36, Math.floor(600 / buckets.length) - 4));
-  var gap = 4;
+  var chartWidth = chart.clientWidth || 800;
+  var minSvgWidth = buckets.length * 16 + 40; 
+  var svgWidth = Math.max(chartWidth, minSvgWidth);
+  var availableWidth = svgWidth - 50;
+  var step = availableWidth / Math.max(1, buckets.length);
+  var barWidth = Math.min(36, step * 0.8);
   var chartHeight = 140;
-  var svgWidth = buckets.length * (barWidth + gap) + 60;
 
   var bars = '';
   buckets.forEach(function(b, i) {
-    var x = 40 + i * (barWidth + gap);
+    var x = 40 + i * step + (step - barWidth) / 2;
 
     // Stack by model
     var yOffset = chartHeight;

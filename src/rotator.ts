@@ -351,45 +351,46 @@ export class AccountRotator {
 
 			// Cross-model correlation (SECOND PASS):
 			// If ANY model has a 5h timer right now, ALL OTHER models showing 7d are also Pro.
-			// We track this separately via lastSeenAs5hCross so we can expire it independently.
+			// We save their resetTime as the Pro anchor.
 			const anyModelIs5h = account.quota.some((mq) => mq.timerType === "5h");
 			if (anyModelIs5h) {
 				for (const q of account.quota) {
 					if (q.timerType !== "7d") continue;
 					const tracker = account.quotaWindows[q.modelKey];
 					if (!tracker) continue;
-					// Only apply cross-correlation if this model has never had a direct 5h
-					// AND has no recorded Pro window yet (or the existing one is stale)
-					if (tracker.pro.lastSeenAs5h > 0) continue; // already knows its own 5h, skip
+					if (tracker.pro.lastSeenAs5h > 0) continue; // has its own direct 5h, skip
 					const currentResetMs = q.resetTime ? new Date(q.resetTime).getTime() : 0;
 					tracker.pro.lastSeen = now;
-					tracker.pro.lastSeenAs5hCross = now; // mark as inferred, not direct
+					tracker.pro.lastSeenAs5hCross = now;
 					tracker.pro.resetTimeMs = currentResetMs;
 					tracker.pro.resetTime = q.resetTime;
 					tracker.pro.lastQuota = q.percentRemaining;
 				}
 			} else {
-				// No 5h anywhere on this account right now.
-				// Expire cross-model inferences older than 10 minutes — the 5h is gone.
-				const TEN_MIN = 10 * 60 * 1000;
+				// No 5h anywhere on this account.
+				// For cross-inferred models: compare current resetTime against the Pro anchor.
+				// If resetTime CHANGED → Google gave back the Free timer → reclassify as Free.
+				// If resetTime MATCHES → still Pro 7d cooldown (5h just expired, account still in Pro group).
 				for (const q of account.quota) {
 					if (q.timerType !== "7d") continue;
 					const tracker = account.quotaWindows[q.modelKey];
 					if (!tracker) continue;
-					if (tracker.pro.lastSeenAs5h > 0) continue; // has its own direct 5h, don't touch
-					if (tracker.pro.lastSeenAs5hCross > 0 && (now - tracker.pro.lastSeenAs5hCross) > TEN_MIN) {
-						// Cross-inferred Pro is stale — this is now a Free 7d
-						const currentResetMs = q.resetTime ? new Date(q.resetTime).getTime() : 0;
+					if (tracker.pro.lastSeenAs5h > 0) continue; // has its own direct 5h history
+					if (tracker.pro.lastSeenAs5hCross === 0) continue; // never inferred as Pro
+					const currentResetMs = q.resetTime ? new Date(q.resetTime).getTime() : 0;
+					const resetStillMatches = tracker.pro.resetTimeMs > 0 && Math.abs(currentResetMs - tracker.pro.resetTimeMs) < 300000;
+					if (resetStillMatches) {
+						// Reset hasn't changed → still Pro 7d. Update quota.
+						tracker.pro.lastSeen = now;
+						tracker.pro.lastQuota = q.percentRemaining;
+					} else {
+						// Reset changed → Google reverted to Free timer. Reclassify.
 						tracker.free.lastSeen = now;
 						tracker.free.resetTimeMs = currentResetMs;
 						tracker.free.resetTime = q.resetTime;
 						tracker.free.lastQuota = q.percentRemaining;
-						// Clear stale Pro inference
-						tracker.pro.lastSeen = 0;
-						tracker.pro.lastSeenAs5hCross = 0;
-						tracker.pro.resetTimeMs = 0;
-						tracker.pro.resetTime = null;
-						tracker.pro.lastQuota = -1;
+						// Clear the stale Pro inference
+						tracker.pro = { lastSeen: 0, lastSeenAs5h: 0, lastSeenAs5hCross: 0, resetTimeMs: 0, resetTime: null, lastQuota: -1 };
 					}
 				}
 			}

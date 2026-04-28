@@ -1036,6 +1036,8 @@ function renderDualWindows(account) {
   var rows = models.map(function(modelKey) {
     var t = qw[modelKey];
     var shortName = modelKey.split('-').slice(0, 2).join('-');
+    if (shortName === 'claude-opus') shortName = 'claude'; // Clean up Claude display name
+    
     var proLine = '';
     var freeLine = '';
 
@@ -1745,6 +1747,9 @@ function renderForecastPanel(data) {
     var color = getModelColor(m);
     var rate = burnByPool[m] || 0;
     var rateLabel = rate > 0 ? rate.toFixed(1) + ' req/h' : 'idle';
+    var displayName = m;
+    if (m === 'claude-opus-4-6-thinking') displayName = 'claude';
+    if (m === 'gemini-3.1-pro') displayName = 'gemini-3.1-pro';
 
     // Estimate: assume ~100 requests per full 100% quota window (empirical)
     // Total remaining "request capacity" ≈ sum of (percent/100 * 100) per account
@@ -1778,7 +1783,7 @@ function renderForecastPanel(data) {
       '<span>' + avgQuota + '%</span></div>';
 
     html += '<tr style="border-top:1px solid var(--border)">' +
-      '<td style="padding:4px 8px"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + color + ';margin-right:6px"></span>' + m + '</td>' +
+      '<td style="padding:4px 8px"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + color + ';margin-right:6px"></span>' + displayName + '</td>' +
       '<td style="padding:4px 8px;min-width:120px">' + bar + '</td>' +
       '<td style="padding:4px 8px;text-align:center">' + q.accountCount + '</td>' +
       '<td style="padding:4px 8px">' + rateLabel + '</td>' +

@@ -452,6 +452,68 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .badge-free { background: rgba(110, 110, 130, 0.08); color: var(--text-dim); }
   .badge-fmgr { background: rgba(124, 92, 252, 0.15); color: var(--accent); font-size: 9px; }
 
+  .dw-section {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: rgba(124, 92, 252, 0.04);
+    border: 1px solid rgba(124, 92, 252, 0.12);
+    border-radius: 6px;
+  }
+  .dw-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .dw-model {
+    margin-bottom: 6px;
+  }
+  .dw-model-name {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .dw-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    line-height: 1.6;
+  }
+  .dw-badge {
+    display: inline-block;
+    width: 32px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 9px;
+    border-radius: 3px;
+    padding: 1px 4px;
+    flex-shrink: 0;
+  }
+  .dw-badge-pro {
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--green);
+  }
+  .dw-badge-free {
+    background: rgba(250, 204, 21, 0.12);
+    color: var(--yellow);
+  }
+  .dw-quota {
+    font-weight: 700;
+    min-width: 28px;
+  }
+  .dw-reset {
+    color: var(--text-dim);
+  }
+  .dw-empty {
+    color: var(--text-dim);
+    font-style: italic;
+    opacity: 0.5;
+  }
+
   .advisor-panel {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -965,6 +1027,57 @@ function renderQuotaBars(account) {
   return '<div class="quota-section"><div class="quota-section-title">Quota (per model)</div>' + rows + '</div>';
 }
 
+function renderDualWindows(account) {
+  var qw = account.quotaWindows;
+  if (!qw) return '';
+  var models = Object.keys(qw);
+  if (models.length === 0) return '';
+  var now = Date.now();
+  var rows = models.map(function(modelKey) {
+    var t = qw[modelKey];
+    var shortName = modelKey.split('-').slice(0, 2).join('-');
+    var proLine = '';
+    var freeLine = '';
+    if (t.pro && t.pro.lastSeen > 0) {
+      var pqColor = t.pro.lastQuota > 50 ? 'var(--green)' : t.pro.lastQuota > 20 ? 'var(--yellow)' : 'var(--red)';
+      var pReset = '';
+      if (t.pro.resetTimeMs > 0) {
+        var pRemain = t.pro.resetTimeMs - now;
+        if (pRemain > 0) pReset = 'resets in ' + formatDuration(pRemain);
+        else pReset = 'reset ' + formatDuration(-pRemain) + ' ago ✓';
+      }
+      proLine = '<div class="dw-row">' +
+        '<span class="dw-badge dw-badge-pro">PRO</span>' +
+        '<span class="dw-quota" style="color:' + pqColor + '">' + t.pro.lastQuota + '%</span>' +
+        '<span class="dw-reset">' + (pReset || '--') + '</span>' +
+      '</div>';
+    } else {
+      proLine = '<div class="dw-row"><span class="dw-badge dw-badge-pro">PRO</span><span class="dw-empty">no data</span></div>';
+    }
+    if (t.free && t.free.lastSeen > 0) {
+      var fqColor = t.free.lastQuota > 50 ? 'var(--green)' : t.free.lastQuota > 20 ? 'var(--yellow)' : 'var(--red)';
+      var fReset = '';
+      if (t.free.resetTimeMs > 0) {
+        var fRemain = t.free.resetTimeMs - now;
+        if (fRemain > 0) fReset = 'resets in ' + formatDuration(fRemain);
+        else fReset = 'reset ' + formatDuration(-fRemain) + ' ago ✓';
+      }
+      freeLine = '<div class="dw-row">' +
+        '<span class="dw-badge dw-badge-free">FREE</span>' +
+        '<span class="dw-quota" style="color:' + fqColor + '">' + t.free.lastQuota + '%</span>' +
+        '<span class="dw-reset">' + (fReset || '--') + '</span>' +
+      '</div>';
+    } else {
+      freeLine = '<div class="dw-row"><span class="dw-badge dw-badge-free">FREE</span><span class="dw-empty">no data</span></div>';
+    }
+    return '<div class="dw-model">' +
+      '<div class="dw-model-name">' + shortName + '</div>' +
+      proLine + freeLine +
+    '</div>';
+  }).join('');
+  return '<div class="dw-section"><div class="dw-title">Quota Windows (Pro / Free)</div>' + rows + '</div>';
+}
+
 function renderAccounts(data) {
   window.__lastData = data;
   var now = Date.now();
@@ -1077,6 +1190,7 @@ function renderAccounts(data) {
       '</div>' +
       '<div class="card-email">' + maskEmail(a.email) + '</div>' +
       (a.quota && a.quota.length > 0 ? renderQuotaBars(a) : '') +
+      renderDualWindows(a) +
       '<div class="card-stats">' +
         '<div class="card-stat"><div class="stat-label">Requests</div><div class="stat-value">' +
           a.requestsSinceRotation + ' / ' + a.totalRequests + ' total</div></div>' +

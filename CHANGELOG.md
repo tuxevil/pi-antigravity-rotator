@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-04-28
+
+### Added
+- **Dual-Window Dashboard UI**: Added a dedicated visual section to each account card in the dashboard showing the exact Pro vs Free quota and reset timers side-by-side.
+
 ## [1.4.6] - 2026-04-28
 
 ### Added

@@ -94,15 +94,14 @@ After starting the proxy, open `http://localhost:51200/dashboard` or `http://<yo
 
 The dashboard shows:
 
-- **Model Routing table** -- Which account each model (Gemini Pro, Flash, Claude) is currently routed to
-- **Account cards** sorted by total quota (highest first), flagged/disabled last:
-  - Status badge: `active`, `ready`, `cooldown`, `flagged`, `disabled`, or `error`
-  - Model badges: which models this account is currently serving
-  - Per-model quota bars with timer type (`idle`/`7d`/`5h`) and reset countdown
-  - Request counts, last used time, token status
-  - Fresh-window policy status plus a per-account override button
-  - Error messages for flagged/errored accounts
-  - Re-enable button for disabled accounts
+- **Top Status & Controls** -- Real-time routing state, uptime, requests, and PII masking toggle.
+- **Token Usage & Savings** -- Interactive chart (`1h`, `2h`, `4h`, `8h`, `12h`, `1d`, `7d`, `1m`) showing token consumption by model, with estimated USD savings and `CSV`/`JSON` export options.
+- **Activity Heatmap** -- 60-day responsive GitHub-style contribution grid showing request intensity hour by hour.
+- **Latency (p50/p95)** -- Real-time median and 95th percentile tracking for Time-to-First-Byte (TTFB) and Total Duration per model.
+- **Quota Forecast** -- Predictive modeling showing when each model's quota will run out based on the current requests/hour burn rate.
+- **Searchable Request Log** -- Live feed of the last 200 requests with exact timestamps, models, masked accounts, status codes, and latency.
+- **Account Cards** -- Sorted by total quota. Shows status (`active`, `ready`, `cooldown`, `flagged`, `disabled`), served models, quota bars with timers, and precise error messages.
+- **Operator Panels** -- "Attention Needed" summaries for quarantined accounts and a real-time event feed of rotator actions.
 
 ![Dashboard](dashboard.png)
 

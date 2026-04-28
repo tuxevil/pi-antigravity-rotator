@@ -1672,6 +1672,22 @@ function renderRequestLog(log) {
   });
 })();
 
+function maskEventMessage(msg) {
+  if (!MASK_MODE) return escapeHtml(msg);
+  var out = msg;
+  if (window.__lastData && window.__lastData.accounts) {
+    window.__lastData.accounts.forEach(function(a) {
+      if (a.label && out.indexOf(a.label) !== -1) {
+        out = out.split(a.label).join('***');
+      }
+      if (a.email && out.indexOf(a.email) !== -1) {
+        out = out.split(a.email).join('***');
+      }
+    });
+  }
+  return escapeHtml(out);
+}
+
 function renderRecentEvents(events) {
   var panel = document.getElementById('recentEventsPanel');
   var allEvents = events || [];
@@ -1693,7 +1709,7 @@ function renderRecentEvents(events) {
     return '<div class="event-item level-' + (event.level || 'info') + '">' +
       '<div class="event-time">' + formatTime(event.timestamp) + '</div>' +
       '<div class="event-source ' + event.source + '">' + escapeHtml(event.source) + '</div>' +
-      '<div class="event-message">' + escapeHtml(event.message) + '</div>' +
+      '<div class="event-message">' + maskEventMessage(event.message) + '</div>' +
     '</div>';
   }).join('');
 

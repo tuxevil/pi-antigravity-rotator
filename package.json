@@ -1,6 +1,6 @@
 {
   "name": "pi-antigravity-rotator",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Multi-account rotation proxy for Google Antigravity with per-model routing, real-time quota tracking, and infringement detection",
   "license": "MIT",
   "type": "module",

@@ -401,6 +401,8 @@ export class AccountRotator {
 				// For cross-inferred models: compare current resetTime against the Pro anchor.
 				// If resetTime CHANGED → Google gave back the Free timer → reclassify as Free.
 				// If resetTime MATCHES → still Pro 7d cooldown (5h just expired, still in Pro group).
+				// ACCOUNT-LEVEL DETECTION: track if ANY model flipped to Free this poll.
+				let accountFlippedToFree = false;
 				for (const q of account.quota) {
 					if (q.timerType !== "7d") continue;
 					const tracker = account.quotaWindows[q.modelKey];
@@ -414,7 +416,29 @@ export class AccountRotator {
 						tracker.pro.lastSeen = now;
 						tracker.pro.lastQuota = q.percentRemaining;
 					} else {
-						// Reset changed → Google gave back Free timer. Reclassify.
+						// Reset changed → Google gave back Free timer. Reclassify THIS model.
+						tracker.free.lastSeen = now;
+						tracker.free.resetTimeMs = currentResetMs;
+						tracker.free.resetTime = q.resetTime;
+						tracker.free.lastQuota = q.percentRemaining;
+						tracker.pro = { lastSeen: 0, lastSeenAs5h: 0, lastSeenAs5hCross: 0, resetTimeMs: 0, resetTime: null, lastQuota: -1 };
+						accountFlippedToFree = true;
+					}
+				}
+
+				// ACCOUNT-LEVEL PROPAGATION:
+				// If any model detected a Free transition, ALL cross-inferred Pro windows
+				// on this account must also flip to Free — models are always in sync.
+				if (accountFlippedToFree) {
+					for (const q of account.quota) {
+						const tracker = account.quotaWindows[q.modelKey];
+						if (!tracker) continue;
+						// Only wipe cross-inferred Pro windows that haven't been updated yet this poll
+						if (tracker.pro.lastSeenAs5h > 0) continue; // direct 5h — don't touch
+						if (tracker.pro.lastSeenAs5hCross === 0) continue; // not a cross-inference
+						if (tracker.pro.lastSeen >= now) continue; // already updated this poll
+						// Write current quota as Free and clear stale Pro anchor
+						const currentResetMs = q.resetTime ? new Date(q.resetTime).getTime() : 0;
 						tracker.free.lastSeen = now;
 						tracker.free.resetTimeMs = currentResetMs;
 						tracker.free.resetTime = q.resetTime;

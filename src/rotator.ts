@@ -386,9 +386,15 @@ export class AccountRotator {
 			}
 
 			// Cross-model correlation (SECOND PASS):
-			// If ANY model has a 5h timer right now, ALL OTHER models showing 7d are also Pro,
+			// If ANY model has a GENUINE 5h timer right now, ALL OTHER models showing 7d are also Pro,
 			// EXCEPT if we just detected that the account flipped back to Free.
-			const anyModelIs5h = account.quota.some((mq) => mq.timerType === "5h");
+			const anyModelIs5h = account.quota.some((mq) => {
+				if (mq.timerType !== "5h") return false;
+				const ms = mq.resetTime ? new Date(mq.resetTime).getTime() : 0;
+				const FIVE_HOURS_10MIN = (5 * 60 + 10) * 60 * 1000;
+				return ms === 0 || (ms - now) <= FIVE_HOURS_10MIN;
+			});
+			
 			if (anyModelIs5h && !accountFlippedToFree) {
 				for (const q of account.quota) {
 					if (q.timerType !== "7d") continue;
@@ -1407,12 +1413,17 @@ export class AccountRotator {
 		const matchesRecordedPro = Math.abs(currentResetMs - tracker.pro.resetTimeMs) < 300000;
 
 		// Also verify the entire account isn't clearly falling back to Free.
-		// If ANY model on this account currently has a 5h timer, we are definitively in Pro mode.
+		// If ANY model on this account currently has a GENUINE 5h timer, we are definitively in Pro mode.
 		// HOWEVER, we only consider THIS model's 7d timer as "Pro Originated" if it matches
 		// the recorded Pro resetTime.
-		const anyModelIs5h = account.quota.some((q) => q.timerType === "5h");
+		const anyModelIs5h = account.quota.some((q) => {
+			if (q.timerType !== "5h") return false;
+			const ms = q.resetTime ? new Date(q.resetTime).getTime() : 0;
+			const FIVE_HOURS_10MIN = (5 * 60 + 10) * 60 * 1000;
+			return ms === 0 || (ms - Date.now()) <= FIVE_HOURS_10MIN;
+		});
 		
-		// If another model is 5h, but THIS model's 7d timer doesn't match our recorded Pro reset,
+		// If another model is genuinely 5h, but THIS model's 7d timer doesn't match our recorded Pro reset,
 		// then this 7d timer is just the Free timer dragging along.
 		if (anyModelIs5h && !matchesRecordedPro) {
 			return false;

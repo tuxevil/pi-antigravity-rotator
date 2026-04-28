@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.3.9] - 2026-04-27
+
+### Fixed
+- Fixed `ERR_MODULE_NOT_FOUND` crash on `pi-antigravity-rotator login` (and all other CLI commands) when installed globally via npm or Volta. The binary entry point was resolving `src/cli.ts` relative to `bin/` instead of the package root, causing Node to look for `bin/src/cli.ts` which does not exist in any install layout. Changed import path from `./src/cli.ts` to `../src/cli.ts`.
+
 ## [1.3.8] - 2026-04-26
 
 ### Fixed

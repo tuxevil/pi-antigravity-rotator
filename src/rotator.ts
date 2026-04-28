@@ -362,13 +362,34 @@ export class AccountRotator {
 				// fresh: no timer active, don't update either window
 			}
 
+			// --- ACCOUNT-LEVEL DETECTION (PRE-PASS) ---
+			// Check if ANY model explicitly signals a transition to Free.
+			// A model signals Free if it's currently a 7d timer whose resetTime DOES NOT match
+			// a previously established Pro anchor.
+			let accountFlippedToFree = false;
+			for (const q of account.quota) {
+				if (q.timerType !== "7d") continue;
+				const tracker = account.quotaWindows[q.modelKey];
+				if (!tracker) continue;
+				// If it has no pro memory, we can't tell if it flipped
+				if (tracker.pro.resetTimeMs === 0) continue;
+				
+				const currentResetMs = q.resetTime ? new Date(q.resetTime).getTime() : 0;
+				const resetMatchesPro = Math.abs(currentResetMs - tracker.pro.resetTimeMs) < 300000;
+				
+				if (!resetMatchesPro) {
+					// The timer changed! This is a definitive signal from Google that the
+					// Free timer has been restored for this model.
+					accountFlippedToFree = true;
+					break;
+				}
+			}
+
 			// Cross-model correlation (SECOND PASS):
-			// If ANY model has a 5h timer right now, ALL OTHER models showing 7d are also Pro.
-			// We save their resetTime as the Pro anchor.
-			// IMPORTANT: Only overwrite FREE→PRO if FREE was not recorded in a PREVIOUS poll.
-			// We detect this by checking if free.lastSeen < now (i.e. from a prior poll, not this one).
+			// If ANY model has a 5h timer right now, ALL OTHER models showing 7d are also Pro,
+			// EXCEPT if we just detected that the account flipped back to Free.
 			const anyModelIs5h = account.quota.some((mq) => mq.timerType === "5h");
-			if (anyModelIs5h) {
+			if (anyModelIs5h && !accountFlippedToFree) {
 				for (const q of account.quota) {
 					if (q.timerType !== "7d") continue;
 					const tracker = account.quotaWindows[q.modelKey];
@@ -385,24 +406,17 @@ export class AccountRotator {
 						tracker.free = { lastSeen: 0, resetTimeMs: 0, resetTime: null, lastQuota: -1 };
 					}
 
-					// Only update PRO anchor if it doesn't already have a confirmed anchor
-					// with a DIFFERENT resetTime (that would mean a fresh Free timer crept in)
-					const proAnchorDiffers = tracker.pro.resetTimeMs > 0 && Math.abs(currentResetMs - tracker.pro.resetTimeMs) >= 300000;
-					if (!proAnchorDiffers) {
-						tracker.pro.lastSeen = now;
-						tracker.pro.lastSeenAs5hCross = now;
-						tracker.pro.resetTimeMs = currentResetMs;
-						tracker.pro.resetTime = q.resetTime;
-						tracker.pro.lastQuota = q.percentRemaining;
-					}
+					tracker.pro.lastSeen = now;
+					tracker.pro.lastSeenAs5hCross = now;
+					tracker.pro.resetTimeMs = currentResetMs;
+					tracker.pro.resetTime = q.resetTime;
+					tracker.pro.lastQuota = q.percentRemaining;
 				}
 			} else {
-				// No 5h anywhere on this account.
+				// No 5h anywhere on this account (OR account definitively flipped to Free).
 				// For cross-inferred models: compare current resetTime against the Pro anchor.
 				// If resetTime CHANGED → Google gave back the Free timer → reclassify as Free.
-				// If resetTime MATCHES → still Pro 7d cooldown (5h just expired, still in Pro group).
-				// ACCOUNT-LEVEL DETECTION: track if ANY model flipped to Free this poll.
-				let accountFlippedToFree = false;
+				// If resetTime MATCHES → still Pro 7d cooldown.
 				for (const q of account.quota) {
 					if (q.timerType !== "7d") continue;
 					const tracker = account.quotaWindows[q.modelKey];
@@ -410,33 +424,36 @@ export class AccountRotator {
 					if (tracker.pro.lastSeenAs5h > 0) continue; // has its own direct 5h history
 					if (tracker.pro.lastSeenAs5hCross === 0) continue; // never inferred as Pro
 					const currentResetMs = q.resetTime ? new Date(q.resetTime).getTime() : 0;
-					const resetStillMatches = tracker.pro.resetTimeMs > 0 && Math.abs(currentResetMs - tracker.pro.resetTimeMs) < 300000;
+					
+					// If accountFlippedToFree is true, we force reclassification regardless of match,
+					// because the 7d timer might coincidentally match if the account was rarely used.
+					const resetStillMatches = !accountFlippedToFree && tracker.pro.resetTimeMs > 0 && Math.abs(currentResetMs - tracker.pro.resetTimeMs) < 300000;
+					
 					if (resetStillMatches) {
 						// Reset unchanged → still Pro 7d. Update quota only.
 						tracker.pro.lastSeen = now;
 						tracker.pro.lastQuota = q.percentRemaining;
 					} else {
-						// Reset changed → Google gave back Free timer. Reclassify THIS model.
+						// Reset changed (or forced flip) → Google gave back Free timer. Reclassify THIS model.
 						tracker.free.lastSeen = now;
 						tracker.free.resetTimeMs = currentResetMs;
 						tracker.free.resetTime = q.resetTime;
 						tracker.free.lastQuota = q.percentRemaining;
 						tracker.pro = { lastSeen: 0, lastSeenAs5h: 0, lastSeenAs5hCross: 0, resetTimeMs: 0, resetTime: null, lastQuota: -1 };
-						accountFlippedToFree = true;
 					}
 				}
 
 				// ACCOUNT-LEVEL PROPAGATION:
-				// If any model detected a Free transition, ALL cross-inferred Pro windows
-				// on this account must also flip to Free — models are always in sync.
+				// If we forced a flip or detected it, ensure ALL cross-inferred models on this account
+				// flip to Free synchronously.
 				if (accountFlippedToFree) {
 					for (const q of account.quota) {
 						const tracker = account.quotaWindows[q.modelKey];
 						if (!tracker) continue;
-						// Only wipe cross-inferred Pro windows that haven't been updated yet this poll
+						// Only wipe cross-inferred Pro windows
 						if (tracker.pro.lastSeenAs5h > 0) continue; // direct 5h — don't touch
 						if (tracker.pro.lastSeenAs5hCross === 0) continue; // not a cross-inference
-						if (tracker.pro.lastSeen >= now) continue; // already updated this poll
+						
 						// Write current quota as Free and clear stale Pro anchor
 						const currentResetMs = q.resetTime ? new Date(q.resetTime).getTime() : 0;
 						tracker.free.lastSeen = now;

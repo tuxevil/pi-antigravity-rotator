@@ -303,6 +303,14 @@ export class AccountRotator {
 			account.quota = this.extractQuotas(data);
 			account.lastQuotaPoll = Date.now();
 
+			// --- RAW QUOTA LOGGING FOR DEBUGGING ---
+			const rawLog = account.quota.map(q => {
+				const remain = q.resetTime ? Math.round((new Date(q.resetTime).getTime() - Date.now())/60000)+'m' : 'no_reset';
+				return `[${q.modelKey}: ${q.timerType} ${q.percentRemaining}% in ${remain}]`;
+			}).join(' | ');
+			this.log(`RAW POLL ${account.config.email} -> ${rawLog}`);
+			// ---------------------------------------
+
 			// Record dual-window quota tracking per model
 			const now = Date.now();
 			const SIX_HOURS_MS = 6 * 3600 * 1000;

@@ -2009,7 +2009,7 @@ async function clearInFlight(email, modelKey) {
 }
 
 async function swapWindows(email, modelKey) {
-  if (!confirm('Manually swap Pro and Free data for ' + modelKey + '?\n\nUse this only if you know the algorithm classified the timers backward due to Google API weirdness.')) return;
+  if (!confirm('Manually swap Pro and Free data for ' + modelKey + '? Use this only if you know the algorithm classified the timers backward.')) return;
   await fetch('/api/account/swap-windows/' + encodeURIComponent(email) + '/' + encodeURIComponent(modelKey), { method: 'POST' });
   refresh();
 }

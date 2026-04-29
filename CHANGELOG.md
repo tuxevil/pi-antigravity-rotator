@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.2] - 2026-04-29
+
+### Fixed
+- **Project Discovery Without Shared Fallback**: Login now fails if Google does not return a companion project ID. No more shared `rising-fact-p41fc` fallback.
+- **Activation Hint**: Login/discovery errors now tell you to open the account in Antigravity IDE and send one message first.
+- **Activation Docs**: README now documents the first-use activation rule for new accounts.
+
 ## [1.9.1] - 2026-04-29
 
 ### Fixed

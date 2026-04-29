@@ -203,12 +203,13 @@ export async function handleHostedCallback(
 	try {
 		const tokenData = await exchangeAuthorizationCode(code, session.verifier);
 		const email = await getUserEmail(tokenData.accessToken);
-		const projectId = await discoverProject(tokenData.accessToken);
+		const project = await discoverProject(tokenData.accessToken);
 		const label = email ? email.split("@")[0] : "Account";
 		const entry = {
 			email: email || "unknown@gmail.com",
 			refreshToken: tokenData.refreshToken,
-			projectId,
+			projectId: project.projectId,
+			projectSource: project.source,
 			label,
 		};
 
@@ -221,6 +222,7 @@ export async function handleHostedCallback(
 				"Account Connected",
 				`<h1>Account Connected</h1>
 <p><strong>${entry.email}</strong> was ${isNew ? "added" : "updated"} successfully.</p>
+<p>Project: <span class="mono">${project.projectId}</span> via ${project.source}.</p>
 <p>The rotator can start using this account immediately.</p>
 <div class="note">If you ever want to stop sharing access, revoke this app's access from the Google account security settings.</div>`,
 			),

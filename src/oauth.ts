@@ -11,7 +11,6 @@ export const SCOPES = [
 	"https://www.googleapis.com/auth/experimentsandconfigs",
 ];
 export const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-export const DEFAULT_PROJECT_ID = "rising-fact-p41fc";
 
 export interface OAuthClientConfig {
 	clientId: string;
@@ -107,7 +106,13 @@ export async function exchangeAuthorizationCode(code: string, verifier: string):
 	};
 }
 
-export async function discoverProject(accessToken: string): Promise<string> {
+export interface ProjectDiscoveryResult {
+	projectId: string;
+	source: "google";
+	endpoint: string;
+}
+
+export async function discoverProject(accessToken: string): Promise<ProjectDiscoveryResult> {
 	const headers: Record<string, string> = {
 		Authorization: `Bearer ${accessToken}`,
 		"Content-Type": "application/json",
@@ -138,14 +143,14 @@ export async function discoverProject(accessToken: string): Promise<string> {
 					cloudaicompanionProject?: string | { id?: string };
 				};
 				if (typeof data.cloudaicompanionProject === "string" && data.cloudaicompanionProject) {
-					return data.cloudaicompanionProject;
+					return { projectId: data.cloudaicompanionProject, source: "google", endpoint };
 				}
 				if (
 					data.cloudaicompanionProject &&
 					typeof data.cloudaicompanionProject === "object" &&
 					data.cloudaicompanionProject.id
 				) {
-					return data.cloudaicompanionProject.id;
+					return { projectId: data.cloudaicompanionProject.id, source: "google", endpoint };
 				}
 			}
 		} catch {
@@ -153,7 +158,7 @@ export async function discoverProject(accessToken: string): Promise<string> {
 		}
 	}
 
-	return DEFAULT_PROJECT_ID;
+	throw new Error("Could not discover Cloud Code companion project ID from Google. If this account is new, open it in Antigravity IDE and send one message first, then retry login. Login failed instead of falling back to a shared projectId.");
 }
 
 export async function getUserEmail(accessToken: string): Promise<string | undefined> {

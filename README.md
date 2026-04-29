@@ -9,7 +9,7 @@ Multi-account rotation proxy for Google Antigravity. Distributes API usage acros
 - **Per-model timer tracking** -- Timer classification (`fresh`/`7d`/`5h`) is evaluated per model using each model's actual `resetTime` from the quota API, not a per-account estimate
 - **Smart rotation** -- Rotates only the specific model whose quota dropped, leaving other models on their current accounts
 - **Infringement detection** -- On 403 with infringement/abuse/suspension keywords, the account is immediately flagged and excluded from routing
-- **Automatic failover** -- On 429 rate limits, instantly switches the affected model to the next available account
+- **Safer 429 handling** -- On provider `429`, stops the current request and avoids cascade-burning sibling accounts
 - **Concurrency guardrails** -- Limits each account to one in-flight request by default to avoid bursty pressure
 - **Operator fresh-window controls** -- You can block new `fresh` window starts globally, then selectively allow specific accounts to override that policy
 - **Protective pause** -- Pauses all routing for several hours after serious ToS/abuse-style flags so the rest of the pool is not burned
@@ -57,6 +57,7 @@ Run `npm run login` once per Google account:
 2. Complete the sign-in and grant permissions
 3. The browser redirects to a `localhost` URL that won't load -- this is expected
 4. Copy the **full URL** from the browser's address bar and paste it into the terminal
+5. If project discovery fails, open that same account in Antigravity IDE, send one message, then rerun login
 
 The tool automatically:
 
@@ -65,6 +66,15 @@ The tool automatically:
 - Configures `~/.pi/agent/auth.json` with proxy-managed credentials
 
 Re-running with the same email updates the existing entry.
+
+### Activation rule
+
+Some accounts do not expose a discoverable `projectId` until they are used once in the Antigravity IDE.
+If login fails at project discovery:
+
+1. Open that exact Google account in Antigravity IDE.
+2. Send one message.
+3. Rerun `npm run login`.
 
 ## Dashboard
 
@@ -213,7 +223,8 @@ export PI_AI_ANTIGRAVITY_VERSION=1.107.0
 pi-antigravity-rotator start --config-dir /path/to/config
 ```
 
-`accounts.json` is created automatically by the login command:
+`accounts.json` is created automatically by the login command.
+Login now fails if Google does not return a project ID. No shared fallback.
 
 ```json
 {
@@ -273,7 +284,8 @@ pi-antigravity-rotator start --config-dir /path/to/config
 |-------|-------------|
 | `email` | Google account email (auto-filled by login) |
 | `refreshToken` | OAuth refresh token (auto-filled by login) |
-| `projectId` | Cloud project ID (auto-discovered during login) |
+| `projectId` | Cloud project ID discovered from Google during login |
+| `projectSource` | Optional metadata: `google` when discovered from Google, `manual` if edited by hand |
 | `label` | Display name on the dashboard (auto-filled, defaults to email username) |
 
 ## API Endpoints

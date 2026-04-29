@@ -79,19 +79,21 @@ export async function runLogin(): Promise<void> {
 	const email = await getUserEmail(tokenData.accessToken);
 
 	console.log("Discovering project...");
-	const projectId = await discoverProject(tokenData.accessToken);
+	const project = await discoverProject(tokenData.accessToken);
 
 	const label = email ? email.split("@")[0] : "Account";
 	const entry: AccountConfig = {
 		email: email || "unknown@gmail.com",
 		refreshToken: tokenData.refreshToken,
-		projectId,
+		projectId: project.projectId,
+		projectSource: project.source,
 		label,
 	};
 
 	console.log();
 	const { isNew } = addAccountToConfig(entry);
 	console.log(`  ${isNew ? "Added" : "Updated"} ${entry.email} in ${ACCOUNTS_FILE}`);
+	console.log(`  projectId=${project.projectId} (source=${project.source})`);
 
 	ensurePiModelsConfig();
 	ensurePiAuthConfig();

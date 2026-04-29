@@ -6,6 +6,8 @@ export interface AccountConfig {
 	email: string;
 	refreshToken: string;
 	projectId: string;
+	// How the projectId was obtained.
+	projectSource?: "google" | "manual";
 	label?: string;
 	// Optional - pro/free is detected dynamically from quota API reset times
 	type?: AccountType;

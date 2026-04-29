@@ -1342,13 +1342,22 @@ export class AccountRotator {
 	}
 
 	/**
-	 * An account is "Pro" if:
-	 * 1. It currently has a 5h timer on any model (active Pro window), OR
-	 * 2. It has a 7d timer that matches the recorded Pro resetTime (Pro cooldown)
+	 * An account is currently considered "Pro" if, during the very last quota poll,
+	 * its advisor models were tracked in the PRO bucket of the dual-window tracker.
 	 */
 	private isProAccount(account: AccountRuntime): boolean {
-		if (account.quota.some((q) => q.timerType === "5h")) return true;
-		return AccountRotator.PRO_ADVISOR_MODELS.some((m) => this.isProOriginatedTimer(account, m));
+		if (account.lastQuotaPoll === 0) return false;
+		
+		for (const m of AccountRotator.PRO_ADVISOR_MODELS) {
+			const tracker = account.quotaWindows[m];
+			if (!tracker) continue;
+			// If the Pro window was updated exactly during the last poll, it's Pro.
+			// Give a tiny 1s margin for JS execution timing.
+			if (tracker.pro.lastSeen > 0 && Math.abs(tracker.pro.lastSeen - account.lastQuotaPoll) < 1000) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -1380,24 +1389,31 @@ export class AccountRotator {
 		const currentProCount = proAccounts.length;
 		const actions: ProAdvisorAction[] = [];
 
-		// Comparative Quota Analysis Logic
+		// Comparative Quota Analysis Logic (Cumulative Score)
 		for (const account of this.accounts) {
 			if (account.disabled || account.flagged) continue;
 
-			// Find max known quota for both tiers across all advisor models
-			let maxProQuota = -1;
-			let maxFreeQuota = -1;
+			let totalProScore = 0;
+			let totalFreeScore = 0;
+			let hasAnyProData = false;
+			let hasAnyFreeData = false;
 
 			for (const modelKey of AccountRotator.PRO_ADVISOR_MODELS) {
 				const tracker = account.quotaWindows[modelKey];
 				if (!tracker) continue;
-				if (tracker.pro.lastSeen > 0) maxProQuota = Math.max(maxProQuota, tracker.pro.lastQuota);
-				if (tracker.free.lastSeen > 0) maxFreeQuota = Math.max(maxFreeQuota, tracker.free.lastQuota);
+				if (tracker.pro.lastSeen > 0) {
+					totalProScore += Math.max(0, tracker.pro.lastQuota);
+					hasAnyProData = true;
+				}
+				if (tracker.free.lastSeen > 0) {
+					totalFreeScore += Math.max(0, tracker.free.lastQuota);
+					hasAnyFreeData = true;
+				}
 			}
 
-			// If a tier has no data (-1), assume 0 for comparison purposes
-			const effectivePro = Math.max(0, maxProQuota);
-			const effectiveFree = Math.max(0, maxFreeQuota);
+			// If a tier has no data at all, its score is effectively 0
+			const effectivePro = hasAnyProData ? totalProScore : 0;
+			const effectiveFree = hasAnyFreeData ? totalFreeScore : 0;
 
 			const isCurrentlyPro = this.isProAccount(account);
 
@@ -1410,10 +1426,9 @@ export class AccountRotator {
 						type: "remove-pro",
 						email: account.config.email,
 						label: account.config.label || account.config.email,
-						reason: `Free tier has more quota (${effectiveFree}%) than Pro tier (${effectivePro}%). Downgrade to use Free tokens.`,
+						reason: `Free tier has significantly more combined quota (${effectiveFree}%) than Pro tier (${effectivePro}%). Downgrade to use Free tokens.`,
 					});
 				} else if (effectivePro === 0 && effectiveFree === 0) {
-					// Both empty. Check if there's a soonest reset to inform.
 					actions.push({
 						type: "remove-pro",
 						email: account.config.email,
@@ -1428,8 +1443,9 @@ export class AccountRotator {
 						type: "add-pro",
 						email: account.config.email,
 						label: account.config.label || account.config.email,
-						reason: `Pro tier has more quota (${effectivePro}%) than Free tier (${effectiveFree}%). Upgrade to use Pro tokens.`,
-					});
+						reason: `Pro tier has significantly more combined quota (${effectivePro}%) than Free tier (${effectiveFree}%). Upgrade to use Pro tokens.`,
+						_diff: effectivePro - effectiveFree, // temporary property for sorting
+					} as ProAdvisorAction & { _diff: number });
 				}
 			}
 		}
@@ -1437,8 +1453,7 @@ export class AccountRotator {
 		// Sort add-pro actions by highest Pro quota difference
 		actions.sort((a, b) => {
 			if (a.type === "add-pro" && b.type === "add-pro") {
-				// We don't have the exact diff here anymore, but keeping them clustered is fine
-				return 0;
+				return ((b as any)._diff || 0) - ((a as any)._diff || 0);
 			}
 			return 0;
 		});

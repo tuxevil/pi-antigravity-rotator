@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.8.6] - 2026-04-29
+
+### Fixed
+- **4h/8h/12h/1d charts empty for non-UTC timezones**: `mergeBucketsBy` normalized bucket periods to local time, then `padBuckets` re-applied `getLocalKey` treating those local-time strings as UTC — double-converting them and shifting all data outside the visible window. Fixed by passing the same `keyFn` to both `mergeBucketsBy` and `padBuckets`, so the fill loop uses the exact same key format as the data map.
+
 ## [1.8.5] - 2026-04-29
 
 ### Fixed

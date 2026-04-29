@@ -1619,8 +1619,11 @@ function renderTokenChart(tokenUsage) {
     return periodStr;
   }
 
-  // Pad buckets with zeroes up to current time
-  function padBuckets(data, view) {
+  // Pad buckets with zeroes up to current time.
+  // keyFn: optional function(isoString) -> key used for the fill loop.
+  //        When provided, dataMap is keyed by b.period directly (already normalized).
+  //        When omitted, type determines both the dataMap key and the fill key.
+  function padBuckets(data, view, keyFn) {
     if (!data) data = [];
     var now = new Date();
     var stepMs = 60000;
@@ -1637,17 +1640,21 @@ function renderTokenChart(tokenUsage) {
     else { stepMs = 86400000; count = 30; type = 'day'; }
 
     var dataMap = {};
-    data.forEach(function(b) {
-       var k = type === 'raw' ? b.period : getLocalKey(b.period, type);
-       dataMap[k] = b;
-    });
+    if (keyFn) {
+      // Data already normalized by mergeBucketsBy — use period as-is
+      data.forEach(function(b) { dataMap[b.period] = b; });
+    } else {
+      data.forEach(function(b) {
+        var k = type === 'raw' ? b.period : getLocalKey(b.period, type);
+        dataMap[k] = b;
+      });
+    }
 
     var result = [];
-    // Go backwards from now to fill the array
     for (var i = count - 1; i >= 0; i--) {
-       var d = new Date(now.getTime() - (i * stepMs));
-       var k = type === 'raw' ? d.toISOString().slice(0, 16) : getLocalKey(d.toISOString(), type);
-       result.push(dataMap[k] || { period: k, inputTokens: 0, outputTokens: 0, requests: 0, byModel: {} });
+      var d = new Date(now.getTime() - (i * stepMs));
+      var k = keyFn ? keyFn(d.toISOString()) : (type === 'raw' ? d.toISOString().slice(0, 16) : getLocalKey(d.toISOString(), type));
+      result.push(dataMap[k] || { period: k, inputTokens: 0, outputTokens: 0, requests: 0, byModel: {} });
     }
     return result;
   }
@@ -1662,15 +1669,19 @@ function renderTokenChart(tokenUsage) {
     buckets = padBuckets((tokenUsage.minutes || []), view);
   } else if (view === '4h') {
     var src4h = (tokenUsage.hours || []).concat(tokenUsage.minutes || []);
-    buckets = padBuckets(mergeBucketsBy(src4h, function(p) { return getLocalKey(p, '2min'); }, 120), view);
+    var kfn4h = function(p) { return getLocalKey(p, '2min'); };
+    buckets = padBuckets(mergeBucketsBy(src4h, kfn4h, 120), view, kfn4h);
   } else if (view === '8h') {
     var src8h = (tokenUsage.hours || []).concat(tokenUsage.minutes || []);
-    buckets = padBuckets(mergeBucketsBy(src8h, function(p) { return getLocalKey(p, '4min'); }, 120), view);
+    var kfn8h = function(p) { return getLocalKey(p, '4min'); };
+    buckets = padBuckets(mergeBucketsBy(src8h, kfn8h, 120), view, kfn8h);
   } else if (view === '12h') {
     var src12h = (tokenUsage.hours || []).concat(tokenUsage.minutes || []);
-    buckets = padBuckets(mergeBucketsBy(src12h, function(p) { return getLocalKey(p, '5min'); }, 144), view);
+    var kfn12h = function(p) { return getLocalKey(p, '5min'); };
+    buckets = padBuckets(mergeBucketsBy(src12h, kfn12h, 144), view, kfn12h);
   } else if (view === '1d') {
-    buckets = padBuckets(mergeBucketsBy((tokenUsage.hours || []).concat(tokenUsage.minutes || []), function(p) { return getLocalKey(p, 'hour'); }, 24), view);
+    var kfn1d = function(p) { return getLocalKey(p, 'hour'); };
+    buckets = padBuckets(mergeBucketsBy((tokenUsage.hours || []).concat(tokenUsage.minutes || []), kfn1d, 24), view, kfn1d);
   } else if (view === '7d') {
     buckets = padBuckets(mergeBucketsBy(allTiers, function(p) { return getLocalKey(p, 'day'); }, 7), view);
   } else {

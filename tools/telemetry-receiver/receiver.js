@@ -330,6 +330,186 @@ setInterval(() => {
 	}
 }, 5 * 60_000).unref();
 
+// ── Dashboard HTML ───────────────────────────────────────────────────
+function buildDashboardHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Pi Rotator Telemetry</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
+.header{background:#1a1f2e;border-bottom:1px solid #2d3748;padding:16px 24px;display:flex;align-items:center;gap:12px}
+.header h1{font-size:18px;font-weight:700;color:#fff}
+.header .ts{font-size:12px;color:#718096;background:#2d3748;padding:2px 8px;border-radius:12px;margin-left:auto}
+.token-bar{background:#1a1f2e;border-bottom:1px solid #2d3748;padding:12px 24px;display:flex;gap:8px;align-items:center}
+.token-bar input{flex:1;background:#0f1117;border:1px solid #2d3748;border-radius:6px;padding:8px 12px;color:#e2e8f0;font-size:13px;font-family:monospace}
+.token-bar input:focus{outline:none;border-color:#4299e1}
+.token-bar button{background:#4299e1;color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600}
+.main{padding:24px;max-width:1400px;margin:0 auto}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.kpi{background:#1a1f2e;border:1px solid #2d3748;border-radius:10px;padding:16px}
+.kpi .label{font-size:11px;color:#718096;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.kpi .value{font-size:26px;font-weight:700;color:#fff}
+.kpi .sub{font-size:11px;color:#718096;margin-top:3px}
+.kpi.green .value{color:#68d391}.kpi.blue .value{color:#63b3ed}
+.kpi.yellow .value{color:#f6e05e}.kpi.red .value{color:#fc8181}
+.section{background:#1a1f2e;border:1px solid #2d3748;border-radius:10px;padding:20px;margin-bottom:16px}
+.section h2{font-size:12px;font-weight:700;color:#718096;text-transform:uppercase;letter-spacing:.08em;margin-bottom:16px}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:16px}
+.chart-box{background:#1a1f2e;border:1px solid #2d3748;border-radius:10px;padding:20px}
+.chart-box h2{font-size:12px;font-weight:700;color:#718096;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}
+.chart-box canvas{max-height:200px}
+.flag-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+.flag-kpi{background:#2d1f1f;border:1px solid #742a2a;border-radius:8px;padding:14px}
+.flag-kpi .label{font-size:11px;color:#fc8181;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.flag-kpi .value{font-size:22px;font-weight:700;color:#feb2b2}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 12px;color:#718096;border-bottom:1px solid #2d3748;font-weight:500;white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid #1f2535;color:#e2e8f0}
+tr:last-child td{border-bottom:none}
+.mono{font-family:monospace;color:#68d391}
+.savings-big{font-size:40px;font-weight:800;color:#68d391;margin-bottom:4px}
+.savings-sub{font-size:13px;color:#718096;margin-bottom:16px}
+.error{background:#2d1515;border:1px solid #742a2a;border-radius:8px;padding:14px;color:#fc8181;margin-bottom:16px}
+.empty{color:#4a5568;font-size:13px;padding:24px;text-align:center}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📡 Pi Rotator Telemetry</h1>
+  <span class="ts" id="ts"></span>
+</div>
+<div class="token-bar">
+  <input type="password" id="tok" placeholder="Paste STATS_TOKEN here…" />
+  <button onclick="load()">Load Stats</button>
+</div>
+<div class="main">
+  <div class="error" id="err" style="display:none"></div>
+  <div id="app" style="display:none">
+
+    <div class="kpi-grid" id="kpis"></div>
+
+    <div class="section">
+      <h2>💰 Estimated Savings (USD vs paid API)</h2>
+      <div class="savings-big" id="savTotal">$0.00</div>
+      <div class="savings-sub">Total saved across all installs</div>
+      <div id="savTable"></div>
+    </div>
+
+    <div class="section">
+      <h2>🚨 Flag Analysis</h2>
+      <div class="flag-kpis" id="flagKpis"></div>
+      <div class="charts">
+        <div class="chart-box"><h2>By Pattern</h2><canvas id="cPatterns"></canvas></div>
+        <div class="chart-box"><h2>By Model</h2><canvas id="cFlagModels"></canvas></div>
+        <div class="chart-box"><h2>By Timer Type</h2><canvas id="cTimerType"></canvas></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>📊 Token Usage by Model</h2>
+      <div id="tokTable"></div>
+    </div>
+
+    <div class="charts">
+      <div class="chart-box"><h2>Versions</h2><canvas id="cVersions"></canvas></div>
+      <div class="chart-box"><h2>OS</h2><canvas id="cOS"></canvas></div>
+      <div class="chart-box"><h2>Models Active</h2><canvas id="cModels"></canvas></div>
+      <div class="chart-box"><h2>Routing Health</h2><canvas id="cHealth"></canvas></div>
+      <div class="chart-box"><h2>Features Used</h2><canvas id="cFeatures"></canvas></div>
+    </div>
+
+  </div>
+</div>
+<script>
+const C=['#63b3ed','#68d391','#f6e05e','#b794f4','#fc8181','#fbd38d','#76e4f7','#a3bffa'];
+const R=['#fc8181','#f6ad55','#faf089','#fc8181','#feb2b2'];
+const charts={};
+function $(i){return document.getElementById(i)}
+function fmt(n){return n==null?'—':Number(n).toLocaleString()}
+function usd(n){return '$'+Number(n||0).toFixed(2)}
+function mkChart(id,type,labels,datasets){
+  if(charts[id])charts[id].destroy();
+  const ctx=$(id)?.getContext('2d');if(!ctx)return;
+  charts[id]=new Chart(ctx,{type,
+    data:{labels,datasets},
+    options:{responsive:true,maintainAspectRatio:true,
+      plugins:{legend:{labels:{color:'#a0aec0',font:{size:11}}}},
+      scales:type==='bar'?{x:{ticks:{color:'#718096'},grid:{color:'#2d3748'}},y:{ticks:{color:'#718096'},grid:{color:'#2d3748'}}}:undefined
+    }
+  });
+}
+async function load(){
+  const t=$('tok').value.trim();
+  if(!t)return;
+  localStorage.setItem('st',t);
+  await go(t);
+}
+async function go(t){
+  try{
+    const r=await fetch('/v1/stats',{headers:{'Authorization':'Bearer '+t}});
+    if(r.status===401){$('err').textContent='⚠ Invalid token';$('err').style.display='';return}
+    if(!r.ok){$('err').textContent='⚠ Server error '+r.status;$('err').style.display='';return}
+    const d=await r.json();
+    $('err').style.display='none';
+    $('app').style.display='block';
+    $('ts').textContent='Updated '+new Date().toLocaleTimeString();
+    render(d);
+  }catch(e){$('err').textContent='⚠ '+e.message;$('err').style.display='';}
+}
+function render(d){
+  // KPIs
+  $('kpis').innerHTML=[
+    {l:'Unique Installs',v:fmt(d.uniqueInstalls),c:'green'},
+    {l:'Total Events',v:fmt(d.totalEvents),c:'blue'},
+    {l:'Boots',v:fmt(d.totalBoots),c:'blue'},
+    {l:'Avg Accounts',v:d.avgAccountsPerEvent,c:''},
+    {l:'Total Requests',v:fmt(d.totalRequestsAcrossAll),c:'yellow'},
+    {l:'Flags Detected',v:fmt(d.flags?.totalFlags||0),c:'red'},
+    {l:'Avg Req/Flag',v:fmt(d.flags?.avgRequestsBeforeFlag||0),c:'red'},
+    {l:'Period',v:d.period?.from||'—',sub:d.period?.to?'→ '+d.period.to:''},
+  ].map(k=>'<div class="kpi '+k.c+'"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div>'+(k.sub?'<div class="sub">'+k.sub+'</div>':'')+'</div>').join('');
+
+  // Savings
+  const sv=d.savings||{};
+  $('savTotal').textContent=usd(sv.totalUsd);
+  const rows=Object.entries(sv.byModel||{}).map(([m,v])=>'<tr><td class="mono">'+m+'</td><td>'+usd(v.inputUsd)+'</td><td>'+usd(v.outputUsd)+'</td><td><strong>'+usd(v.totalUsd)+'</strong></td></tr>').join('');
+  $('savTable').innerHTML=rows?'<table><thead><tr><th>Model</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody>'+rows+'</tbody></table>':'<div class="empty">No data yet</div>';
+
+  // Flag KPIs
+  const fl=d.flags||{};
+  $('flagKpis').innerHTML=[
+    {l:'Total Flags',v:fmt(fl.totalFlags||0)},
+    {l:'On Pro Accounts',v:fmt(fl.onProAccounts||0)},
+    {l:'On Free Accounts',v:fmt(fl.onFreeAccounts||0)},
+    {l:'Avg Requests Before Flag',v:fmt(fl.avgRequestsBeforeFlag||0)},
+  ].map(k=>'<div class="flag-kpi"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div></div>').join('');
+  mkChart('cPatterns','bar',Object.keys(fl.byPattern||{}),[{label:'Count',data:Object.values(fl.byPattern||{}),backgroundColor:R}]);
+  mkChart('cFlagModels','doughnut',Object.keys(fl.byModel||{}),[{data:Object.values(fl.byModel||{}),backgroundColor:C}]);
+  mkChart('cTimerType','doughnut',Object.keys(fl.byTimerType||{}),[{data:Object.values(fl.byTimerType||{}),backgroundColor:['#63b3ed','#f6e05e','#68d391']}]);
+
+  // Token usage
+  const tk=d.tokensByModel||{};
+  $('tokTable').innerHTML=Object.keys(tk).length?'<table><thead><tr><th>Model</th><th>Input Tokens</th><th>Output Tokens</th><th>Requests</th></tr></thead><tbody>'+Object.entries(tk).map(([m,v])=>'<tr><td class="mono">'+m+'</td><td>'+fmt(v.input)+'</td><td>'+fmt(v.output)+'</td><td>'+fmt(v.requests)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No token data yet</div>';
+
+  // Charts
+  mkChart('cVersions','bar',Object.keys(d.versions||{}),[{label:'Events',data:Object.values(d.versions||{}),backgroundColor:'#63b3ed'}]);
+  mkChart('cOS','doughnut',Object.keys(d.os||{}),[{data:Object.values(d.os||{}),backgroundColor:C}]);
+  mkChart('cModels','doughnut',Object.keys(d.modelsUsed||{}),[{data:Object.values(d.modelsUsed||{}),backgroundColor:C}]);
+  mkChart('cHealth','doughnut',Object.keys(d.routingHealth||{}),[{data:Object.values(d.routingHealth||{}),backgroundColor:['#68d391','#f6e05e','#fc8181','#718096']}]);
+  mkChart('cFeatures','bar',Object.keys(d.featuresUsed||{}),[{label:'Times used',data:Object.values(d.featuresUsed||{}),backgroundColor:'#b794f4'}]);
+}
+const saved=localStorage.getItem('st');
+if(saved){$('tok').value=saved;go(saved);}
+setInterval(()=>{const t=localStorage.getItem('st');if(t)go(t);},60000);
+</script>
+</body></html>`;
+}
+
 // ── HTTP Server ──────────────────────────────────────────────────────
 function readBody(req) {
 	return new Promise((resolve, reject) => {
@@ -359,6 +539,13 @@ const server = createServer(async (req, res) => {
 	if (method === "OPTIONS") {
 		res.writeHead(204);
 		res.end();
+		return;
+	}
+
+	// Dashboard
+	if (method === "GET" && (url === "/" || url === "/dashboard")) {
+		res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+		res.end(buildDashboardHtml());
 		return;
 	}
 

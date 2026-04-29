@@ -114,11 +114,10 @@ export function main(): void {
 	const telemetry = new TelemetryReporter(() => {
 		const status = rotator.getStatus();
 
-		// Aggregate per-model token usage from all time buckets
-		const tu = status.tokenUsage;
-		const allBuckets = [...tu.minutes, ...tu.hours, ...tu.days, ...tu.months];
+		// Use getTokenUsage() which correctly reads only the raw minutes buckets
+		const tu = rotator.getTokenUsage();
 		const tokensByModel: Record<string, { input: number; output: number; requests: number }> = {};
-		for (const b of allBuckets) {
+		for (const b of tu.minutes) {
 			for (const [model, data] of Object.entries(b.byModel)) {
 				if (!tokensByModel[model]) tokensByModel[model] = { input: 0, output: 0, requests: 0 };
 				tokensByModel[model].input += data.inputTokens;

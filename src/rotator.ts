@@ -924,7 +924,10 @@ export class AccountRotator {
 	}
 
 	getTokenUsage(): TokenUsageData {
-		const all = [...this.tokenBuckets.minutes, ...this.tokenBuckets.hours, ...this.tokenBuckets.days, ...this.tokenBuckets.months];
+		// Use only the raw minutes buckets — they are the source of truth.
+		// Hours/days/months are consolidated rollups of the same data and
+		// must NOT be summed together with minutes (that would 4x every count).
+		const all = this.tokenBuckets.minutes;
 		let totalInputTokens = 0;
 		let totalOutputTokens = 0;
 		let totalRequests = 0;

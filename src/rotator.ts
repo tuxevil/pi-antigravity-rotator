@@ -1244,6 +1244,46 @@ export class AccountRotator {
 		return this.accounts.length;
 	}
 
+	/**
+	 * Get contextual data for telemetry flag reporting.
+	 * Returns anonymous pool state — no emails or PII.
+	 */
+	getFlagContext(account: AccountRuntime, modelKey: string): {
+		wasProAccount: boolean;
+		accountQuotaPercent: number;
+		timerType: string;
+		poolSize: number;
+		poolHealthyCount: number;
+		protectivePauseTriggered: boolean;
+		accountRequestsLastHour: number;
+		uptimeSeconds: number;
+	} {
+		const now = Date.now();
+		const quota = this.getModelQuota(account, modelKey);
+		const timerType = this.getModelTimerType(account, modelKey);
+		const healthyCount = this.accounts.filter(a =>
+			!a.disabled && !a.flagged && this.isAvailable(a, now),
+		).length;
+
+		// Count requests in the last hour from request log
+		const oneHourAgo = now - 3600_000;
+		const label = account.config.label || account.config.email;
+		const requestsLastHour = this.requestLog.filter(e =>
+			e.timestamp >= oneHourAgo && e.account === label,
+		).length;
+
+		return {
+			wasProAccount: this.isProAccount(account),
+			accountQuotaPercent: quota,
+			timerType,
+			poolSize: this.accounts.length,
+			poolHealthyCount: healthyCount,
+			protectivePauseTriggered: this.protectivePauseUntil > now,
+			accountRequestsLastHour: requestsLastHour,
+			uptimeSeconds: Math.round((now - this.startTime) / 1000),
+		};
+	}
+
 	addOrUpdateAccount(accountConfig: AccountConfig): void {
 		const existingIndex = this.accounts.findIndex((account) => account.config.email === accountConfig.email);
 		if (existingIndex >= 0) {

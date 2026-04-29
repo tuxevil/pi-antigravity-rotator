@@ -18,6 +18,8 @@ import { requireAdmin } from "./admin-auth.js";
 import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
 import { validateProxyRequestBody } from "./validators.js";
 import { logger } from "./logger.js";
+import { trackFeature, reportFlagEvent, FLAG_PATTERNS, type FlagPattern } from "./telemetry.js";
+import type { FlagEventData } from "./telemetry.js";
 
 const proxyLogger = logger.child("proxy");
 
@@ -415,6 +417,28 @@ async function handleProxyRequest(
 				if (response.status === 401) {
 					const errorText = await response.text().catch(() => "");
 					proxyLog(`[${label}] BLOCKED (401): ${errorText.slice(0, 200)}`, "error");
+
+					// Telemetry: report flag event BEFORE markFlagged (which may trigger protective pause)
+					const lower401 = errorText.toLowerCase();
+					const matched401 = FLAG_PATTERNS.filter(p => lower401.includes(p));
+					const ctx401 = rotator.getFlagContext(account, modelKey);
+					reportFlagEvent({
+						flagHttpStatus: 401,
+						flagPatternsMatched: matched401.length > 0 ? matched401 : ["blocked_401" as FlagPattern],
+						model: modelKey,
+						timerType: ctx401.timerType as FlagEventData["timerType"],
+						accountQuotaPercent: ctx401.accountQuotaPercent,
+						wasProAccount: ctx401.wasProAccount,
+						accountTotalRequests: account.totalRequests,
+						accountRequestsLastHour: ctx401.accountRequestsLastHour,
+						accountConcurrentAtFlag: account.inFlightRequests,
+						poolSize: ctx401.poolSize,
+						poolHealthyCount: ctx401.poolHealthyCount,
+						protectivePauseTriggered: false, // not yet — markFlagged decides
+						uptimeSeconds: ctx401.uptimeSeconds,
+						timeSinceLastFlagSeconds: -1, // filled by reporter
+					});
+
 					rotator.markFlagged(account, `Account blocked (401): ${errorText.slice(0, 300)}`);
 					logRequestEnd(401);
 				const nextAccount = await rotateAndRelease();
@@ -428,13 +452,34 @@ async function handleProxyRequest(
 			if (response.status === 403) {
 				const errorText = await response.text().catch(() => "");
 				const lower = errorText.toLowerCase();
-				const flagPatterns = ["infring", "suspend", "abus", "terminat", "violat", "banned", "policy", "forbidden", "verif"];
-					const isFlagged = flagPatterns.some((p) => lower.includes(p));
+				const flagPatternsLocal = ["infring", "suspend", "abus", "terminat", "violat", "banned", "policy", "forbidden", "verif"];
+					const isFlagged = flagPatternsLocal.some((p) => lower.includes(p));
 
 					if (isFlagged) {
 						proxyLog(`[${label}] FLAGGED: ${errorText.slice(0, 200)}`, "error");
 						recordOutcome(403);
 						logRequestEnd(403);
+
+						// Telemetry: report flag event with full anonymous context
+						const matchedPatterns = FLAG_PATTERNS.filter(p => lower.includes(p));
+						const ctx403 = rotator.getFlagContext(account, modelKey);
+						reportFlagEvent({
+							flagHttpStatus: 403,
+							flagPatternsMatched: matchedPatterns,
+							model: modelKey,
+							timerType: ctx403.timerType as FlagEventData["timerType"],
+							accountQuotaPercent: ctx403.accountQuotaPercent,
+							wasProAccount: ctx403.wasProAccount,
+							accountTotalRequests: account.totalRequests,
+							accountRequestsLastHour: ctx403.accountRequestsLastHour,
+							accountConcurrentAtFlag: account.inFlightRequests,
+							poolSize: ctx403.poolSize,
+							poolHealthyCount: ctx403.poolHealthyCount,
+							protectivePauseTriggered: false, // not yet
+							uptimeSeconds: ctx403.uptimeSeconds,
+							timeSinceLastFlagSeconds: -1, // filled by reporter
+						});
+
 						rotator.markFlagged(account, errorText.slice(0, 300));
 					const nextAccount = await rotateAndRelease();
 					if (!nextAccount) {
@@ -586,12 +631,14 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 
 		if (method === "GET" && (pathname === "/" || pathname === "/dashboard")) {
 			if (!requireAdmin(req, res)) return;
+			trackFeature("dashboard");
 			serveDashboard(res);
 			return;
 		}
 
 		if (method === "GET" && pathname === "/login") {
 			if (!requireAdmin(req, res)) return;
+			trackFeature("hostedLogin");
 			serveLoginLanding(res);
 			return;
 		}
@@ -674,6 +721,7 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 
 		if (method === "POST" && (url === "/api/settings/fresh-window-starts/on" || url === "/api/settings/fresh-window-starts/off")) {
 			if (!requireAdmin(req, res)) return;
+			trackFeature("freshWindowToggle");
 			serveFreshWindowStartsApi(res, rotator, url.endsWith("/on"));
 			return;
 		}

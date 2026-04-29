@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0] - 2026-04-29
+
+### Added
+- **Anonymous Telemetry**: Opt-out telemetry to help understand real-world usage and, crucially, to improve the anti-flag algorithm that protects your accounts. Collects pool metrics, error patterns, and flag triggers without capturing any PII or emails.
+- **Telemetry Receiver**: Included a standalone Node.js server (`tools/telemetry-receiver/`) for deploying your own instance to collect telemetry securely via JSONL files.
+- **Server-Side Savings Calculation**: The receiver now computes estimated USD savings directly from raw per-model token usage reports, ensuring pricing updates don't require client updates.
+- **Star Reminder**: A one-time, non-intrusive terminal prompt shown after 24 hours of successful use, encouraging a GitHub star.
 
 ## [1.7.0] - 2026-04-29
 

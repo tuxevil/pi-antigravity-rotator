@@ -320,6 +320,50 @@ The proxy now returns `503` and waits for cooldown or manual recovery. It does n
 **Multiple agents on different models**
 This is fully supported. Each model routes independently. Agent 1 using Gemini Pro and Agent 2 using Claude will each have their own active account and won't interfere with each other's rotation.
 
+## Telemetry
+
+pi-antigravity-rotator collects **anonymous usage telemetry** to help understand how the tool is used and — most importantly — to improve the anti-flag algorithm that protects your accounts.
+
+### What is collected
+
+**Heartbeat** (at boot, every 6h, at shutdown):
+- Random install ID (UUID — not tied to any account or person)
+- Rotator version, Node.js version, OS, architecture
+- Account count, models in use, total request count, uptime
+- Routing health state (healthy/paused/stopped)
+- Flagged/disabled/pro/free account counts
+- Per-model token usage (input/output tokens + request count per model)
+- Feature usage flags (dashboard opened, login used, etc. — booleans only)
+
+**Flag events** (sent immediately when Google flags an account):
+- HTTP status that triggered the flag (401 or 403)
+- Which known patterns matched (e.g. `infring`, `abus`, `suspend` — from a fixed allowlist)
+- Model being requested, quota timer type, quota percentage
+- Account request velocity (requests/hour), concurrent requests, lifetime requests
+- Pool state: size, healthy count, whether protective pause triggered
+- Time since previous flag
+
+Flag data is the most valuable signal. It lets us study what behavior patterns lead to flags and improve the rotation algorithm to avoid them — benefiting everyone.
+
+### What is NEVER collected
+
+- ❌ Email addresses
+- ❌ OAuth tokens or API keys
+- ❌ IP addresses
+- ❌ Google project IDs
+- ❌ Request/response bodies
+- ❌ Error message text (only which known keywords matched)
+
+### Opt out
+
+Set the environment variable before starting:
+
+```bash
+export PI_ROTATOR_TELEMETRY=off
+```
+
+Or use any of: `PI_ROTATOR_TELEMETRY=false`, `PI_ROTATOR_TELEMETRY=0`.
+
 ## Support Me
 
 If this tool has helped you optimize your API usage and save costs, consider supporting its development!

@@ -1,0 +1,13 @@
+{
+  "name": "pi-rotator-telemetry-receiver",
+  "version": "1.0.0",
+  "description": "Minimal telemetry receiver for pi-antigravity-rotator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node receiver.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

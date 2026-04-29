@@ -5,3 +5,6 @@ state.json
 *.log
 cheatsheet.md
 token-usage.json
+.telemetry-id
+.first-boot
+.star-prompted

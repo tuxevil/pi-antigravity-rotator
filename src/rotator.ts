@@ -29,6 +29,10 @@ import {
 import { getStatePath } from "./paths.js";
 import { saveAccountsConfig } from "./account-store.js";
 import { getOAuthClientConfig } from "./oauth.js";
+import { fetchWithRetry } from "./fetch-with-retry.js";
+import { logger } from "./logger.js";
+
+const rotatorLogger = logger.child("rotator");
 
 const STATE_FILE = getStatePath();
 const TOKENS_FILE = STATE_FILE.replace("state.json", "token-usage.json");
@@ -279,7 +283,7 @@ export class AccountRotator {
 		if (!account.accessToken) return;
 
 		try {
-			const response = await fetch(QUOTA_API_URL, {
+			const response = await fetchWithRetry(QUOTA_API_URL, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
@@ -287,7 +291,7 @@ export class AccountRotator {
 					"User-Agent": QUOTA_USER_AGENT,
 				},
 				body: JSON.stringify({ project: account.config.projectId }),
-				signal: AbortSignal.timeout(8000),
+				timeoutMs: 8000,
 			});
 
 			if (!response.ok) {
@@ -1055,7 +1059,7 @@ export class AccountRotator {
 		this.log(`Refreshing token for ${account.config.label || account.config.email}...`);
 		try {
 			const oauth = getOAuthClientConfig();
-			const response = await fetch(TOKEN_URL, {
+			const response = await fetchWithRetry(TOKEN_URL, {
 				method: "POST",
 				headers: { "Content-Type": "application/x-www-form-urlencoded" },
 				body: new URLSearchParams({
@@ -1289,8 +1293,7 @@ export class AccountRotator {
 	}
 
 	private log(msg: string, level: "info" | "warn" | "error" = "info"): void {
-		const ts = new Date().toISOString().slice(11, 19);
-		console.log(`[${ts}] [rotator] ${msg}`);
+		rotatorLogger.log(level, msg);
 		this.pushRecentEvent("rotator", msg, level);
 	}
 

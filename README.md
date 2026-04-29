@@ -199,6 +199,12 @@ Config files (`accounts.json`, `state.json`) are stored in `~/.pi-antigravity-ro
 # Environment variables
 export PI_ROTATOR_DIR=/path/to/config
 export PI_ROTATOR_QUOTA_USER_AGENT="antigravity/1.107.0 darwin/arm64"
+# Optional: require this token for dashboard/API access. If unset, legacy open access is preserved.
+export PI_ROTATOR_ADMIN_TOKEN="change-me"
+# Optional: max accepted proxy request body size in bytes. Default: 26214400 (25 MiB).
+export PI_ROTATOR_MAX_BODY_BYTES=26214400
+# Optional: log verbosity. One of debug, info, warn, error, silent. Default: info.
+export PI_ROTATOR_LOG_LEVEL=info
 # Optional override for Antigravity UA version used by quota fetches
 export PI_AI_ANTIGRAVITY_VERSION=1.107.0
 
@@ -263,6 +269,18 @@ pi-antigravity-rotator start --config-dir /path/to/config
 | `POST` | `/api/account-fresh-window-starts/<email>/off` | Return one account to the global fresh-window policy |
 | `POST` | `/v1internal:streamGenerateContent` | Proxy endpoint (used by pi) |
 
+If `PI_ROTATOR_ADMIN_TOKEN` is set, dashboard/API requests must include either `Authorization: Bearer <token>`, `X-Rotator-Admin-Token: <token>`, or `?token=<token>` for browser dashboard access. The pi proxy endpoint remains unauthenticated so existing agents keep working.
+
+## Development Checks
+
+```bash
+npm run typecheck
+npm test
+npm run check
+```
+
+The test suite covers model resolution contracts and dashboard render/syntax smoke checks.
+
 ## Running as a Service
 
 ```bash
@@ -301,3 +319,9 @@ The proxy now returns `503` and waits for cooldown or manual recovery. It does n
 
 **Multiple agents on different models**
 This is fully supported. Each model routes independently. Agent 1 using Gemini Pro and Agent 2 using Claude will each have their own active account and won't interfere with each other's rotation.
+
+## Support Me
+
+If this tool has helped you optimize your API usage and save costs, consider supporting its development!
+
+<a href="https://ko-fi.com/tuxevil" target="_blank"><img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" height="36" alt="Buy Me a Coffee at ko-fi.com" /></a>

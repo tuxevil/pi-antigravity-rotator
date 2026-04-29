@@ -14,6 +14,12 @@ import {
 	serveClearInFlightApi,
 } from "./dashboard.js";
 import { handleHostedCallback, serveLoginLanding, startHostedLogin } from "./onboarding.js";
+import { requireAdmin } from "./admin-auth.js";
+import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
+import { validateProxyRequestBody } from "./validators.js";
+import { logger } from "./logger.js";
+
+const proxyLogger = logger.child("proxy");
 
 const MAX_ENDPOINT_RETRIES = 3;
 const MAX_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes max cooldown
@@ -227,18 +233,6 @@ async function streamResponseBody(
 }
 
 /**
- * Read the full request body from an IncomingMessage.
- */
-function readBody(req: IncomingMessage): Promise<Buffer> {
-	return new Promise((resolve, reject) => {
-		const chunks: Buffer[] = [];
-		req.on("data", (chunk: Buffer) => chunks.push(chunk));
-		req.on("end", () => resolve(Buffer.concat(chunks)));
-		req.on("error", reject);
-	});
-}
-
-/**
  * Forward a request to the real Antigravity endpoint with credential swapping.
  */
 async function forwardRequest(
@@ -306,8 +300,7 @@ async function forwardRequest(
 }
 
 function log(msg: string, rotator?: AccountRotator, level: "info" | "warn" | "error" = "info"): void {
-	const ts = new Date().toISOString().slice(11, 19);
-	console.log(`[${ts}] [proxy] ${msg}`);
+	proxyLogger.log(level, msg);
 	rotator?.recordProxyEvent(msg, level);
 }
 
@@ -320,10 +313,27 @@ async function handleProxyRequest(
 	rotator: AccountRotator,
 	onComplete?: () => void,
 ): Promise<void> {
-	const bodyBuffer = await readBody(req);
+	let bodyBuffer: Buffer;
+	try {
+		bodyBuffer = await readLimitedBody(req);
+	} catch (err) {
+		if (err instanceof PayloadTooLargeError) {
+			res.writeHead(413, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ error: "Payload too large", limitBytes: err.limitBytes }));
+			return;
+		}
+		throw err;
+	}
 	let body: RequestBody;
 	try {
-		body = JSON.parse(bodyBuffer.toString("utf-8"));
+		const parsed: unknown = JSON.parse(bodyBuffer.toString("utf-8"));
+		const validation = validateProxyRequestBody(parsed);
+		if (!validation.ok || !validation.value) {
+			res.writeHead(400, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ error: "Invalid request body", details: validation.errors }));
+			return;
+		}
+		body = validation.value as RequestBody;
 	} catch {
 		res.writeHead(400, { "Content-Type": "application/json" });
 		res.end(JSON.stringify({ error: "Invalid JSON body" }));
@@ -575,16 +585,19 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 		const pathname = url.split("?")[0];
 
 		if (method === "GET" && (pathname === "/" || pathname === "/dashboard")) {
+			if (!requireAdmin(req, res)) return;
 			serveDashboard(res);
 			return;
 		}
 
 		if (method === "GET" && pathname === "/login") {
+			if (!requireAdmin(req, res)) return;
 			serveLoginLanding(res);
 			return;
 		}
 
 		if (method === "GET" && pathname === "/auth/antigravity/start") {
+			if (!requireAdmin(req, res)) return;
 			startHostedLogin(req, res);
 			return;
 		}
@@ -600,12 +613,14 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			return;
 		}
 
-		if (method === "GET" && url === "/api/status") {
+		if (method === "GET" && pathname === "/api/status") {
+			if (!requireAdmin(req, res)) return;
 			serveStatusApi(res, rotator);
 			return;
 		}
 
-		if (method === "GET" && url === "/api/events") {
+		if (method === "GET" && pathname === "/api/events") {
+			if (!requireAdmin(req, res)) return;
 			// Server-Sent Events for live dashboard
 			res.writeHead(200, {
 				"Content-Type": "text/event-stream",
@@ -620,12 +635,14 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 		}
 
 		if (method === "POST" && url.startsWith("/api/enable/")) {
+			if (!requireAdmin(req, res)) return;
 			const email = decodeURIComponent(url.slice("/api/enable/".length));
 			serveEnableApi(res, rotator, email);
 			return;
 		}
 
 		if (method === "POST" && url.startsWith("/api/clear-inflight/")) {
+			if (!requireAdmin(req, res)) return;
 			const rest = url.slice("/api/clear-inflight/".length);
 			const firstSlash = rest.indexOf("/");
 			const email = decodeURIComponent(firstSlash >= 0 ? rest.slice(0, firstSlash) : rest);
@@ -635,6 +652,7 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 		}
 
 		if (method === "POST" && url?.startsWith("/api/account/swap-windows/")) {
+			if (!requireAdmin(req, res)) return;
 			const rest = url.slice("/api/account/swap-windows/".length);
 			const email = decodeURIComponent(rest);
 			const account = rotator.getAccountByEmail(email);
@@ -655,6 +673,7 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 		}
 
 		if (method === "POST" && (url === "/api/settings/fresh-window-starts/on" || url === "/api/settings/fresh-window-starts/off")) {
+			if (!requireAdmin(req, res)) return;
 			serveFreshWindowStartsApi(res, rotator, url.endsWith("/on"));
 			return;
 		}
@@ -663,6 +682,7 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			method === "POST" &&
 			(url.startsWith("/api/account-fresh-window-starts/") && (url.endsWith("/on") || url.endsWith("/off")))
 		) {
+			if (!requireAdmin(req, res)) return;
 			const rest = url.slice("/api/account-fresh-window-starts/".length);
 			const lastSlash = rest.lastIndexOf("/");
 			const email = decodeURIComponent(rest.slice(0, lastSlash));

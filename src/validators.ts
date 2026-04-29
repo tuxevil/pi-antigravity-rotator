@@ -1,0 +1,100 @@
+import type { AccountConfig, Config } from "./types.js";
+
+export interface ValidationResult<T> {
+	ok: boolean;
+	value?: T;
+	errors: string[];
+}
+
+function ok<T>(value: T): ValidationResult<T> {
+	return { ok: true, value, errors: [] };
+}
+
+function fail<T>(errors: string[]): ValidationResult<T> {
+	return { ok: false, errors };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function isPositiveNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+export function validateAccountConfig(value: unknown, path = "account"): ValidationResult<AccountConfig> {
+	if (!isRecord(value)) return fail([`${path} must be an object`]);
+	const errors: string[] = [];
+
+	if (!isNonEmptyString(value.email)) errors.push(`${path}.email must be a non-empty string`);
+	if (!isNonEmptyString(value.refreshToken)) errors.push(`${path}.refreshToken must be a non-empty string`);
+	if (!isNonEmptyString(value.projectId)) errors.push(`${path}.projectId must be a non-empty string`);
+	if (value.label !== undefined && typeof value.label !== "string") errors.push(`${path}.label must be a string`);
+	if (value.type !== undefined && value.type !== "pro" && value.type !== "free") errors.push(`${path}.type must be "pro" or "free"`);
+	if (value.familyManager !== undefined && typeof value.familyManager !== "boolean") errors.push(`${path}.familyManager must be a boolean`);
+
+	return errors.length > 0 ? fail(errors) : ok(value as unknown as AccountConfig);
+}
+
+export function validateConfig(value: unknown): ValidationResult<Config> {
+	if (!isRecord(value)) return fail(["config must be an object"]);
+	const errors: string[] = [];
+
+	if (!Array.isArray(value.accounts)) {
+		errors.push("config.accounts must be an array");
+	} else {
+		value.accounts.forEach((account, index) => {
+			const result = validateAccountConfig(account, `config.accounts[${index}]`);
+			errors.push(...result.errors);
+		});
+	}
+
+	if (value.proxyPort !== undefined && !isPositiveNumber(value.proxyPort)) errors.push("config.proxyPort must be a positive number");
+	if (value.requestsPerRotation !== undefined && !isPositiveNumber(value.requestsPerRotation)) errors.push("config.requestsPerRotation must be a positive number");
+	if (value.rotateOnQuotaDrop !== undefined && !isNonNegativeNumber(value.rotateOnQuotaDrop)) errors.push("config.rotateOnQuotaDrop must be a non-negative number");
+	if (value.quotaPollIntervalMs !== undefined && !isPositiveNumber(value.quotaPollIntervalMs)) errors.push("config.quotaPollIntervalMs must be a positive number");
+	if (value.proSlots !== undefined && !isPositiveNumber(value.proSlots)) errors.push("config.proSlots must be a positive number");
+	if (value.maxConcurrentRequestsPerAccount !== undefined && !isPositiveNumber(value.maxConcurrentRequestsPerAccount)) errors.push("config.maxConcurrentRequestsPerAccount must be a positive number");
+	if (value.protectivePauseMs !== undefined && !isNonNegativeNumber(value.protectivePauseMs)) errors.push("config.protectivePauseMs must be a non-negative number");
+	if (value.useRequestCountRotationWhenQuotaUnknownOnly !== undefined && typeof value.useRequestCountRotationWhenQuotaUnknownOnly !== "boolean") {
+		errors.push("config.useRequestCountRotationWhenQuotaUnknownOnly must be a boolean");
+	}
+
+	return errors.length > 0 ? fail(errors) : ok(value as unknown as Config);
+}
+
+export interface MinimalProxyRequestBody {
+	model: string;
+	request: unknown;
+	project?: string;
+	requestType?: string;
+	userAgent?: string;
+	requestId?: string;
+	[key: string]: unknown;
+}
+
+export function validateProxyRequestBody(value: unknown): ValidationResult<MinimalProxyRequestBody> {
+	if (!isRecord(value)) return fail(["request body must be a JSON object"]);
+	const errors: string[] = [];
+
+	if (!isNonEmptyString(value.model)) errors.push("body.model must be a non-empty string");
+	if (!("request" in value)) errors.push("body.request is required");
+	if (value.project !== undefined && typeof value.project !== "string") errors.push("body.project must be a string when provided");
+	if (value.requestType !== undefined && typeof value.requestType !== "string") errors.push("body.requestType must be a string when provided");
+	if (value.userAgent !== undefined && typeof value.userAgent !== "string") errors.push("body.userAgent must be a string when provided");
+	if (value.requestId !== undefined && typeof value.requestId !== "string") errors.push("body.requestId must be a string when provided");
+
+	return errors.length > 0 ? fail(errors) : ok(value as MinimalProxyRequestBody);
+}
+
+export function formatValidationErrors(errors: string[]): string {
+	return errors.join("; ");
+}

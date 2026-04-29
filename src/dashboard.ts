@@ -1076,7 +1076,7 @@ function renderQuotaBars(account) {
   var rows = quota.map(function(q) {
     var inFlightForModel = (account.inFlightByModel || {})[q.modelKey] || 0;
     var clearButton = inFlightForModel > 0
-      ? '<button class="btn-clear-flight" title="Clear in-flight counter for ' + q.displayName + '" onclick="clearInFlight(\\'' + account.email + '\\', \\'' + q.modelKey + '\\')">Clear</button>'
+      ? '<button class="btn-clear-flight" title="Clear in-flight counter for ' + escapeHtml(q.displayName) + '" onclick="clearInFlight(\\'' + jsString(account.email) + '\\', \\'' + jsString(q.modelKey) + '\\')">Clear</button>'
       : '<button class="btn-clear-flight" title="No in-flight requests for ' + q.displayName + '" disabled>Clear</button>';
     var color = quotaBarColor(q.percentRemaining);
     var timerClass = 'timer-' + q.timerType;
@@ -1097,8 +1097,8 @@ function renderQuotaBars(account) {
       }
     }
     return '<div class="quota-row">' +
-      '<span class="quota-model">' + q.displayName + '</span>' +
-      '<span class="quota-timer ' + timerClass + '">' + timerDisplayLabel(q.timerType) + '</span>' +
+      '<span class="quota-model">' + escapeHtml(q.displayName) + '</span>' +
+      '<span class="quota-timer ' + escapeHtml(timerClass) + '">' + escapeHtml(timerDisplayLabel(q.timerType)) + '</span>' +
       '<div class="quota-bar-bg"><div class="quota-bar-fill" style="width:' + q.percentRemaining + '%;background:' + color + '"></div></div>' +
       '<span class="quota-pct" style="color:' + color + '">' + q.percentRemaining + '%</span>' +
       '<span class="quota-reset">' + (resetLabel || '--') + '</span>' +
@@ -1200,7 +1200,7 @@ function renderDualWindows(account) {
     '</div>';
   }).join('');
   
-  var swapAllBtn = '<button class="btn-clear-flight" style="margin-left:auto;font-size:8px;padding:1px 4px" title="Manually swap Pro/Free classification for this entire account" onclick="swapWindows(\\'' + account.email + '\\')">Swap All</button>';
+  var swapAllBtn = '<button class="btn-clear-flight" style="margin-left:auto;font-size:8px;padding:1px 4px" title="Manually swap Pro/Free classification for this entire account" onclick="swapWindows(\\'' + jsString(account.email) + '\\')">Swap All</button>';
   
   return '<div class="dw-section"><div class="dw-title" style="display:flex;align-items:center">Quota Windows (Pro / Free)' + swapAllBtn + '</div>' + rows + '</div>';
 }
@@ -1249,13 +1249,13 @@ function renderAccounts(data) {
     '</div>';
   routingHealth.innerHTML =
     '<div class="routing-summary">' +
-      '<strong style="color:' + stateColor + '">Routing: ' + String(health.state || 'unknown').replace(/_/g, ' ') + '</strong>' +
-      '<div>' + (health.reason || 'No routing health information available') + '</div>' +
+      '<strong style="color:' + stateColor + '">Routing: ' + escapeHtml(String(health.state || 'unknown').replace(/_/g, ' ')) + '</strong>' +
+      '<div>' + escapeHtml(health.reason || 'No routing health information available') + '</div>' +
       (nextRetry ? '<div>' + nextRetry.replace('<div style="margin-top:6px;">', '').replace('</div>', '') + '</div>' : '') +
       (pauseWindow ? '<div>' + pauseWindow.replace('<div style="margin-top:6px;">', '').replace('</div>', '') + '</div>' : '') +
       '<div class="routing-inline-note">' + freshPolicy.replace('<div style="margin-top:6px;">', '').replace('</div>', '') + '</div>' +
     '</div>' +
-    (data.protectivePauseReason && data.protectivePauseRemaining > 0 ? '<div style="margin-top:6px;color:var(--text-dim);font-family:JetBrains Mono, monospace;">' + data.protectivePauseReason.slice(0, 220) + '</div>' : '') +
+    (data.protectivePauseReason && data.protectivePauseRemaining > 0 ? '<div style="margin-top:6px;color:var(--text-dim);font-family:JetBrains Mono, monospace;">' + escapeHtml(data.protectivePauseReason.slice(0, 220)) + '</div>' : '') +
     healthGrid +
     '<div class="ops-buttons">' +
       '<button class="btn-secondary" onclick="refresh()">Refresh</button>' +
@@ -1302,20 +1302,20 @@ function renderAccounts(data) {
     }
 
     var modelBadges = (a.activeForModels || []).map(function(m) {
-      return '<span class="badge badge-model">' + m.split('-').slice(0, 2).join('-') + '</span>';
+      return '<span class="badge badge-model">' + escapeHtml(m.split('-').slice(0, 2).join('-')) + '</span>';
     }).join('');
 
-    return '<div class="account-card ' + a.status + '">' +
+    return '<div class="account-card ' + escapeHtml(a.status) + '">' +
       '<div class="card-header">' +
-        '<div class="card-label">' + maskText(a.label) + '</div>' +
+        '<div class="card-label">' + escapeHtml(maskText(a.label)) + '</div>' +
         '<div class="card-badges">' +
           (a.proDetected ? '<span class="badge badge-pro">PRO</span>' : '<span class="badge badge-free">FREE</span>') +
           (a.familyManager ? '<span class="badge badge-fmgr">FAMILY MGR</span>' : '') +
-          '<span class="badge badge-' + a.status + (isActive ? ' pulse' : '') + '">' + a.status + '</span>' +
+          '<span class="badge badge-' + escapeHtml(a.status) + (isActive ? ' pulse' : '') + '">' + escapeHtml(a.status) + '</span>' +
           modelBadges +
         '</div>' +
       '</div>' +
-      '<div class="card-email">' + maskEmail(a.email) + '</div>' +
+      '<div class="card-email">' + escapeHtml(maskEmail(a.email)) + '</div>' +
       (a.quota && a.quota.length > 0 ? renderQuotaBars(a) : '') +
       renderDualWindows(a) +
       '<div class="card-stats">' +
@@ -1334,7 +1334,7 @@ function renderAccounts(data) {
           (a.effectiveFreshWindowStartsAllowed ? 'var(--green)' : 'var(--yellow)') + '">' +
           (a.allowFreshWindowStartsOverride ? 'Override ON' : (a.effectiveFreshWindowStartsAllowed ? 'Global ON' : 'Blocked')) + '</div></div>' +
       '</div>' +
-      (a.lastError ? '<div class="card-error">' + a.lastError.slice(0, 150) + '</div>' +
+      (a.lastError ? '<div class="card-error">' + escapeHtml(a.lastError.slice(0, 150)) + '</div>' +
         (a.lastError.toLowerCase().includes('verif') ?
           '<div class="card-hint">Open Antigravity IDE, sign in with this account, and resolve the verification prompt outside the rotator. Keep the account quarantined until that is complete.</div>' :
         a.lastError.toLowerCase().includes('terms of service') ?
@@ -1342,8 +1342,8 @@ function renderAccounts(data) {
           '') : '') +
       (isCooldown ? '<div class="card-hint">Cooling down after a provider rate-limit response. The rotator will wait for the retry window instead of forcing more traffic into this account.</div>' : '') +
       '<div class="card-actions">' +
-        (a.status === 'disabled' ? '<button class="btn-enable" onclick="enableAccount(\\'' + a.email + '\\')">Re-enable</button>' : '') +
-        '<button class="btn-enable" onclick="setAccountFreshWindowOverride(\\'' + a.email + '\\', ' + (!a.allowFreshWindowStartsOverride) + ')">' +
+        (a.status === 'disabled' ? '<button class="btn-enable" onclick="enableAccount(\\'' + jsString(a.email) + '\\')">Re-enable</button>' : '') +
+        '<button class="btn-enable" onclick="setAccountFreshWindowOverride(\\'' + jsString(a.email) + '\\', ' + (!a.allowFreshWindowStartsOverride) + ')">' +
           (a.allowFreshWindowStartsOverride ? 'Use Global Fresh Policy' : 'Allow Fresh On This Account') +
         '</button>' +
       '</div>' +
@@ -1355,7 +1355,7 @@ function renderAccounts(data) {
 }
 
 function renderHealthPill(label, value) {
-  return '<div class="health-pill"><span class="label">' + label + '</span><span class="value">' + value + '</span></div>';
+  return '<div class="health-pill"><span class="label">' + escapeHtml(label) + '</span><span class="value">' + escapeHtml(value) + '</span></div>';
 }
 
 function renderAttentionPanel(data) {
@@ -1442,26 +1442,26 @@ function renderAttentionItem(title, description, tags, type) {
   }
 
   var tagsHtml = tags.map(function(t) {
-    return '<span class="operator-tag">' + t + '</span>';
+    return '<span class="operator-tag">' + escapeHtml(t) + '</span>';
   }).join('');
 
   return '<div class="operator-item ' + colorClass + '">' +
     '<div class="operator-icon">' + icon + '</div>' +
     '<div class="operator-content">' +
-      '<strong>' + title + '</strong>' +
-      '<p>' + description + '</p>' +
+      '<strong>' + escapeHtml(title) + '</strong>' +
+      '<p>' + escapeHtml(description) + '</p>' +
       '<div class="operator-tags">' + tagsHtml + '</div>' +
     '</div>' +
   '</div>';
 }
 
 var TOKEN_MODEL_COLORS = {
-  'gemini-3.1-pro': '#8b5cf6',
-  'claude-opus-4-6-thinking': '#f59e0b',
-  'claude-sonnet-4-6': '#3b82f6',
-  'gemini-2.5-pro': '#10b981',
-  'gemini-2.5-flash': '#06b6d4',
-  'gemini-2.0-flash': '#ec4899',
+  'claude-opus-4-6-thinking': '#ef4444', // Rojo
+  'claude-sonnet-4-6': '#f97316',        // Naranja
+  'gemini-3.1-pro-high': '#3b82f6',      // Azul
+  'gemini-3.1-pro-low': '#38bdf8',       // Celeste
+  'gemini-3-flash': '#4ade80',           // Verde
+  'gemini-3.1-pro': '#fb923c',           // Fallback genérico
   '__other__': '#6b7280'
 };
 
@@ -1974,7 +1974,7 @@ function renderLatencyPanel(latencyStats) {
     var s = latencyStats[m];
     var color = getModelColor(m);
     html += '<tr style="border-top:1px solid var(--border)">' +
-      '<td style="padding:4px 8px"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + color + ';margin-right:6px"></span>' + m + '</td>' +
+      '<td style="padding:4px 8px"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + color + ';margin-right:6px"></span>' + escapeHtml(m) + '</td>' +
       '<td style="padding:4px 8px">' + formatMs(s.ttfb.p50) + '</td>' +
       '<td style="padding:4px 8px;color:' + (s.ttfb.p95 > 10000 ? 'var(--yellow)' : 'var(--text)') + '">' + formatMs(s.ttfb.p95) + '</td>' +
       '<td style="padding:4px 8px">' + formatMs(s.total.p50) + '</td>' +
@@ -2028,8 +2028,8 @@ function renderRequestLog(log) {
       : '-';
     html += '<tr style="border-top:1px solid var(--border)">' +
       '<td style="padding:3px 6px;color:var(--text-dim)">' + time + '</td>' +
-      '<td style="padding:3px 6px"><span style="display:inline-block;width:6px;height:6px;border-radius:2px;background:' + color + ';margin-right:4px"></span>' + r.model + '</td>' +
-      '<td style="padding:3px 6px">' + (MASK_MODE ? '***' : r.account) + '</td>' +
+      '<td style="padding:3px 6px"><span style="display:inline-block;width:6px;height:6px;border-radius:2px;background:' + color + ';margin-right:4px"></span>' + escapeHtml(r.model) + '</td>' +
+      '<td style="padding:3px 6px">' + (MASK_MODE ? '***' : escapeHtml(r.account)) + '</td>' +
       '<td style="padding:3px 6px;color:' + statusColor + ';font-weight:700">' + r.statusCode + '</td>' +
       '<td style="padding:3px 6px">' + formatMs(r.ttfbMs) + '</td>' +
       '<td style="padding:3px 6px">' + formatMs(r.totalMs) + '</td>' +
@@ -2138,18 +2138,46 @@ function escapeHtml(text) {
     .replace(/'/g, '&#39;');
 }
 
+function jsString(text) {
+  return escapeHtml(String(text)
+    .replace(/\\\\/g, '\\\\\\\\')
+    .replace(/'/g, "\\\\'")
+    .replace(/\\r/g, '\\\\r')
+    .replace(/\\n/g, '\\\\n'));
+}
+
+var ADMIN_TOKEN = new URLSearchParams(window.location.search).get('token') || localStorage.getItem('rotatorAdminToken') || '';
+if (ADMIN_TOKEN) localStorage.setItem('rotatorAdminToken', ADMIN_TOKEN);
+
+function authHeaders() {
+  return ADMIN_TOKEN ? { 'X-Rotator-Admin-Token': ADMIN_TOKEN } : {};
+}
+
+function authFetch(url, options) {
+  options = options || {};
+  options.headers = Object.assign({}, authHeaders(), options.headers || {});
+  return fetch(url, options);
+}
+
+function authEventUrl(path) {
+  if (!ADMIN_TOKEN) return path;
+  var url = new URL(path, window.location.origin);
+  url.searchParams.set('token', ADMIN_TOKEN);
+  return url.pathname + url.search;
+}
+
 function setEventFilter(filter) {
   EVENT_FILTER = filter;
   refresh();
 }
 
 async function enableAccount(email) {
-  await fetch('/api/enable/' + encodeURIComponent(email), { method: 'POST' });
+  await authFetch('/api/enable/' + encodeURIComponent(email), { method: 'POST' });
   refresh();
 }
 
 async function setFreshWindowStarts(enabled) {
-  await fetch('/api/settings/fresh-window-starts/' + (enabled ? 'on' : 'off'), { method: 'POST' });
+  await authFetch('/api/settings/fresh-window-starts/' + (enabled ? 'on' : 'off'), { method: 'POST' });
   refresh();
 }
 
@@ -2159,19 +2187,19 @@ function toggleFlagged() {
 }
 
 async function setAccountFreshWindowOverride(email, enabled) {
-  await fetch('/api/account-fresh-window-starts/' + encodeURIComponent(email) + '/' + (enabled ? 'on' : 'off'), { method: 'POST' });
+  await authFetch('/api/account-fresh-window-starts/' + encodeURIComponent(email) + '/' + (enabled ? 'on' : 'off'), { method: 'POST' });
   refresh();
 }
 
 async function clearInFlight(email, modelKey) {
   if (!confirm('Clear in-flight counter for this account/model? Use only when you are sure the request is stuck.')) return;
-  await fetch('/api/clear-inflight/' + encodeURIComponent(email) + '/' + encodeURIComponent(modelKey), { method: 'POST' });
+  await authFetch('/api/clear-inflight/' + encodeURIComponent(email) + '/' + encodeURIComponent(modelKey), { method: 'POST' });
   refresh();
 }
 
 async function swapWindows(email) {
   if (!confirm('Manually swap Pro and Free data for ALL models on this account? Use this only if the algorithm classified the account tier backward.')) return;
-  await fetch('/api/account/swap-windows/' + encodeURIComponent(email), { method: 'POST' });
+  await authFetch('/api/account/swap-windows/' + encodeURIComponent(email), { method: 'POST' });
   refresh();
 }
 
@@ -2198,8 +2226,8 @@ function renderProAdvisor(advisor) {
     var typeLabel = a.type === 'add-pro' ? 'Add Pro' : 'Remove Pro';
     return '<div class="advisor-action ' + cls + '">' +
       '<span class="advisor-action-type">' + typeLabel + '</span>' +
-      '<span class="advisor-action-label">' + maskText(a.label) + '</span>' +
-      '<span class="advisor-action-reason">' + a.reason + '</span>' +
+      '<span class="advisor-action-label">' + escapeHtml(maskText(a.label)) + '</span>' +
+      '<span class="advisor-action-reason">' + escapeHtml(a.reason) + '</span>' +
     '</div>';
   }).join('');
   panel.innerHTML = title + rows;
@@ -2221,7 +2249,7 @@ function closeModal(event, id) {
 
 async function refresh() {
   try {
-    var res = await fetch('/api/status');
+    var res = await authFetch('/api/status');
     var data = await res.json();
     renderAccounts(data);
     var btn = document.getElementById('maskBtn');
@@ -2235,7 +2263,7 @@ async function refresh() {
 var evtSource = null;
 function connectSSE() {
   if (evtSource) evtSource.close();
-  evtSource = new EventSource('/api/events');
+  evtSource = new EventSource(authEventUrl('/api/events'));
   evtSource.onmessage = function(e) {
     try {
       var data = JSON.parse(e.data);

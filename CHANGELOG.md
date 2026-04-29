@@ -1,5 +1,28 @@
 # Changelog
 
+
+## [1.7.0] - 2026-04-29
+
+### Security
+- **API Protection**: Added `PI_ROTATOR_ADMIN_TOKEN` environment variable to optionally secure the web dashboard and `/api/*` endpoints. If not set, it retains local open access.
+- **Payload Limits**: Added `PI_ROTATOR_MAX_BODY_BYTES` to protect the proxy from memory exhaustion via oversized payloads (defaults to 25 MiB).
+- **Dashboard Hardening**: Implemented strict HTML escaping across all dynamic fields in the dashboard to prevent XSS.
+- **Log Redaction**: Centralized logging now automatically redacts sensitive tokens (Bearer, OAuth, refresh/access tokens) before outputting to the console.
+
+### Added
+- **Automated Checks**: Integrated a test suite (`node:test`) and typechecking (`tsc --noEmit`) to prevent regressions. Added `npm run check`.
+- **Config Validation**: Runtime validation for the initial config load and proxy request bodies.
+- **Resilience**: Added automated retries with exponential backoff for non-streaming internal requests (Quota, OAuth, Token Refresh).
+
+### Changed
+- **Telemetry UI**: Refreshed the token usage chart colors to function as a visual "price heat map" (Opus in Red, Pro High in Blue, Pro Low in Light Blue, etc.).
+- **Logging**: Added `PI_ROTATOR_LOG_LEVEL` (debug, info, warn, error, silent) for fine-grained logging control.
+
+## [1.6.0] - 2026-04-29
+
+### Added
+- **Dual-Window Tracking**: Advanced tracking for both Free and Pro quota windows simultaneously.
+
 ## [1.5.0] - 2026-04-28
 
 ### Added

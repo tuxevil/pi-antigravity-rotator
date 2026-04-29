@@ -5,6 +5,7 @@ import type { Config } from "./types.js";
 import { AccountRotator } from "./rotator.js";
 import { startProxy } from "./proxy.js";
 import { getAccountsPath } from "./paths.js";
+import { formatValidationErrors, validateConfig } from "./validators.js";
 
 function loadConfig(): Config {
 	const configPath = getAccountsPath();
@@ -16,7 +17,13 @@ function loadConfig(): Config {
 
 	try {
 		const raw = readFileSync(configPath, "utf-8");
-		const config: Config = JSON.parse(raw);
+		const parsed: unknown = JSON.parse(raw);
+		const validation = validateConfig(parsed);
+		if (!validation.ok || !validation.value) {
+			console.error(`Invalid config ${configPath}: ${formatValidationErrors(validation.errors)}`);
+			process.exit(1);
+		}
+		const config: Config = validation.value;
 
 		if (!config.accounts || config.accounts.length === 0) {
 			console.error("No accounts configured. Run 'pi-antigravity-rotator login' to add one.");

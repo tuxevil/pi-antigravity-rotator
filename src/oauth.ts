@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { CLIENT_ID, CLIENT_SECRET, TOKEN_URL } from "./types.js";
+import { fetchWithRetry } from "./fetch-with-retry.js";
 
 export const DEFAULT_REDIRECT_URI = "http://localhost:51121/oauth-callback";
 export const SCOPES = [
@@ -71,7 +72,7 @@ export function buildAuthUrl(state: string, challenge: string): string {
 
 export async function exchangeAuthorizationCode(code: string, verifier: string): Promise<TokenExchangeResult> {
 	const oauth = getOAuthClientConfig();
-	const tokenResponse = await fetch(TOKEN_URL, {
+	const tokenResponse = await fetchWithRetry(TOKEN_URL, {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
 		body: new URLSearchParams({
@@ -120,7 +121,7 @@ export async function discoverProject(accessToken: string): Promise<string> {
 
 	for (const endpoint of endpoints) {
 		try {
-			const response = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
+			const response = await fetchWithRetry(`${endpoint}/v1internal:loadCodeAssist`, {
 				method: "POST",
 				headers,
 				body: JSON.stringify({
@@ -157,7 +158,7 @@ export async function discoverProject(accessToken: string): Promise<string> {
 
 export async function getUserEmail(accessToken: string): Promise<string | undefined> {
 	try {
-		const response = await fetch("https://www.googleapis.com/oauth2/v1/userinfo?alt=json", {
+		const response = await fetchWithRetry("https://www.googleapis.com/oauth2/v1/userinfo?alt=json", {
 			headers: { Authorization: `Bearer ${accessToken}` },
 		});
 		if (response.ok) {

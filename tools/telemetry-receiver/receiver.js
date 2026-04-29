@@ -276,7 +276,10 @@ function computeStats(filters = {}) {
 	let totalAccounts = 0;
 	let totalRequests = 0;
 	let featuresCount = { dashboard: 0, proAdvisor: 0, freshWindowToggle: 0, hostedLogin: 0 };
-	const globalTokensByModel = {};
+
+	// tokensByModel is CUMULATIVE per install (each heartbeat sends total-since-boot).
+	// To avoid multi-counting, track the LATEST snapshot per installId and sum those.
+	const latestTokenSnapshotByInstall = {}; // installId → { ts, tokensByModel }
 
 	for (const { ev } of events) {
 		totalEvents++;
@@ -289,12 +292,11 @@ function computeStats(filters = {}) {
 		healthCounts[ev.routingHealthState] = (healthCounts[ev.routingHealthState] || 0) + 1;
 		totalAccounts += ev.accountCount || 0;
 		totalRequests += ev.totalRequests || 0;
+		// Keep only the most recent token snapshot per install
 		if (ev.tokensByModel && typeof ev.tokensByModel === "object") {
-			for (const [model, data] of Object.entries(ev.tokensByModel)) {
-				if (!globalTokensByModel[model]) globalTokensByModel[model] = { input: 0, output: 0, requests: 0 };
-				globalTokensByModel[model].input += data.input || 0;
-				globalTokensByModel[model].output += data.output || 0;
-				globalTokensByModel[model].requests += data.requests || 0;
+			const prev = latestTokenSnapshotByInstall[ev.installId];
+			if (!prev || ev.ts >= prev.ts) {
+				latestTokenSnapshotByInstall[ev.installId] = { ts: ev.ts, tokensByModel: ev.tokensByModel };
 			}
 		}
 		for (const m of ev.modelsUsed || []) modelCounts[m] = (modelCounts[m] || 0) + 1;
@@ -302,6 +304,17 @@ function computeStats(filters = {}) {
 			for (const [k, v] of Object.entries(ev.featuresUsed)) {
 				if (v && k in featuresCount) featuresCount[k]++;
 			}
+		}
+	}
+
+	// Aggregate latest token snapshot per install into global totals
+	const globalTokensByModel = {};
+	for (const { tokensByModel } of Object.values(latestTokenSnapshotByInstall)) {
+		for (const [model, data] of Object.entries(tokensByModel)) {
+			if (!globalTokensByModel[model]) globalTokensByModel[model] = { input: 0, output: 0, requests: 0 };
+			globalTokensByModel[model].input += data.input || 0;
+			globalTokensByModel[model].output += data.output || 0;
+			globalTokensByModel[model].requests += data.requests || 0;
 		}
 	}
 

@@ -19,6 +19,7 @@ Multi-account rotation proxy for Google Antigravity. Distributes API usage acros
 - **Advanced Telemetry & Statistics** -- Track exactly how much USD you save compared to a paid API plan, predict quota depletion with the Forecast grid, view Latency tracking (p50/p95), and explore 60-day historical usage heatmaps
 - **Web dashboard** -- Real-time view of model routing table, per-account quota bars with per-model timers, and flagged account alerts
 - **Auto-update notifications** -- The dashboard checks npm for new releases every 30 minutes and shows a banner with one-click update when a newer version is available
+- **Broadcast notifications** -- Operator-controlled announcements and alerts delivered directly to the dashboard
 - **State persistence** -- Survives restarts; routing assignments, per-model request counters, cooldowns, and flags are saved to disk
 
 ## Quick Start
@@ -360,7 +361,7 @@ pi-antigravity-rotator collects **anonymous usage telemetry** to help understand
 
 ### What is collected
 
-**Heartbeat** (at boot, every 6h, at shutdown):
+**Heartbeat** (at boot, every 1h, at shutdown):
 - Random install ID (UUID — not tied to any account or person)
 - Rotator version, Node.js version, OS, architecture
 - Account count, models in use, total request count, uptime

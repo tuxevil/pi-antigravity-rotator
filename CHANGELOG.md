@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.3] - 2026-04-29
+
+### Added
+- **Admin Broadcast Notifications**: The dashboard now supports operator-controlled broadcast notifications. A new `notification-poller` checks the telemetry server every 30 minutes for active announcements, allowing operators to push critical alerts (like required re-enrollments or bug notices) to all connected clients.
+- **Admin Notification UI**: The telemetry receiver now includes a full dashboard at `/notifications` to create, edit, delete, and preview broadcast messages with version-targeting capabilities.
+
+### Changed
+- **Telemetry Heartbeat**: Reduced the telemetry heartbeat interval from 6 hours to 1 hour for more timely metrics reporting.
+
 ## [1.9.2] - 2026-04-29
 
 ### Fixed

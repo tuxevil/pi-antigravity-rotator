@@ -448,6 +448,21 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .pulse { animation: pulse 2s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
+  @keyframes heartbeat {
+    0% { transform: scale(1); }
+    15% { transform: scale(1.25); }
+    30% { transform: scale(1); }
+    45% { transform: scale(1.25); }
+    60% { transform: scale(1); }
+    100% { transform: scale(1); }
+  }
+  .heart-beat svg {
+    color: #FF5E5B !important;
+    fill: rgba(255, 94, 91, 0.4) !important;
+    animation: heartbeat 1.8s infinite;
+    transform-origin: center;
+  }
+
   .badge-pro { background: rgba(52, 211, 153, 0.15); color: var(--green); }
   .badge-free { background: rgba(110, 110, 130, 0.08); color: var(--text-dim); }
   .badge-fmgr { background: rgba(124, 92, 252, 0.15); color: var(--accent); font-size: 9px; }
@@ -698,30 +713,57 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .operator-item {
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
+    gap: 14px;
+    padding: 14px;
     border-radius: 8px;
-    background: rgba(255,255,255,0.03);
+    background: var(--card-bg);
     border: 1px solid var(--border);
   }
-  .operator-item strong {
-    display: block;
-    font-size: 12px;
-    margin-bottom: 2px;
+  .operator-item.operator-red { border-left: 4px solid var(--red); }
+  .operator-item.operator-yellow { border-left: 4px solid var(--yellow); }
+  .operator-item.operator-gray { border-left: 4px solid var(--text-dim); }
+  .operator-item.operator-orange { border-left: 4px solid #f97316; }
+
+  .operator-icon {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    margin-top: 2px;
   }
-  .operator-item span {
+  .operator-red .operator-icon { color: var(--red); }
+  .operator-yellow .operator-icon { color: var(--yellow); }
+  .operator-gray .operator-icon { color: var(--text-dim); }
+  .operator-orange .operator-icon { color: #f97316; }
+
+  .operator-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .operator-content strong {
     display: block;
-    font-size: 11px;
+    font-size: 14px;
+    margin-bottom: 4px;
+    color: var(--text);
+  }
+  .operator-content p {
+    margin: 0 0 10px 0;
+    font-size: 13px;
     color: var(--text-dim);
-    line-height: 1.45;
+    line-height: 1.4;
   }
-  .operator-meta {
+  .operator-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .operator-tag {
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.06);
     color: var(--text);
-    white-space: nowrap;
-    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.1);
   }
   .events-panel {
     background: var(--surface);
@@ -891,7 +933,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <svg viewBox="0 0 24 24"><path d="m5 15 2-9 5 5 5-5 2 9"/><path d="M4 19h16"/></svg>
       <span class="header-icon-badge advisor" id="advisorBadge" style="display:none">0</span>
     </button>
-    <button class="header-icon-btn" id="kofiBtn" onclick="openModal('donationModal')" title="Support the Creator" aria-label="Buy me a coffee" style="color: var(--text);">
+    <button class="header-icon-btn heart-beat" id="kofiBtn" onclick="openModal('donationModal')" title="Support the Creator" aria-label="Buy me a coffee">
       <svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
     </button>
   </div>
@@ -1041,7 +1083,18 @@ function renderQuotaBars(account) {
     var resetLabel = '';
     if (q.resetTime && q.timerType !== 'fresh') {
       var remaining = new Date(q.resetTime).getTime() - Date.now();
-      if (remaining > 0) resetLabel = formatDuration(remaining);
+      if (remaining > 0) {
+        // Detect "Rolling Timers" from Google (unactivated 100% quota)
+        // If quota is 100% and remaining time is very close to exactly 5 hours or 7 days, it's a rolling idle timer
+        var isRolling5h = q.percentRemaining === 100 && Math.abs(remaining - (5 * 3600000)) < 600000; // Within 10 min of 5h
+        var isRolling7d = q.percentRemaining === 100 && Math.abs(remaining - (7 * 86400000)) < 600000; // Within 10 min of 7d
+        
+        if (isRolling5h || isRolling7d) {
+          resetLabel = '<span style="color:var(--green)">100% ready</span>';
+        } else {
+          resetLabel = formatDuration(remaining);
+        }
+      }
     }
     return '<div class="quota-row">' +
       '<span class="quota-model">' + q.displayName + '</span>' +
@@ -1076,7 +1129,13 @@ function renderDualWindows(account) {
       if (t.pro.resetTimeMs > 0) {
         var pRemain = t.pro.resetTimeMs - now;
         if (pRemain > 0) {
-          pReset = 'resets in ' + formatDuration(pRemain);
+          var isRolling5h = pQuota === 100 && Math.abs(pRemain - (5 * 3600000)) < 600000;
+          var isRolling7d = pQuota === 100 && Math.abs(pRemain - (7 * 86400000)) < 600000;
+          if (isRolling5h || isRolling7d) {
+             pReset = '<span style="color:var(--green)">ready</span>';
+          } else {
+             pReset = 'resets in ' + formatDuration(pRemain);
+          }
         } else {
           // Reset has passed
           var was5h = (t.pro.resetTimeMs - t.pro.lastSeen) < (24 * 3600 * 1000);
@@ -1106,7 +1165,13 @@ function renderDualWindows(account) {
       if (t.free.resetTimeMs > 0) {
         var fRemain = t.free.resetTimeMs - now;
         if (fRemain > 0) {
-          fReset = 'resets in ' + formatDuration(fRemain);
+          var isRolling5h = fQuota === 100 && Math.abs(fRemain - (5 * 3600000)) < 600000;
+          var isRolling7d = fQuota === 100 && Math.abs(fRemain - (7 * 86400000)) < 600000;
+          if (isRolling5h || isRolling7d) {
+             fReset = '<span style="color:var(--green)">ready</span>';
+          } else {
+             fReset = 'resets in ' + formatDuration(fRemain);
+          }
         } else {
           // Reset has passed
           var fWas5h = (t.free.resetTimeMs - t.free.lastSeen) < (24 * 3600 * 1000);
@@ -1316,28 +1381,32 @@ function renderAttentionPanel(data) {
     items.push(renderAttentionItem(
       'Flagged by provider',
       flagged.length + ' account(s) are quarantined after a provider enforcement signal. Keep them out of rotation until the provider explicitly restores access.',
-      flagged.map(function(a) { return maskText(a.label); }).join(', ')
+      flagged.map(function(a) { return maskText(a.label); }),
+      'flagged'
     ));
   }
   if (cooldown.length > 0) {
     items.push(renderAttentionItem(
       'Cooling down',
       'These are the next accounts expected to come back. Routing waits for their retry windows instead of forcing traffic into them.',
-      cooldown.map(function(c) { return maskText(c.account.label) + ' ' + formatDuration(c.remaining); }).join(' | ')
+      cooldown.map(function(c) { return maskText(c.account.label) + ' ' + formatDuration(c.remaining); }),
+      'cooldown'
     ));
   }
   if (disabled.length > 0) {
     items.push(renderAttentionItem(
       'Disabled accounts',
       'These accounts hit repeated operational errors and were taken out of service. Re-enable only after the underlying problem is fixed.',
-      disabled.map(function(a) { return maskText(a.label); }).join(', ')
+      disabled.map(function(a) { return maskText(a.label); }),
+      'disabled'
     ));
   }
   if (errors.length > 0) {
     items.push(renderAttentionItem(
       'Recent errors',
       'These accounts are still visible but currently erroring. Review the per-account error details below before they escalate to disabled.',
-      errors.map(function(a) { return maskText(a.label); }).join(', ')
+      errors.map(function(a) { return maskText(a.label); }),
+      'error'
     ));
   }
 
@@ -1348,16 +1417,41 @@ function renderAttentionPanel(data) {
     return;
   }
 
-  panel.innerHTML = '<div class="operator-title">Attention Needed</div><div class="operator-list">' + items.join('') + '</div>';
+  panel.innerHTML = '<div class="operator-list" style="display:flex;flex-direction:column;gap:12px;">' + items.join('') + '</div>';
   badge.style.display = 'inline-flex';
   badge.textContent = String(items.length);
   button.classList.add('has-items');
 }
 
-function renderAttentionItem(title, description, meta) {
-  return '<div class="operator-item">' +
-    '<div><strong>' + title + '</strong><span>' + description + '</span></div>' +
-    '<div class="operator-meta">' + meta + '</div>' +
+function renderAttentionItem(title, description, tags, type) {
+  var icon = '';
+  var colorClass = '';
+  
+  if (type === 'flagged') {
+    icon = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>';
+    colorClass = 'operator-red';
+  } else if (type === 'cooldown') {
+    icon = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>';
+    colorClass = 'operator-yellow';
+  } else if (type === 'disabled') {
+    icon = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z"/></svg>';
+    colorClass = 'operator-gray';
+  } else {
+    icon = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
+    colorClass = 'operator-orange';
+  }
+
+  var tagsHtml = tags.map(function(t) {
+    return '<span class="operator-tag">' + t + '</span>';
+  }).join('');
+
+  return '<div class="operator-item ' + colorClass + '">' +
+    '<div class="operator-icon">' + icon + '</div>' +
+    '<div class="operator-content">' +
+      '<strong>' + title + '</strong>' +
+      '<p>' + description + '</p>' +
+      '<div class="operator-tags">' + tagsHtml + '</div>' +
+    '</div>' +
   '</div>';
 }
 

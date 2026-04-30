@@ -22,6 +22,7 @@ import { trackFeature, reportFlagEvent, FLAG_PATTERNS, type FlagPattern } from "
 import type { FlagEventData } from "./telemetry.js";
 import { startVersionChecker, performSelfUpdate } from "./version-check.js";
 import { startNotificationPoller } from "./notification-poller.js";
+import { handleAnthropicMessages, handleOpenAIChatCompletions, serveOpenAIModels } from "./compat.js";
 
 const proxyLogger = logger.child("proxy");
 
@@ -35,7 +36,7 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-interface RequestBody {
+export interface RequestBody {
 	project: string;
 	model: string;
 	request: unknown;
@@ -250,7 +251,7 @@ async function streamResponseBody(
 /**
  * Forward a request to the real Antigravity endpoint with credential swapping.
  */
-async function forwardRequest(
+export async function forwardRequest(
 	account: AccountRuntime,
 	body: RequestBody,
 	originalHeaders: Record<string, string>,
@@ -364,8 +365,22 @@ async function handleProxyRequest(
 
 	const sendNoAccountsAvailable = (reason: string): void => {
 		proxyLog(`[${body.model}] No healthy account available: ${reason}`, "warn");
+		const retryAfterMs = rotator.getRetryAfterMs(body.model);
+		if (retryAfterMs > 0) {
+			res.writeHead(429, {
+				"Content-Type": "application/json",
+				"Retry-After": String(Math.ceil(retryAfterMs / 1000)),
+			});
+			res.end(JSON.stringify({
+				error: "All accounts cooling down or model circuit breaker active",
+				reason,
+				model: body.model,
+				retryAfterMs,
+			}));
+			return;
+		}
 		res.writeHead(503, { "Content-Type": "application/json" });
-		res.end(JSON.stringify({ error: "All accounts exhausted or disabled", reason, model: body.model }));
+		res.end(JSON.stringify({ error: "All accounts exhausted or disabled", reason, model: body.model, retryable: false }));
 	};
 	const rotateAndRelease = async (): Promise<AccountRuntime | null> => {
 		const nextAccount = await rotator.rotateToNext(body.model);
@@ -621,7 +636,7 @@ async function handleProxyRequest(
 	res.end(JSON.stringify({ error: "All retry attempts failed" }));
 }
 
-function flattenHeaders(headers: IncomingMessage["headers"]): Record<string, string> {
+export function flattenHeaders(headers: IncomingMessage["headers"]): Record<string, string> {
 	const flat: Record<string, string> = {};
 	for (const [key, value] of Object.entries(headers)) {
 		if (value) {
@@ -787,6 +802,31 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 				res.writeHead(500, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ ok: false, message: String(err) }));
 			}
+			return;
+		}
+
+		// OpenAI-compatible adapter route (additive; does not affect native v1internal route)
+		if (method === "GET" && pathname === "/v1/models") {
+			serveOpenAIModels(res);
+			return;
+		}
+
+		if (method === "POST" && pathname === "/v1/chat/completions") {
+			handleOpenAIChatCompletions(req, res, rotator).catch((err) => {
+				log(`OpenAI compat error: ${err}`, rotator, "error");
+				if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ error: { message: "Internal OpenAI compat error", type: "server_error" } }));
+			});
+			return;
+		}
+
+		// Anthropic-compatible adapter route (additive; does not affect native v1internal route)
+		if (method === "POST" && pathname === "/v1/messages") {
+			handleAnthropicMessages(req, res, rotator).catch((err) => {
+				log(`Anthropic compat error: ${err}`, rotator, "error");
+				if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ type: "error", error: { type: "server_error", message: "Internal Anthropic compat error" } }));
+			});
 			return;
 		}
 

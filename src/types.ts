@@ -33,6 +33,9 @@ export interface Config {
 	projectCircuitBreaker429Threshold?: number;
 	projectCircuitBreakerWindowMs?: number;
 	projectCircuitBreakerCooldownMs?: number;
+	// Pause a model globally when several unique accounts hit provider 429 in a short window. Defaults: 3 hits / same window / 6h pause.
+	modelCircuitBreaker429Threshold?: number;
+	modelCircuitBreakerCooldownMs?: number;
 	// Daily safety budgets. Defaults: account slow 250, account stop 350, project slow 900, project stop 1200.
 	dailyAccountSlowRequests?: number;
 	dailyAccountStopRequests?: number;
@@ -186,6 +189,7 @@ export interface PersistedSafetyState {
 	day: string;
 	projectRequests: Record<string, number>;
 	projectModelBreakers: Record<string, number>;
+	modelBreakers?: Record<string, number>;
 	provider429Events: Array<{ ts: number; projectId: string; modelKey: string; account: string }>;
 }
 
@@ -238,6 +242,7 @@ export interface AdminNotification {
 
 // Dashboard API response
 export interface StatusResponse {
+	version: string;
 	proxyPort: number;
 	requestsPerRotation: number;
 	totalRequestsAllAccounts: number;

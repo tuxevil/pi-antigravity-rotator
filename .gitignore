@@ -4,6 +4,7 @@ accounts.json
 state.json
 *.log
 cheatsheet.md
+docs/request-safety/
 token-usage.json
 .telemetry-id
 .first-boot

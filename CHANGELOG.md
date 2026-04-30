@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.10.0] - 2026-04-30
+
+### Added
+- **OpenAI-compatible adapter**: Added `GET /v1/models` and non-streaming/compat-streaming `POST /v1/chat/completions` so OpenAI-style clients can use the rotator.
+- **Anthropic-compatible adapter**: Added non-streaming/compat-streaming `POST /v1/messages` so Anthropic-style clients can use the rotator.
+- **Image input for adapters**: Added base64 image support for OpenAI data URLs and Anthropic base64 image sources.
+- **Model-wide 429 circuit breaker**: If multiple unique accounts hit provider `429` for the same quota model in a short window, routing for that model pauses globally to avoid burning the pool.
+- **Local request-safety notes**: Added ignored local docs under `docs/request-safety/` for incident analysis and agent retry policy.
+
+### Changed
+- **Retry semantics for exhausted capacity**: Temporary no-capacity states now return `429` with `Retry-After`/`retryAfterMs`; terminal no-capacity states return `503` with `retryable:false`.
+- **Quota polling policy**: Quota API `401/403` still flags the affected account, but no longer triggers global protective pause. Polling remains diagnostic so operators can see blast radius.
+- **429 containment**: Provider `429` responses stop the current request and feed circuit breakers instead of exposing more accounts to retry storms.
+- **Dashboard status header**: Dashboard now shows the running rotator version in the header.
+
+### Fixed
+- **Quota poll cascade visibility**: Quota polling can now continue discovering account state instead of being blocked by nuclear pause.
+- **Client retry storm risk**: Rotator responses now provide explicit retry timing to downstream agents so they can back off instead of retrying rapidly.
+
+### Limitations
+- Compatibility adapter streaming currently buffers the upstream Antigravity stream and emits a final SSE delta; token-by-token passthrough is not implemented yet.
+- Tool/function calling through compatibility adapters is explicitly rejected with `400` until a safe mapper is implemented.
+
 ## [1.9.3] - 2026-04-29
 
 ### Added

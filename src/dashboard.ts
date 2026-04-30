@@ -114,6 +114,17 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     letter-spacing: -0.5px;
   }
 
+  .header-version {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-dim);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transform: translateY(1px);
+  }
+
   .header-stats {
     display: flex;
     align-items: center;
@@ -1163,6 +1174,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <div class="header-main">
     <div class="header-title-row">
       <h1>Pi Antigravity Rotator</h1>
+      <span class="header-version" id="headerVersion">v--</span>
       <button id="maskBtn" class="mask-btn" onclick="toggleMask()">PII: Visible</button>
     </div>
     <div class="header-stats">
@@ -1460,6 +1472,7 @@ function renderAccounts(data) {
   document.getElementById('uptime').textContent = formatDuration(data.uptime);
   document.getElementById('port').textContent = data.proxyPort;
   document.getElementById('rotation').textContent = data.requestsPerRotation;
+  document.getElementById('headerVersion').textContent = 'v' + escapeHtml(data.version || 'unknown');
   document.getElementById('lastRefresh').textContent = new Date(now).toLocaleTimeString();
   document.getElementById('totalRequests').textContent = data.totalRequestsAllAccounts;
 

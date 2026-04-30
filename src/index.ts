@@ -42,6 +42,8 @@ function loadConfig(): Config {
 		config.projectCircuitBreaker429Threshold = config.projectCircuitBreaker429Threshold ?? 3;
 		config.projectCircuitBreakerWindowMs = config.projectCircuitBreakerWindowMs ?? 10 * 60 * 1000;
 		config.projectCircuitBreakerCooldownMs = config.projectCircuitBreakerCooldownMs ?? 60 * 60 * 1000;
+		config.modelCircuitBreaker429Threshold = config.modelCircuitBreaker429Threshold ?? 3;
+		config.modelCircuitBreakerCooldownMs = config.modelCircuitBreakerCooldownMs ?? 6 * 60 * 60 * 1000;
 		config.dailyAccountSlowRequests = config.dailyAccountSlowRequests ?? 250;
 		config.dailyAccountStopRequests = config.dailyAccountStopRequests ?? 350;
 		config.dailyProjectSlowRequests = config.dailyProjectSlowRequests ?? 900;

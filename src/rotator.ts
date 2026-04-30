@@ -68,6 +68,7 @@ export class AccountRotator {
 	private safetyDay = currentUtcDay();
 	private projectRequests: Record<string, number> = {};
 	private projectModelBreakers: Record<string, number> = {};
+	private modelBreakers: Record<string, number> = {};
 	private provider429Events: Array<{ ts: number; projectId: string; modelKey: string; account: string }> = [];
 
 	constructor(private config: Config) {
@@ -127,6 +128,7 @@ export class AccountRotator {
 			this.safetyDay = state.safety?.day ?? currentUtcDay();
 			this.projectRequests = state.safety?.projectRequests ?? {};
 			this.projectModelBreakers = state.safety?.projectModelBreakers ?? {};
+			this.modelBreakers = state.safety?.modelBreakers ?? {};
 			this.provider429Events = state.safety?.provider429Events ?? [];
 			this.rollDailySafetyIfNeeded(Date.now());
 
@@ -212,6 +214,7 @@ export class AccountRotator {
 				day: this.safetyDay,
 				projectRequests: { ...this.projectRequests },
 				projectModelBreakers: { ...this.projectModelBreakers },
+				modelBreakers: { ...this.modelBreakers },
 				provider429Events: [...this.provider429Events],
 			},
 			accounts: {},
@@ -258,9 +261,6 @@ export class AccountRotator {
 	}
 
 	private async pollAllQuotas(): Promise<void> {
-		if (this.isProtectivePauseActive(Date.now())) {
-			return;
-		}
 		const available = this.accounts.filter((a) => !a.disabled && !a.flagged);
 		for (const account of available) {
 			try {
@@ -269,6 +269,10 @@ export class AccountRotator {
 			} catch {
 				// Token refresh or quota fetch failed, skip this account
 			}
+		}
+
+		if (this.isProtectivePauseActive(Date.now())) {
+			return;
 		}
 
 		// Check per-model quota-based rotation
@@ -329,7 +333,7 @@ export class AccountRotator {
 				if (response.status === 401 || response.status === 403) {
 					const errorText = await response.text();
 					this.log(`${account.config.email}: quota API returned ${response.status}, flagging account`);
-					this.markFlagged(account, `Quota API ${response.status}: ${errorText.slice(0, 300)}`);
+					this.markFlagged(account, `Quota API ${response.status}: ${errorText.slice(0, 300)}`, { triggerProtectivePause: false });
 				}
 				return;
 			}
@@ -615,7 +619,17 @@ export class AccountRotator {
 		return true;
 	}
 
+	private isModelBreakerActive(modelKey: string, now: number): boolean {
+		const until = this.modelBreakers[modelKey] ?? 0;
+		if (until <= now) {
+			if (until > 0) delete this.modelBreakers[modelKey];
+			return false;
+		}
+		return true;
+	}
+
 	private getUnavailableReasonForModel(account: AccountRuntime, modelKey: string, now: number): string | null {
+		if (this.isModelBreakerActive(modelKey, now)) return "model circuit breaker active";
 		if (this.isProjectModelBreakerActive(account.config.projectId, modelKey, now)) return "project circuit breaker active";
 		if (this.getProjectInFlight(modelKey, account.config.projectId) >= (this.config.maxConcurrentRequestsPerProjectModel ?? 1)) return "project concurrency limit reached";
 		if (this.getAccountDailyCount(account, now) >= (this.config.dailyAccountStopRequests ?? 350)) return "daily account budget exhausted";
@@ -1101,11 +1115,25 @@ export class AccountRotator {
 				.filter((event) => event.projectId === projectId && event.modelKey === modelKey)
 				.map((event) => event.account),
 		);
+		const modelUniqueAccounts = new Set(
+			this.provider429Events
+				.filter((event) => event.modelKey === modelKey)
+				.map((event) => event.account),
+		);
 		if (uniqueAccounts.size >= threshold) {
 			const until = now + Math.max(cooldownMs, breakerCooldownMs);
 			this.projectModelBreakers[projectModelKey(projectId, modelKey)] = until;
 			this.log(
 				`[${modelKey}] Project circuit breaker active for projectId=${projectId} after ${uniqueAccounts.size} accounts hit 429; cooldown ${Math.ceil((until - now) / 1000)}s`,
+				"warn",
+			);
+		}
+		const modelThreshold = this.config.modelCircuitBreaker429Threshold ?? threshold;
+		if (modelUniqueAccounts.size >= modelThreshold) {
+			const until = now + Math.max(cooldownMs, this.config.modelCircuitBreakerCooldownMs ?? 6 * 60 * 60 * 1000);
+			this.modelBreakers[modelKey] = until;
+			this.log(
+				`[${modelKey}] Model circuit breaker active after ${modelUniqueAccounts.size} unique accounts hit provider 429; cooldown ${Math.ceil((until - now) / 1000)}s`,
 				"warn",
 			);
 		}
@@ -1267,13 +1295,14 @@ export class AccountRotator {
 	}
 
 	// Mark an account as flagged for infringement/abuse. Immediately excluded from rotation.
-	markFlagged(account: AccountRuntime, reason: string): void {
+	markFlagged(account: AccountRuntime, reason: string, options: { triggerProtectivePause?: boolean } = {}): void {
 			account.flagged = true;
 			account.lastError = reason;
 			account.inFlightRequests = 0;
 			account.inFlightByModel = {};
 			this.log(`${account.config.email}: FLAGGED - ${reason}`, "error");
-			if (this.shouldTriggerProtectivePause(reason)) {
+			const triggerProtectivePause = options.triggerProtectivePause ?? true;
+			if (triggerProtectivePause && this.shouldTriggerProtectivePause(reason)) {
 				this.protectivePauseUntil = Date.now() + (this.config.protectivePauseMs ?? 6 * 60 * 60 * 1000);
 				this.protectivePauseReason = `${account.config.email}: ${reason}`;
 				this.log(
@@ -1306,6 +1335,24 @@ export class AccountRotator {
 		if (this.getModelQuota(account, modelKey) === 0) return false;
 		if (!this.isFreshWindowAllowed(account, modelKey)) return false;
 		return true;
+	}
+
+	getRetryAfterMs(model?: string): number {
+		const now = Date.now();
+		const retryTimes: number[] = [];
+		if (this.protectivePauseUntil > now) retryTimes.push(this.protectivePauseUntil);
+		const modelKey = model ? (resolveQuotaModelKey(model) ?? "__default__") : "__default__";
+		const modelBreaker = this.modelBreakers[modelKey] ?? 0;
+		if (modelBreaker > now) retryTimes.push(modelBreaker);
+		for (const account of this.accounts) {
+			if (account.disabled || account.flagged) continue;
+			const cooldown = Math.max(account.cooldownsByModel[modelKey] ?? 0, account.cooldownsByModel.__default__ ?? 0);
+			if (cooldown > now) retryTimes.push(cooldown);
+			const projectBreaker = this.projectModelBreakers[projectModelKey(account.config.projectId, modelKey)] ?? 0;
+			if (projectBreaker > now) retryTimes.push(projectBreaker);
+		}
+		if (retryTimes.length === 0) return 0;
+		return Math.max(1000, Math.min(...retryTimes) - now);
 	}
 
 	getStatus(): StatusResponse {
@@ -1372,7 +1419,9 @@ export class AccountRotator {
 
 		const routingHealth = this.getRoutingHealth(now, accounts);
 
+		const updateInfo = getUpdateInfo();
 		return {
+			version: updateInfo.currentVersion,
 			proxyPort: this.config.proxyPort,
 			requestsPerRotation: this.config.requestsPerRotation,
 			activeAccounts,
@@ -1391,7 +1440,7 @@ export class AccountRotator {
 			requestLog: this.requestLog.slice(0, 100),
 			tokenUsage: this.getTokenUsage(),
 			latencyStats: this.getLatencyStats(),
-			updateInfo: getUpdateInfo(),
+			updateInfo,
 			notifications: getNotifications(),
 		};
 	}

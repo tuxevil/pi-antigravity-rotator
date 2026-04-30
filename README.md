@@ -139,7 +139,7 @@ Three mechanisms trigger rotation, scoped to the specific model:
 
 2. **Request-count** (fallback) -- Before forwarding a request, the rotator checks how many requests the current account has already served for that specific model and rotates once it reaches `requestsPerRotation` (default: 5). Per-model counters are persisted so restarts do not reset the threshold. By default this fallback is only used when quota data for that model is still unknown; set `useRequestCountRotationWhenQuotaUnknownOnly` to `false` to keep request-count rotation active even when quota telemetry exists. If the threshold is reached but every replacement account is cooling down, flagged, disabled, busy, blocked by fresh-window policy, or out of quota for that model, the rotator stays on the current healthy account instead of returning `503`.
 
-3. **429 failover** (reactive) -- On rate limit, the account is marked exhausted with a parsed retry cooldown and the affected model immediately switches.
+3. **429 containment** (reactive) -- On provider rate limit, the account is marked exhausted with a parsed retry cooldown and the current request stops. Repeated unique-account `429`s trip project/model and model-wide circuit breakers so retries cannot burn through the pool.
 
 ### Fresh Windows
 
@@ -184,7 +184,7 @@ Flagged accounts are **immediately excluded** from all model routing. If the rea
 
 ### Error Handling
 
-- **429** (rate limit) -- account is marked exhausted with cooldown, rotates to next
+- **429** (rate limit) -- account is marked exhausted with cooldown; request stops and returns `429`/`Retry-After` to force client backoff
 - **401** -- account is flagged and excluded from routing
 - **403** with enforcement keywords -- account is flagged and may trigger protective pause
 - **503** (no capacity) -- returned directly to the agent when all healthy accounts are cooling down, busy, flagged, or disabled
@@ -238,6 +238,8 @@ Login now fails if Google does not return a project ID. No shared fallback.
   "projectCircuitBreaker429Threshold": 3,
   "projectCircuitBreakerWindowMs": 600000,
   "projectCircuitBreakerCooldownMs": 3600000,
+  "modelCircuitBreaker429Threshold": 3,
+  "modelCircuitBreakerCooldownMs": 21600000,
   "dailyAccountSlowRequests": 250,
   "dailyAccountStopRequests": 350,
   "dailyProjectSlowRequests": 900,
@@ -270,6 +272,8 @@ Login now fails if Google does not return a project ID. No shared fallback.
 | `projectCircuitBreaker429Threshold` | `3` | Unique accounts from the same `projectId` that must hit provider `429` before pausing that project/model |
 | `projectCircuitBreakerWindowMs` | `600000` | Rolling window for the project/model `429` circuit breaker |
 | `projectCircuitBreakerCooldownMs` | `3600000` | Minimum project/model pause after the circuit breaker trips |
+| `modelCircuitBreaker429Threshold` | `3` | Unique accounts across all projects that must hit provider `429` for the same quota model before pausing that model globally |
+| `modelCircuitBreakerCooldownMs` | `21600000` | Minimum model-wide pause after the global model circuit breaker trips |
 | `dailyAccountSlowRequests` | `250` | Daily upstream attempts per account before slow-mode jitter starts |
 | `dailyAccountStopRequests` | `350` | Daily upstream attempts per account before routing stops for that account until the next UTC day |
 | `dailyProjectSlowRequests` | `900` | Daily upstream attempts per `projectId` before slow-mode jitter starts |
@@ -302,9 +306,50 @@ Login now fails if Google does not return a project ID. No shared fallback.
 | `POST` | `/api/account-fresh-window-starts/<email>/on` | Allow one account to override the global fresh-window block |
 | `POST` | `/api/account-fresh-window-starts/<email>/off` | Return one account to the global fresh-window policy |
 | `POST` | `/api/self-update` | Trigger npm self-update to latest version (admin-only) |
-| `POST` | `/v1internal:streamGenerateContent` | Proxy endpoint (used by pi) |
+| `POST` | `/v1internal:streamGenerateContent` | Native Antigravity proxy endpoint (used by pi) |
+| `GET` | `/v1/models` | OpenAI-compatible model list |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible non-streaming chat adapter |
+| `POST` | `/v1/messages` | Anthropic-compatible non-streaming messages adapter |
 
-If `PI_ROTATOR_ADMIN_TOKEN` is set, dashboard/API requests must include either `Authorization: Bearer <token>`, `X-Rotator-Admin-Token: <token>`, or `?token=<token>` for browser dashboard access. The pi proxy endpoint remains unauthenticated so existing agents keep working.
+If `PI_ROTATOR_ADMIN_TOKEN` is set, dashboard/API requests must include either `Authorization: Bearer <token>`, `X-Rotator-Admin-Token: <token>`, or `?token=<token>` for browser dashboard access. The native pi proxy endpoint and compatibility adapters remain unauthenticated so existing clients keep working. Put this service behind a trusted local boundary if exposing beyond localhost/LAN.
+
+### Compatibility Adapters
+
+The compatibility adapters are additive. They do not change the native `/v1internal:streamGenerateContent` route used by pi.
+
+**OpenAI-compatible example:**
+
+```bash
+curl http://localhost:51200/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gemini-3-flash",
+    "messages": [{"role": "user", "content": "Say pong"}],
+    "stream": false
+  }'
+```
+
+**Anthropic-compatible example:**
+
+```bash
+curl http://localhost:51200/v1/messages \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "claude-sonnet-4-6",
+    "system": "Be terse.",
+    "messages": [{"role": "user", "content": "Say pong"}],
+    "max_tokens": 128,
+    "stream": false
+  }'
+```
+
+Current adapter scope:
+
+- Text chat/messages.
+- Streaming mode is supported as compatibility SSE. The adapter buffers the upstream Antigravity stream, then emits one OpenAI/Anthropic-compatible final delta. Native token-by-token pass-through is not implemented yet.
+- Image input is supported when sent as base64 data URL (`OpenAI image_url.url = data:image/...;base64,...`) or Anthropic base64 source (`type=image`, `source.type=base64`).
+- Tool/function calling is explicitly rejected with `400` until a safe contract mapper is implemented.
+
 
 ## Development Checks
 
@@ -350,7 +395,7 @@ Check the error message. Common causes: revoked OAuth consent, expired refresh t
 Quota data appears after the first poll cycle (up to 5 minutes). Ensure accounts have valid tokens.
 
 **All accounts exhausted**
-The proxy now returns `503` and waits for cooldown or manual recovery. It does not reuse cooling-down accounts.
+If the outage is temporary (cooldown, model breaker, or protective pause), the proxy returns `429` with `Retry-After` and `retryAfterMs`; clients must back off. The proxy returns terminal `503` only when there is no known retry time, for example all accounts are disabled/flagged.
 
 **Multiple agents on different models**
 This is fully supported. Each model routes independently. Agent 1 using Gemini Pro and Agent 2 using Claude will each have their own active account and won't interfere with each other's rotation.

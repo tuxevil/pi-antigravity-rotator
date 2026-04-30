@@ -27,6 +27,8 @@ export function loadOrCreateAccountsConfig(): Config {
 		projectCircuitBreaker429Threshold: 3,
 		projectCircuitBreakerWindowMs: 10 * 60 * 1000,
 		projectCircuitBreakerCooldownMs: 60 * 60 * 1000,
+		modelCircuitBreaker429Threshold: 3,
+		modelCircuitBreakerCooldownMs: 6 * 60 * 60 * 1000,
 		dailyAccountSlowRequests: 250,
 		dailyAccountStopRequests: 350,
 		dailyProjectSlowRequests: 900,

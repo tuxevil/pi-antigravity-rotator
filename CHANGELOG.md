@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.12.0] - 2026-05-17
+
+### Added
+- **Native Reasoning/Thinking Support**: Interleaved thinking blocks from Gemini 3.1 Pro, Gemini 3 Flash, and Claude models are now properly exposed to OpenAI and Anthropic compatible clients as `reasoning_content` and `thinking_delta` chunks.
+- **Model & Project Circuit Breaker Reset**: Added manual reset buttons on the dashboard for all circuit breakers, allowing operators to bypass the cooldown period when desired.
+- **Circuit Breaker Visibility**: Added model-level and project-level circuit breaker state (active flags and remaining cooldowns) to the `/api/status` endpoint and the dashboard.
+
+### Fixed
+- **Gemini 3 Thinking Levels**: Fixed an issue where Gemini 3 models failed to return reasoning blocks without a defined `reasoning_effort` flag by automatically inferring the necessary `thinkingLevel` from the model alias (`-high` or `-low`).
+
 ## [1.11.0] - 2026-05-17
 
 ### Added

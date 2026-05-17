@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
 import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
 import { logger } from "./logger.js";
 import type { AccountRotator } from "./rotator.js";
@@ -90,6 +91,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
 	return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * In-memory cache for Gemini `thoughtSignature` values keyed by the OpenAI
+ * tool-call ID we assign. Gemini 3 models require this signature to be
+ * re-submitted with any `functionCall` part that appears in the *current turn*
+ * of a multi-turn conversation. Because the OpenAI wire format has no field
+ * for this, we cache it server-side and transparently re-inject it when the
+ * client replays its history.
+ *
+ * Keys are unique per call (timestamp + counter) so there are no cross-session
+ * collisions even under heavy concurrent load. Entries older than the rolling
+ * window (max 500) are evicted automatically.
+ */
+const thoughtSignatureCache = new Map<string, string>();
+const THOUGHT_SIGNATURE_CACHE_MAX = 500;
+
+function cacheThoughtSignature(callId: string, signature: string): void {
+	if (thoughtSignatureCache.size >= THOUGHT_SIGNATURE_CACHE_MAX) {
+		// Evict the oldest entry
+		const firstKey = thoughtSignatureCache.keys().next().value;
+		if (firstKey !== undefined) thoughtSignatureCache.delete(firstKey);
+	}
+	thoughtSignatureCache.set(callId, signature);
 }
 
 function extractText(content: ChatMessage["content"]): string {
@@ -277,22 +302,7 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	//
 	// Gemini thinking models require a `thought_signature` on every functionCall
 	// part when replaying multi-turn tool conversations. Since we receive
-	// OpenAI-format history that never contains this signature, we convert
-	// *completed* tool call/response exchanges into plain text. Only the
-	// current/last tool interaction uses native Gemini functionCall parts.
-	const completedToolAssistantIndices = new Set<number>();
-	for (let i = 0; i < conversationMessages.length - 1; i++) {
-		const msg = conversationMessages[i];
-		const next = conversationMessages[i + 1];
-		if (
-			msg.role === "assistant" &&
-			Array.isArray(msg.tool_calls) &&
-			msg.tool_calls.length > 0 &&
-			next.role === "tool"
-		) {
-			completedToolAssistantIndices.add(i);
-		}
-	}
+	// We always use native Gemini functionCall parts for all tool calls in the history.
 
 	const contents: GeminiContent[] = [];
 	for (let i = 0; i < conversationMessages.length; i++) {
@@ -304,38 +314,39 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 				if (textContent) parts.push({ text: textContent });
 			}
 			if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-				if (completedToolAssistantIndices.has(i)) {
-					// Completed tool call: convert to text to avoid thought_signature requirement
-					for (const tc of msg.tool_calls) {
-						parts.push({ text: `<tool_call name="${tc.function.name}">\n${tc.function.arguments}\n</tool_call>` });
+				// Use native Gemini functionCall parts. Re-inject thought_signature from
+				// the server-side cache if available. Google only validates signatures on
+				// the *current turn* (after the last real user text message), so missing
+				// signatures on older historical turns are silently ignored.
+				let isFirstInMessage = true;
+				for (const tc of msg.tool_calls) {
+					try {
+						const args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+						// Only the first functionCall part in a model turn needs the signature
+						const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
+						parts.push({
+							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
+							functionCall: { name: tc.function.name, args },
+						});
+					} catch {
+						const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
+						parts.push({
+							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
+							functionCall: { name: tc.function.name, args: {} },
+						});
 					}
-				} else {
-					// Current tool call: use native Gemini functionCall parts
-					for (const tc of msg.tool_calls) {
-						try {
-							const args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
-							parts.push({ functionCall: { name: tc.function.name, args } });
-						} catch {
-							parts.push({ functionCall: { name: tc.function.name, args: {} } });
-						}
-					}
+					isFirstInMessage = false;
 				}
 			}
 			if (parts.length > 0) contents.push({ role: "model", parts });
 		} else if (msg.role === "tool") {
 			const prevMsg = conversationMessages[i - 1];
-			const isCompleted = prevMsg && prevMsg.role === "assistant" && completedToolAssistantIndices.has(i - 1);
 			const responseText = typeof msg.content === "string" ? msg.content : extractText(msg.content);
 			const fnName = msg.name || "unknown";
-			if (isCompleted) {
-				// Completed result: convert to text
-				contents.push({ role: "user", parts: [{ text: `<tool_result name="${fnName}">\n${responseText}\n</tool_result>` }] });
-			} else {
-				// Current result: use native Gemini functionResponse part
-				let responseData: unknown;
-				try { responseData = JSON.parse(responseText); } catch { responseData = { output: responseText }; }
-				contents.push({ role: "user", parts: [{ functionResponse: { name: fnName, response: responseData } }] });
-			}
+			// Current result: use native Gemini functionResponse part
+			let responseData: unknown;
+			try { responseData = JSON.parse(responseText); } catch { responseData = { output: responseText }; }
+			contents.push({ role: "user", parts: [{ functionResponse: { name: fnName, response: responseData } }] });
 		} else {
 			// user message
 			const msgParts = extractParts(msg.content);
@@ -421,6 +432,10 @@ export function parseAntigravitySse(raw: string): CompatCompletion {
 						const name = typeof fc.name === "string" ? fc.name : "unknown";
 						const args = fc.args !== undefined ? JSON.stringify(fc.args) : "{}";
 						const callId = `call_${Date.now().toString(36)}_${toolCallIndex++}`;
+						// Cache thought_signature so we can re-inject it on the next turn
+						if (typeof part.thoughtSignature === "string" && part.thoughtSignature) {
+							cacheThoughtSignature(callId, part.thoughtSignature);
+						}
 						toolCallsMap.set(name + callId, { id: callId, type: "function", function: { name, arguments: args } });
 					}
 				}
@@ -522,19 +537,140 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 		throw new Error("Invalid JSON body");
 	}
 }
+
+async function streamCompatSse(
+	body: unknown,
+	req: IncomingMessage,
+	res: ServerResponse,
+	model: string,
+	format: "openai" | "anthropic",
+): Promise<CompatCompletion> {
+	const nodeStream = Readable.fromWeb(body as import("node:stream/web").ReadableStream);
+	let text = "";
+	let inputTokens = 0;
+	let outputTokens = 0;
+	let responseId: string | undefined;
+	let toolCallIndex = 0;
+
+	const created = Math.floor(Date.now() / 1000);
+	const id = format === "openai" ? `chatcmpl-${Date.now().toString(36)}` : `msg_${Date.now().toString(36)}`;
+
+	res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
+
+	if (format === "openai") {
+		res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
+	} else if (format === "anthropic") {
+		res.write(`event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } })}\n\n`);
+		res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`);
+	}
+
+	let tailBuffer = "";
+	let reqClosed = false;
+	req.once("close", () => { reqClosed = true; });
+
+	try {
+		for await (const chunk of nodeStream) {
+			if (reqClosed) {
+				nodeStream.destroy();
+				break;
+			}
+			const str = chunk.toString();
+			tailBuffer += str;
+			let newlineIdx;
+			while ((newlineIdx = tailBuffer.indexOf('\n')) >= 0) {
+				const line = tailBuffer.slice(0, newlineIdx).trim();
+				tailBuffer = tailBuffer.slice(newlineIdx + 1);
+
+				if (!line.startsWith("data:")) continue;
+				const payload = line.slice(5).trim();
+				if (!payload || payload === "[DONE]") continue;
+
+				try {
+					const parsed = JSON.parse(payload) as Record<string, unknown>;
+					const response = isRecord(parsed.response) ? parsed.response : parsed;
+					if (!responseId && typeof response.responseId === "string") responseId = response.responseId;
+
+					const candidates = Array.isArray(response.candidates) ? response.candidates : [];
+					for (const candidate of candidates) {
+						if (!isRecord(candidate) || !isRecord(candidate.content) || !Array.isArray(candidate.content.parts)) continue;
+						for (const part of candidate.content.parts) {
+							if (!isRecord(part)) continue;
+							if (typeof part.text === "string" && part.text) {
+								text += part.text;
+								if (format === "openai") {
+									res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: { content: part.text }, finish_reason: null }] })}\n\n`);
+								} else {
+									res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: part.text } })}\n\n`);
+								}
+							} else if (isRecord(part.functionCall)) {
+								const fc = part.functionCall;
+								const name = typeof fc.name === "string" ? fc.name : "unknown";
+								const args = fc.args !== undefined ? JSON.stringify(fc.args) : "{}";
+								const callId = `call_${Date.now().toString(36)}_${toolCallIndex++}`;
+								// Cache thought_signature so we can re-inject it on the next turn
+								if (typeof part.thoughtSignature === "string" && part.thoughtSignature) {
+									cacheThoughtSignature(callId, part.thoughtSignature);
+								}
+								if (format === "openai") {
+									res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: { tool_calls: [{ index: toolCallIndex - 1, id: callId, type: "function", function: { name, arguments: args } }] }, finish_reason: null }] })}\n\n`);
+								}
+							}
+						}
+					}
+					const usage = isRecord(response.usageMetadata) ? response.usageMetadata : isRecord(response.usage) ? response.usage : null;
+					if (usage) {
+						if (typeof usage.promptTokenCount === "number") inputTokens = usage.promptTokenCount;
+						if (typeof usage.candidatesTokenCount === "number") outputTokens = usage.candidatesTokenCount;
+						if (typeof usage.input_tokens === "number") inputTokens = usage.input_tokens;
+						if (typeof usage.output_tokens === "number") outputTokens = usage.output_tokens;
+					}
+				} catch {
+					// Ignore malformed JSON chunks
+				}
+			}
+		}
+	} catch (err) {
+		compatLogger.warn(`Stream read error: ${err}`);
+	}
+
+	if (!reqClosed && !res.writableEnded) {
+		if (format === "openai") {
+			res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
+			res.write("data: [DONE]\n\n");
+		} else {
+			res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`);
+			res.write(`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: outputTokens } })}\n\n`);
+			res.write(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`);
+		}
+		res.end();
+	}
+
+	return { text, inputTokens, outputTokens, responseId, toolCalls: undefined };
+}
+
 async function completeViaRotator(
 	req: IncomingMessage,
+	res: ServerResponse,
 	rotator: AccountRotator,
 	body: RequestBody,
-): Promise<{ completion: CompatCompletion; status: number; errorText?: string }> {
+	streamMode: "none" | "openai" | "anthropic",
+): Promise<{ completion: CompatCompletion; status: number; errorText?: string; streamed: boolean }> {
 	const outcome = await withRotation(rotator, body.model, flattenHeaders(req.headers), body,
 		async (response) => {
-			const raw = await response.text();
-			const completion = parseAntigravitySse(raw);
-			if (completion.inputTokens > 0 || completion.outputTokens > 0) {
-				rotator.recordTokenUsage(body.model, completion.inputTokens, completion.outputTokens);
+			if (streamMode === "none") {
+				const raw = await response.text();
+				const completion = parseAntigravitySse(raw);
+				if (completion.inputTokens > 0 || completion.outputTokens > 0) {
+					rotator.recordTokenUsage(body.model, completion.inputTokens, completion.outputTokens);
+				}
+				return completion;
+			} else {
+				const completion = await streamCompatSse(response.body, req, res, body.model, streamMode);
+				if (completion.inputTokens > 0 || completion.outputTokens > 0) {
+					rotator.recordTokenUsage(body.model, completion.inputTokens, completion.outputTokens);
+				}
+				return completion;
 			}
-			return completion;
 		},
 	);
 	if (!outcome.ok) {
@@ -547,9 +683,10 @@ async function completeViaRotator(
 			completion: { text: "", inputTokens: 0, outputTokens: 0 },
 			status: outcome.status,
 			errorText: outcome.retryAfterMs ? `${outcome.errorText}; retryAfterMs=${outcome.retryAfterMs}` : outcome.errorText,
+			streamed: false,
 		};
 	}
-	return { completion: outcome.result, status: 200 };
+	return { completion: outcome.result, status: 200, streamed: streamMode !== "none" };
 }
 
 
@@ -589,13 +726,16 @@ export async function handleOpenAIChatCompletions(req: IncomingMessage, res: Ser
 	if (!validation.ok) return writeJson(res, 400, { error: { message: validation.errors.join("; "), type: "invalid_request_error" } });
 
 	const started = Date.now();
-	const result = await completeViaRotator(req, rotator, openAIToAntigravityBody(validation.value));
+	const streamMode = validation.value.stream ? "openai" : "none";
+	const result = await completeViaRotator(req, res, rotator, openAIToAntigravityBody(validation.value), streamMode);
 	if (result.status !== 200) {
 		compatLogger.warn(`OpenAI compat upstream failed status=${result.status} model=${validation.value.model}`);
-		return writeJson(res, result.status, { error: { message: result.errorText || "Upstream error", type: "upstream_error" } });
+		if (!res.headersSent) {
+			return writeJson(res, result.status, { error: { message: result.errorText || "Upstream error", type: "upstream_error" } });
+		}
+		return;
 	}
-	if (validation.value.stream) {
-		writeOpenAIStream(res, validation.value.model, result.completion);
+	if (result.streamed) {
 		return;
 	}
 	const hasToolCalls = result.completion.toolCalls && result.completion.toolCalls.length > 0;
@@ -631,13 +771,16 @@ export async function handleAnthropicMessages(req: IncomingMessage, res: ServerR
 	if (!validation.ok) return writeJson(res, 400, { type: "error", error: { type: "invalid_request_error", message: validation.errors.join("; ") } });
 
 	const started = Date.now();
-	const result = await completeViaRotator(req, rotator, anthropicToAntigravityBody(validation.value));
+	const streamMode = validation.value.stream ? "anthropic" : "none";
+	const result = await completeViaRotator(req, res, rotator, anthropicToAntigravityBody(validation.value), streamMode);
 	if (result.status !== 200) {
 		compatLogger.warn(`Anthropic compat upstream failed status=${result.status} model=${validation.value.model}`);
-		return writeJson(res, result.status, { type: "error", error: { type: "upstream_error", message: result.errorText || "Upstream error" } });
+		if (!res.headersSent) {
+			return writeJson(res, result.status, { type: "error", error: { type: "upstream_error", message: result.errorText || "Upstream error" } });
+		}
+		return;
 	}
-	if (validation.value.stream) {
-		writeAnthropicStream(res, validation.value.model, result.completion);
+	if (result.streamed) {
 		return;
 	}
 	writeJson(res, 200, {

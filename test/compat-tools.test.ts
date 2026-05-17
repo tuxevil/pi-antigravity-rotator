@@ -18,7 +18,7 @@ describe("OpenAI Compat Tool Calling", () => {
 		
 		const request = result.request as any;
 		assert.strictEqual(request.systemInstruction.role, "user");
-		assert.match(request.systemInstruction.parts[0].text, /<identity>[\s\S]*You are a helpful assistant/);
+		assert.strictEqual(request.systemInstruction.parts[0].text, "You are a helpful assistant");
 		assert.deepStrictEqual(request.contents, [
 			{ role: "user", parts: [{ text: "Hello" }] }
 		]);

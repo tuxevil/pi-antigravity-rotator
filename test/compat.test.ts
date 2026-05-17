@@ -37,7 +37,7 @@ describe("compat adapters", () => {
 		assert.match(bodyStr, /"project":"compat-placeholder"/);
 		assert.match(bodyStr, /"userAgent":"antigravity"/);
 		assert.match(bodyStr, /"requestType":"agent"/);
-		assert.match(bodyStr, /"systemInstruction":{"role":"user","parts":\[{"text":"<identity>[\s\S]*be terse"}\]}/);
+		assert.match(bodyStr, /"systemInstruction":{"role":"user","parts":\[{"text":"be terse"}\]}/);
 		const reqStr = JSON.stringify(body.request);
 		assert.match(reqStr, /"contents":\[{"role":"user","parts":\[{"text":"ping"}\]}\]/);
 	});
@@ -62,7 +62,7 @@ describe("compat adapters", () => {
 		const bodyStr = JSON.stringify(body);
 		assert.match(bodyStr, /"model":"gemini-3-flash"/);
 		assert.match(bodyStr, /"userAgent":"antigravity"/);
-		assert.match(bodyStr, /"systemInstruction":{"role":"user","parts":\[{"text":"<identity>[\s\S]*policy"}\]}/);
+		assert.match(bodyStr, /"systemInstruction":{"role":"user","parts":\[{"text":"policy"}\]}/);
 		const reqStr = JSON.stringify(body.request);
 		assert.match(reqStr, /"contents":\[{"role":"user","parts":\[{"text":"hello"}\]}\]/);
 	});

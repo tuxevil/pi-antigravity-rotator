@@ -4,7 +4,7 @@ import { logger } from "./logger.js";
 import type { AccountRotator } from "./rotator.js";
 import { resolveQuotaModelKey } from "./types.js";
 import { withRotation, flattenHeaders, type RequestBody } from "./proxy.js";
-import { ANTIGRAVITY_IDENTITY_PROMPT } from "./antigravity-prompt.js";
+
 
 const compatLogger = logger.child("compat");
 
@@ -133,6 +133,75 @@ function extractParts(content: ChatMessage["content"]): AntigravityPart[] {
 	return parts;
 }
 
+/**
+ * Gemini's function_declarations accept a restricted subset of JSON Schema.
+ * Keywords like `const`, `$schema`, `$ref`, `$defs`, `if/then/else`, `not`,
+ * `patternProperties`, etc. are not supported and will cause a 400.
+ * This function recursively strips those unsupported keywords.
+ */
+function sanitizeGeminiSchema(schema: unknown): unknown {
+	if (!isRecord(schema)) return schema;
+
+	// Keywords Gemini does not support
+	const UNSUPPORTED = new Set([
+		"const", "$schema", "$id", "$ref", "$defs", "definitions",
+		"if", "then", "else", "not",
+		"patternProperties", "unevaluatedProperties", "unevaluatedItems",
+		"contentEncoding", "contentMediaType", "examples",
+	]);
+
+	const out: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(schema)) {
+		if (UNSUPPORTED.has(key)) continue;
+
+		if (key === "anyOf" || key === "oneOf" || key === "allOf") {
+			if (Array.isArray(value)) {
+				// Special case: all items are pure {const: value} — this is the
+				// JSON Schema way of writing an enum. Convert to Gemini's `enum` array.
+				const allConst = value.every(
+					(item) => isRecord(item) && Object.keys(item).length === 1 && "const" in item,
+				);
+				if (allConst) {
+					out["enum"] = value.map((item) => (item as Record<string, unknown>)["const"]);
+					// Infer type:string when all const values are strings (covers most tool params)
+					if (value.every((item) => typeof (item as Record<string, unknown>)["const"] === "string")) {
+						if (!out["type"]) out["type"] = "string";
+					}
+				} else {
+					const cleaned = value.map(sanitizeGeminiSchema).filter(
+						// Drop entries that become empty objects after sanitisation
+						(v) => isRecord(v) && Object.keys(v).length > 0,
+					);
+					// If only one variant remains, unwrap it (Gemini prefers flat schemas)
+					if (cleaned.length === 1) {
+						Object.assign(out, cleaned[0]);
+					} else if (cleaned.length > 1) {
+						out[key] = cleaned;
+					}
+					// cleaned.length === 0: skip entirely
+				}
+			}
+			continue;
+		}
+
+
+		if (key === "properties" && isRecord(value)) {
+			out[key] = Object.fromEntries(
+				Object.entries(value).map(([k, v]) => [k, sanitizeGeminiSchema(v)]),
+			);
+			continue;
+		}
+
+		if (key === "items") {
+			out[key] = sanitizeGeminiSchema(value);
+			continue;
+		}
+
+		out[key] = isRecord(value) ? sanitizeGeminiSchema(value) : value;
+	}
+	return out;
+}
+
 /** Convert OpenAI tools array to Gemini functionDeclarations */
 function convertOpenAIToolsToGemini(tools: OpenAITool[]): { functionDeclarations: GeminiFunctionDeclaration[] }[] {
 	const decls: GeminiFunctionDeclaration[] = tools
@@ -140,7 +209,7 @@ function convertOpenAIToolsToGemini(tools: OpenAITool[]): { functionDeclarations
 		.map((t) => ({
 			name: t.function.name,
 			...(t.function.description ? { description: t.function.description } : {}),
-			...(t.function.parameters ? { parameters: t.function.parameters } : {}),
+			...(t.function.parameters ? { parameters: sanitizeGeminiSchema(t.function.parameters) as Record<string, unknown> } : {}),
 		}));
 	return decls.length > 0 ? [{ functionDeclarations: decls }] : [];
 }
@@ -200,41 +269,76 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 		return true;
 	});
 
-	// Build multi-turn contents array
+	// Build multi-turn contents array.
+	//
+	// Gemini thinking models require a `thought_signature` on every functionCall
+	// part when replaying multi-turn tool conversations. Since we receive
+	// OpenAI-format history that never contains this signature, we convert
+	// *completed* tool call/response exchanges into plain text. Only the
+	// current/last tool interaction uses native Gemini functionCall parts.
+	const completedToolAssistantIndices = new Set<number>();
+	for (let i = 0; i < conversationMessages.length - 1; i++) {
+		const msg = conversationMessages[i];
+		const next = conversationMessages[i + 1];
+		if (
+			msg.role === "assistant" &&
+			Array.isArray(msg.tool_calls) &&
+			msg.tool_calls.length > 0 &&
+			next.role === "tool"
+		) {
+			completedToolAssistantIndices.add(i);
+		}
+	}
+
 	const contents: GeminiContent[] = [];
-	for (const msg of conversationMessages) {
+	for (let i = 0; i < conversationMessages.length; i++) {
+		const msg = conversationMessages[i];
 		if (msg.role === "assistant") {
 			const parts: unknown[] = [];
-			// Text content
 			if (msg.content) {
 				const textContent = typeof msg.content === "string" ? msg.content : extractText(msg.content);
 				if (textContent) parts.push({ text: textContent });
 			}
-			// tool_calls → functionCall parts
-			if (Array.isArray(msg.tool_calls)) {
-				for (const tc of msg.tool_calls) {
-					try {
-						const args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
-						parts.push({ functionCall: { name: tc.function.name, args } });
-					} catch {
-						parts.push({ functionCall: { name: tc.function.name, args: {} } });
+			if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+				if (completedToolAssistantIndices.has(i)) {
+					// Completed tool call: convert to text to avoid thought_signature requirement
+					for (const tc of msg.tool_calls) {
+						parts.push({ text: `[Tool call: ${tc.function.name}(${tc.function.arguments})]` });
+					}
+				} else {
+					// Current tool call: use native Gemini functionCall parts
+					for (const tc of msg.tool_calls) {
+						try {
+							const args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+							parts.push({ functionCall: { name: tc.function.name, args } });
+						} catch {
+							parts.push({ functionCall: { name: tc.function.name, args: {} } });
+						}
 					}
 				}
 			}
 			if (parts.length > 0) contents.push({ role: "model", parts });
 		} else if (msg.role === "tool") {
-			// tool result → functionResponse part
+			const prevMsg = conversationMessages[i - 1];
+			const isCompleted = prevMsg && prevMsg.role === "assistant" && completedToolAssistantIndices.has(i - 1);
 			const responseText = typeof msg.content === "string" ? msg.content : extractText(msg.content);
-			let responseData: unknown;
-			try { responseData = JSON.parse(responseText); } catch { responseData = { output: responseText }; }
 			const fnName = msg.name || "unknown";
-			contents.push({ role: "user", parts: [{ functionResponse: { name: fnName, response: responseData } }] });
+			if (isCompleted) {
+				// Completed result: convert to text
+				contents.push({ role: "user", parts: [{ text: `[Tool result for ${fnName}: ${responseText}]` }] });
+			} else {
+				// Current result: use native Gemini functionResponse part
+				let responseData: unknown;
+				try { responseData = JSON.parse(responseText); } catch { responseData = { output: responseText }; }
+				contents.push({ role: "user", parts: [{ functionResponse: { name: fnName, response: responseData } }] });
+			}
 		} else {
 			// user message
 			const msgParts = extractParts(msg.content);
 			if (msgParts.length > 0) contents.push({ role: "user", parts: msgParts });
 		}
 	}
+
 
 	if (contents.length === 0) contents.push({ role: "user", parts: [{ text: "Hello" }] });
 
@@ -251,14 +355,12 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 		},
 	};
 
-	const systemText = systemParts.length > 0
-		? `${ANTIGRAVITY_IDENTITY_PROMPT}\n\n${systemParts.join("\n\n")}`
-		: ANTIGRAVITY_IDENTITY_PROMPT;
-
-	request.systemInstruction = {
-		role: "user",
-		parts: [{ text: systemText }]
-	};
+	if (systemParts.length > 0) {
+		request.systemInstruction = {
+			role: "user",
+			parts: [{ text: systemParts.join("\n\n") }],
+		};
+	}
 
 	if (geminiTools.length > 0) request.tools = geminiTools;
 	if (geminiToolConfig) request.toolConfig = geminiToolConfig;

@@ -527,6 +527,13 @@ export async function withRotation<T>(
 				return { ok: false, status: 404, errorText, endpoint };
 			}
 
+			if (response.status === 400) {
+				const errorText = await response.text().catch(() => "");
+				log(`[${label}] 400 Bad Request from ${endpoint}: ${errorText.slice(0, 500)}`, rotator, "warn");
+				logRequestEnd(400, `endpoint=${endpoint}`);
+				return { ok: false, status: 400, errorText, endpoint };
+			}
+
 			if (response.status >= 500) {
 				const errorText = await response.text().catch(() => "");
 				log(`[${label}] Server error ${response.status}: ${errorText.slice(0, 200)}`, rotator, "warn");

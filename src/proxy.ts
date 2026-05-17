@@ -19,6 +19,7 @@ import {
 	serveFreshWindowStartsApi,
 	serveAccountFreshWindowStartsApi,
 	serveClearInFlightApi,
+	serveClearBreakerApi,
 } from "./dashboard.js";
 import { handleHostedCallback, serveLoginLanding, startHostedLogin } from "./onboarding.js";
 import { requireAdmin } from "./admin-auth.js";
@@ -1009,6 +1010,14 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			const email = decodeURIComponent(firstSlash >= 0 ? rest.slice(0, firstSlash) : rest);
 			const modelKey = firstSlash >= 0 ? decodeURIComponent(rest.slice(firstSlash + 1)) : undefined;
 			serveClearInFlightApi(res, rotator, email, modelKey);
+			return;
+		}
+
+		if (method === "POST" && url.startsWith("/api/clear-breaker/")) {
+			if (!requireAdmin(req, res)) return;
+			const rest = url.slice("/api/clear-breaker/".length);
+			const modelKey = rest && rest !== "all" ? decodeURIComponent(rest) : undefined;
+			serveClearBreakerApi(res, rotator, modelKey);
 			return;
 		}
 

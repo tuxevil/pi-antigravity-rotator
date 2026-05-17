@@ -256,6 +256,10 @@ export interface StatusResponse {
 	operatorControls: {
 		allowFreshWindowStarts: boolean;
 	};
+	circuitBreakers: {
+		model: Record<string, { until: number; remainingMs: number }>;
+		project: Record<string, { until: number; remainingMs: number }>;
+	};
 	routingHealth: {
 		state: "healthy" | "paused" | "cooldown_wait" | "busy" | "stopped";
 		reason: string;

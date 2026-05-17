@@ -45,6 +45,16 @@ export function serveClearInFlightApi(res: ServerResponse, rotator: AccountRotat
   res.end(JSON.stringify({ ok, email, modelKey }));
 }
 
+export function serveClearBreakerApi(res: ServerResponse, rotator: AccountRotator, modelKey?: string): void {
+  if (modelKey) {
+    rotator.clearModelBreaker(modelKey);
+  } else {
+    rotator.clearAllBreakers();
+  }
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1527,8 +1537,31 @@ function renderAccounts(data) {
       '<button class="btn-secondary" onclick="setFreshWindowStarts(' + (!controls.allowFreshWindowStarts) + ')">' +
         (controls.allowFreshWindowStarts ? 'Block Fresh Windows' : 'Allow Fresh Windows') +
       '</button>' +
+      (Object.keys(data.circuitBreakers.model || {}).length > 0 || Object.keys(data.circuitBreakers.project || {}).length > 0 ? 
+        '<button class="btn-secondary" style="border-color:var(--red);color:var(--red)" onclick="clearCircuitBreaker()">Reset All Circuit Breakers</button>' : '') +
     '</div>' +
     '<div class="ops-warning">' + freshPolicyHint + '</div>';
+
+  if (Object.keys(data.circuitBreakers.model || {}).length > 0 || Object.keys(data.circuitBreakers.project || {}).length > 0) {
+    var breakerHtml = '<div style="margin-top:12px;padding:12px;border:1px solid rgba(248, 113, 113, 0.3);border-radius:8px;background:rgba(248, 113, 113, 0.05);">';
+    breakerHtml += '<strong style="color:var(--red);display:block;margin-bottom:8px">Active Circuit Breakers</strong>';
+    for (var key in data.circuitBreakers.model) {
+      breakerHtml += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;color:var(--text-dim)">' +
+        '<span>Model <span style="font-family:monospace;color:var(--text)">' + escapeHtml(key) + '</span></span>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+          '<span style="color:var(--yellow)">' + formatDuration(data.circuitBreakers.model[key].remainingMs) + ' left</span>' +
+          '<button class="btn-clear-flight" style="border-color:var(--red);color:var(--red)" onclick="clearCircuitBreaker(\\'' + jsString(key) + '\\')">Reset</button>' +
+        '</div></div>';
+    }
+    for (var pkey in data.circuitBreakers.project) {
+      breakerHtml += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;color:var(--text-dim)">' +
+        '<span>Project/Model <span style="font-family:monospace;color:var(--text)">' + escapeHtml(pkey) + '</span></span>' +
+        '<span style="color:var(--yellow)">' + formatDuration(data.circuitBreakers.project[pkey].remainingMs) + ' left</span>' +
+      '</div>';
+    }
+    breakerHtml += '</div>';
+    routingHealth.innerHTML += breakerHtml;
+  }
 
   renderUpdateBanner(data.updateInfo);
   renderNotifications(data.notifications);
@@ -2501,6 +2534,14 @@ async function setAccountFreshWindowOverride(email, enabled) {
 async function clearInFlight(email, modelKey) {
   if (!confirm('Clear in-flight counter for this account/model? Use only when you are sure the request is stuck.')) return;
   await authFetch('/api/clear-inflight/' + encodeURIComponent(email) + '/' + encodeURIComponent(modelKey), { method: 'POST' });
+  refresh();
+}
+
+async function clearCircuitBreaker(modelKey) {
+  var target = modelKey ? modelKey : "ALL";
+  if (!confirm('Manually reset the circuit breaker for ' + target + '? If the provider issue is still ongoing, this could lead to more rate-limits.')) return;
+  var path = '/api/clear-breaker/' + (modelKey ? encodeURIComponent(modelKey) : 'all');
+  await authFetch(path, { method: 'POST' });
   refresh();
 }
 

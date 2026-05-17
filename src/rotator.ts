@@ -1240,6 +1240,34 @@ export class AccountRotator {
 		return true;
 	}
 
+	clearModelBreaker(modelKey: string): boolean {
+		const now = Date.now();
+		const hasModelBreaker = (this.modelBreakers[modelKey] ?? 0) > now;
+		const hadAny = hasModelBreaker;
+		delete this.modelBreakers[modelKey];
+		// Also clear all project-level breakers for this model
+		for (const key of Object.keys(this.projectModelBreakers)) {
+			if (key.endsWith(`:${modelKey}`)) {
+				delete this.projectModelBreakers[key];
+			}
+		}
+		// Clear the 429 event window so the breaker doesn't immediately re-fire
+		this.provider429Events = this.provider429Events.filter((e) => e.modelKey !== modelKey);
+		this.saveState();
+		this.log(`[${modelKey}] Operator manually cleared circuit breaker`, "warn");
+		return hadAny;
+	}
+
+	clearAllBreakers(): number {
+		const count = Object.keys(this.modelBreakers).length + Object.keys(this.projectModelBreakers).length;
+		this.modelBreakers = {};
+		this.projectModelBreakers = {};
+		this.provider429Events = [];
+		this.saveState();
+		this.log(`Operator cleared all circuit breakers (${count} entries)`, "warn");
+		return count;
+	}
+
 	clearInFlightRequests(email: string, modelKey?: string): boolean {
 		const account = this.accounts.find((a) => a.config.email === email);
 		if (!account) return false;
@@ -1446,6 +1474,21 @@ export class AccountRotator {
 		const routingHealth = this.getRoutingHealth(now, accounts);
 
 		const updateInfo = getUpdateInfo();
+
+		// Build circuit breaker summary for the dashboard
+		const modelBreakersSummary: Record<string, { until: number; remainingMs: number }> = {};
+		for (const [key, until] of Object.entries(this.modelBreakers)) {
+			if (until > now) {
+				modelBreakersSummary[key] = { until, remainingMs: until - now };
+			}
+		}
+		const projectBreakersSummary: Record<string, { until: number; remainingMs: number }> = {};
+		for (const [key, until] of Object.entries(this.projectModelBreakers)) {
+			if (until > now) {
+				projectBreakersSummary[key] = { until, remainingMs: until - now };
+			}
+		}
+
 		return {
 			version: updateInfo.currentVersion,
 			proxyPort: this.config.proxyPort,
@@ -1458,6 +1501,10 @@ export class AccountRotator {
 			protectivePauseReason: this.isProtectivePauseActive(now) ? this.protectivePauseReason : null,
 			operatorControls: {
 				allowFreshWindowStarts: this.allowFreshWindowStarts,
+			},
+			circuitBreakers: {
+				model: modelBreakersSummary,
+				project: projectBreakersSummary,
 			},
 			routingHealth,
 			accounts,

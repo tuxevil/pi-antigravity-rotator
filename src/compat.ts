@@ -414,6 +414,10 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	// Determine if model is Claude — affects schema sanitization and tool call ID handling
 	const isClaude = /^claude-/i.test(input.model);
 
+	// Map OpenAI reasoning_effort → Gemini thinkingLevel
+	const thinkingLevel = mapReasoningEffortToThinkingLevel(input.reasoning_effort, input.model);
+	const isGeminiThinking = !isClaude && thinkingLevel !== undefined;
+
 	const contents: GeminiContent[] = [];
 	for (let i = 0; i < conversationMessages.length; i++) {
 		const msg = conversationMessages[i];
@@ -430,20 +434,26 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 				// signatures on older historical turns are silently ignored.
 				let isFirstInMessage = true;
 				for (const tc of msg.tool_calls) {
+					let args: any;
 					try {
-						const args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
-						// Only the first functionCall part in a model turn needs the signature
-						const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
+						args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+					} catch {
+						args = {};
+					}
+					// Only the first functionCall part in a model turn needs the signature
+					const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
+					
+					if (isGeminiThinking && !cachedSig) {
+						// Google Cloud Code Assist strictly requires a valid cryptographic thought_signature
+						// on all functionCall parts for thinking models. On a cache miss (e.g. proxy restart),
+						// we MUST NOT send functionCall, otherwise the API throws 400.
+						// We fall back to a text representation to preserve the history.
+						parts.push({ text: `[Tool call: ${tc.function.name}(${JSON.stringify(args)})]` });
+					} else {
 						parts.push({
 							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
 							// Include id only for Claude — Gemini native models reject the id field
 							functionCall: { ...(isClaude ? { id: tc.id } : {}), name: tc.function.name, args },
-						});
-					} catch {
-						const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
-						parts.push({
-							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
-							functionCall: { ...(isClaude ? { id: tc.id } : {}), name: tc.function.name, args: {} },
 						});
 					}
 					isFirstInMessage = false;
@@ -474,9 +484,6 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	const inputTools = Array.isArray(input.tools) ? (input.tools as OpenAITool[]) : [];
 	const geminiTools = convertOpenAIToolsToGemini(inputTools, isClaude);
 	const geminiToolConfig = input.tool_choice !== undefined ? convertToolChoiceToGemini(input.tool_choice) : undefined;
-
-	// Map OpenAI reasoning_effort → Gemini thinkingLevel
-	const thinkingLevel = mapReasoningEffortToThinkingLevel(input.reasoning_effort, input.model);
 
 	const generationConfig: Record<string, unknown> = {};
 

@@ -422,6 +422,33 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	for (let i = 0; i < conversationMessages.length; i++) {
 		const msg = conversationMessages[i];
 		if (msg.role === "assistant") {
+			// Check if this is a thinking model turn with tool calls that have no cached signatures.
+			// If so, we collapse the tool exchange into a neutral user summary instead of
+			// injecting [Tool call: ...] text that the model will learn to mimic.
+			const hasMissingSig =
+				isGeminiThinking &&
+				Array.isArray(msg.tool_calls) &&
+				msg.tool_calls.length > 0 &&
+				!thoughtSignatureCache.has(msg.tool_calls[0].id);
+
+			if (hasMissingSig) {
+				// Build a summary of what the model did and what results came back.
+				// We collect the paired tool result(s) from the immediately following messages.
+				const toolNames = msg.tool_calls!.map((tc) => tc.function.name).join(", ");
+				const resultParts: string[] = [];
+				while (i + 1 < conversationMessages.length && conversationMessages[i + 1].role === "tool") {
+					i++;
+					const toolMsg = conversationMessages[i];
+					const toolText = typeof toolMsg.content === "string" ? toolMsg.content : extractText(toolMsg.content);
+					resultParts.push(`${toolMsg.name || "tool"}: ${toolText.slice(0, 500)}`);
+				}
+				const summaryText = `[Context: The assistant used tools (${toolNames}) and received results:\n${resultParts.join("\n")}]`;
+				contents.push({ role: "user", parts: [{ text: summaryText }] });
+				// Add a minimal model acknowledgement to avoid consecutive user turns
+				contents.push({ role: "model", parts: [{ text: "Understood, I have the tool results." }] });
+				continue;
+			}
+
 			const parts: unknown[] = [];
 			if (msg.content) {
 				const textContent = typeof msg.content === "string" ? msg.content : extractText(msg.content);
@@ -434,7 +461,7 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 				// signatures on older historical turns are silently ignored.
 				let isFirstInMessage = true;
 				for (const tc of msg.tool_calls) {
-					let args: any;
+					let args: unknown;
 					try {
 						args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
 					} catch {
@@ -442,26 +469,16 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 					}
 					// Only the first functionCall part in a model turn needs the signature
 					const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
-					
-					if (isGeminiThinking && !cachedSig) {
-						// Google Cloud Code Assist strictly requires a valid cryptographic thought_signature
-						// on all functionCall parts for thinking models. On a cache miss (e.g. proxy restart),
-						// we MUST NOT send functionCall, otherwise the API throws 400.
-						// We fall back to a text representation to preserve the history.
-						parts.push({ text: `[Tool call: ${tc.function.name}(${JSON.stringify(args)})]` });
-					} else {
-						parts.push({
-							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
-							// Include id only for Claude — Gemini native models reject the id field
-							functionCall: { ...(isClaude ? { id: tc.id } : {}), name: tc.function.name, args },
-						});
-					}
+					parts.push({
+						...(cachedSig ? { thoughtSignature: cachedSig } : {}),
+						// Include id only for Claude — Gemini native models reject the id field
+						functionCall: { ...(isClaude ? { id: tc.id } : {}), name: tc.function.name, args },
+					});
 					isFirstInMessage = false;
 				}
 			}
 			if (parts.length > 0) contents.push({ role: "model", parts });
 		} else if (msg.role === "tool") {
-			const prevMsg = conversationMessages[i - 1];
 			const responseText = typeof msg.content === "string" ? msg.content : extractText(msg.content);
 			const fnName = msg.name || "unknown";
 			// Include tool_call_id so Gemini can pass it as tool_use_id to Claude
@@ -473,6 +490,7 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 		} else {
 			// user message
 			const msgParts = extractParts(msg.content);
+
 			if (msgParts.length > 0) contents.push({ role: "user", parts: msgParts });
 		}
 	}

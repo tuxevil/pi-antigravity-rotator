@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.12.3] - 2026-05-18
+
+### Fixed
+- **Gemini 3.1 Pro High Deprecation (`400 Invalid Argument`)**: Google Cloud Code Assist deprecated the internal string `"gemini-3.1-pro-high"` and replaced it with `"gemini-pro-agent"`. The proxy now automatically maps `"gemini-3.1-pro-high"` to `"gemini-pro-agent"` under the hood when constructing the upstream payload, preventing `400` validation errors while allowing clients to continue using the `-high` alias.
+- **Missing `thought_signature` on Tool Calls (`400 Invalid Argument`)**: Gemini thinking models strictly require a cryptographic Base64 `thought_signature` for all `functionCall` history parts, which the proxy normally caches in RAM. To prevent API rejection on cache misses (e.g. after a proxy restart or when using synthetic tool IDs), the proxy now gracefully collapses the orphaned tool exchange into a neutral user summary (`[Context: The assistant used tools...]`). This preserves the conversation context without triggering the `400` error or teaching the model bad tool-calling formats.
+
 ## [1.12.2] - 2026-05-18
 
 ### Fixed

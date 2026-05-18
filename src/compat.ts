@@ -408,6 +408,9 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	// part when replaying multi-turn tool conversations. Since we receive
 	// We always use native Gemini functionCall parts for all tool calls in the history.
 
+	// Determine if model is Claude — affects schema sanitization and tool call ID handling
+	const isClaude = /^claude-/i.test(input.model);
+
 	const contents: GeminiContent[] = [];
 	for (let i = 0; i < conversationMessages.length; i++) {
 		const msg = conversationMessages[i];
@@ -430,14 +433,14 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 						const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
 						parts.push({
 							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
-							// Include tc.id so Gemini can pass it as tool_use.id to Claude
-							functionCall: { id: tc.id, name: tc.function.name, args },
+							// Include id only for Claude — Gemini native models reject the id field
+							functionCall: { ...(isClaude ? { id: tc.id } : {}), name: tc.function.name, args },
 						});
 					} catch {
 						const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
 						parts.push({
 							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
-							functionCall: { id: tc.id, name: tc.function.name, args: {} },
+							functionCall: { ...(isClaude ? { id: tc.id } : {}), name: tc.function.name, args: {} },
 						});
 					}
 					isFirstInMessage = false;
@@ -452,7 +455,8 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 			const toolCallId = msg.tool_call_id;
 			let responseData: unknown;
 			try { responseData = JSON.parse(responseText); } catch { responseData = { output: responseText }; }
-			contents.push({ role: "user", parts: [{ functionResponse: { ...(toolCallId ? { id: toolCallId } : {}), name: fnName, response: responseData } }] });
+			// Include id only for Claude — Gemini native models reject the id field in functionResponse
+			contents.push({ role: "user", parts: [{ functionResponse: { ...(isClaude && toolCallId ? { id: toolCallId } : {}), name: fnName, response: responseData } }] });
 		} else {
 			// user message
 			const msgParts = extractParts(msg.content);
@@ -465,7 +469,6 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 
 	// Build tools / toolConfig if present
 	const inputTools = Array.isArray(input.tools) ? (input.tools as OpenAITool[]) : [];
-	const isClaude = /^claude-/i.test(input.model);
 	const geminiTools = convertOpenAIToolsToGemini(inputTools, isClaude);
 	const geminiToolConfig = input.tool_choice !== undefined ? convertToolChoiceToGemini(input.tool_choice) : undefined;
 

@@ -343,6 +343,90 @@ function buildFilterOptions(events, flagEvents) {
 	};
 }
 
+
+// ── Per-install list ─────────────────────────────────────────────────
+// Returns one summary row per unique installId based on their latest
+// heartbeat/boot event + flag count over the same filtered window.
+function computeInstallList(filters = {}) {
+	const { events: allEvents, flagEvents: allFlagEvents } = loadAllEvents();
+
+	// Apply same filters as computeStats
+	const events = allEvents.filter(({ ev, file }) => {
+		if (filters.installId && ev.installId !== filters.installId) return false;
+		if (filters.version   && ev.version   !== filters.version)   return false;
+		if (filters.os        && ev.os        !== filters.os)        return false;
+		if (filters.model     && !(ev.modelsUsed || []).includes(filters.model)) return false;
+		const date = file.replace('.jsonl', '');
+		if (filters.from && date < filters.from) return false;
+		if (filters.to   && date > filters.to)   return false;
+		return true;
+	});
+
+	const flagEvents = allFlagEvents.filter(({ fl, file }) => {
+		if (filters.installId && fl.installId !== filters.installId) return false;
+		const date = file.replace('-flags.jsonl', '');
+		if (filters.from && date < filters.from) return false;
+		if (filters.to   && date > filters.to)   return false;
+		return true;
+	});
+
+	// Latest heartbeat snapshot per install
+	const latest = {}; // installId -> ev
+	for (const { ev } of events) {
+		const prev = latest[ev.installId];
+		if (!prev || ev.ts >= prev.ts) latest[ev.installId] = ev;
+	}
+
+	// First seen per install
+	const firstSeen = {};
+	for (const { ev } of events) {
+		if (!firstSeen[ev.installId] || ev.ts < firstSeen[ev.installId])
+			firstSeen[ev.installId] = ev.ts;
+	}
+
+	// Flag counts per install
+	const flagsByInstall = {};
+	for (const { fl } of flagEvents) {
+		flagsByInstall[fl.installId] = (flagsByInstall[fl.installId] || 0) + 1;
+	}
+
+	// Total requests per install (max across all events — it's cumulative)
+	const maxRequests = {};
+	for (const { ev } of events) {
+		const cur = maxRequests[ev.installId] || 0;
+		if ((ev.totalRequests || 0) > cur) maxRequests[ev.installId] = ev.totalRequests || 0;
+	}
+
+	const list = Object.values(latest).map((ev) => {
+		const tokens = ev.tokensByModel && typeof ev.tokensByModel === 'object'
+			? ev.tokensByModel : {};
+		const savings = calculateSavings(tokens);
+		return {
+			installId:          ev.installId,
+			version:            ev.version || '?',
+			os:                 ev.os || '?',
+			arch:               ev.arch || '?',
+			accountCount:       ev.accountCount || 0,
+			totalRequests:      maxRequests[ev.installId] || 0,
+			routingHealthState: ev.routingHealthState || 'unknown',
+			flaggedCount:       ev.flaggedCount || 0,
+			disabledCount:      ev.disabledCount || 0,
+			proCount:           ev.proCount || 0,
+			freeCount:          ev.freeCount || 0,
+			tokensByModel:      tokens,
+			savingsUsd:         savings.totalUsd,
+			flagEvents:         flagsByInstall[ev.installId] || 0,
+			lastSeen:           ev.ts,
+			firstSeen:          firstSeen[ev.installId] || ev.ts,
+			featuresUsed:       ev.featuresUsed || {},
+		};
+	});
+
+	// Sort by totalRequests desc by default
+	list.sort((a, b) => b.totalRequests - a.totalRequests);
+	return list;
+}
+
 function computeStats(filters = {}) {
 	const { events: allEvents, flagEvents: allFlagEvents, allFiles } = loadAllEvents();
 
@@ -577,6 +661,37 @@ tr:last-child td{border-bottom:none}
 .savings-sub{font-size:12px;color:#718096;margin-bottom:14px}
 .error{background:#2d1515;border:1px solid #742a2a;border-radius:8px;padding:12px;color:#fc8181;margin-bottom:14px}
 .empty{color:#4a5568;font-size:12px;padding:20px;text-align:center}
+
+/* ── View toggle ── */
+.view-tabs{display:flex;gap:8px;padding:12px 24px;background:#141820;border-bottom:1px solid #2d3748}
+.view-tab{font-size:12px;font-weight:600;padding:5px 14px;border-radius:999px;border:1px solid #2d3748;background:transparent;color:#718096;cursor:pointer;font-family:inherit;transition:all .2s}
+.view-tab.active{background:rgba(66,153,225,.15);border-color:rgba(66,153,225,.4);color:#63b3ed}
+.view-tab:hover:not(.active){background:rgba(255,255,255,.04);color:#e2e8f0}
+
+/* ── Installs list ── */
+.install-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.install-search{background:#0f1117;border:1px solid #2d3748;border-radius:6px;padding:6px 12px;color:#e2e8f0;font-size:12px;font-family:inherit;width:200px;outline:none;transition:border-color .2s}
+.install-search:focus{border-color:#4299e1}
+.sort-btn{font-size:11px;padding:4px 10px;border:1px solid #2d3748;background:transparent;color:#718096;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;transition:all .2s}
+.sort-btn.active{border-color:rgba(66,153,225,.4);color:#63b3ed;background:rgba(66,153,225,.08)}
+.install-table{width:100%;border-collapse:collapse}
+.install-table th{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#718096;padding:8px 12px;text-align:left;border-bottom:1px solid #2d3748;background:rgba(255,255,255,.02);white-space:nowrap;cursor:pointer;user-select:none}
+.install-table th:hover{color:#e2e8f0}
+.install-table th .arr{display:inline-block;margin-left:3px;opacity:.35;font-size:9px}
+.install-table th.sort-active .arr{opacity:1;color:#63b3ed}
+.install-table td{padding:9px 12px;font-size:12px;border-bottom:1px solid #1f2535;vertical-align:middle}
+.install-table tr:last-child td{border-bottom:none}
+.install-row{cursor:pointer;transition:background .15s}
+.install-row:hover td{background:rgba(66,153,225,.05)}
+.install-row.selected td{background:rgba(66,153,225,.1)}
+.install-id{font-family:monospace;font-size:11px;color:#718096}
+.install-id strong{color:#63b3ed;display:block;font-size:12px;margin-bottom:1px}
+.mini-bar{display:flex;align-items:center;gap:5px}
+.mini-bar-bg{width:50px;height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;flex-shrink:0}
+.mini-bar-fill{height:100%;border-radius:2px}
+.health-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;flex-shrink:0}
+.install-list-panel{background:#1a1f2e;border:1px solid #2d3748;border-radius:10px;padding:18px}
+.install-list-panel h2{font-size:11px;font-weight:700;color:#718096;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}
 </style>
 </head>
 <body>
@@ -589,6 +704,7 @@ tr:last-child td{border-bottom:none}
   <button onclick="load()">Load Stats</button>
 </div>
 
+<div class="view-tabs" id="viewTabs" style="display:none"><button class="view-tab active" id="vtAgg" onclick="switchView(&apos;agg&apos;)">■ Aggregated</button><button class="view-tab" id="vtList" onclick="switchView(&apos;list&apos;)">☰ Installations</button></div>
 <div class="filter-bar" id="filterBar" style="display:none">
   <div class="filter-group">
     <label>Install ID</label>
@@ -707,6 +823,7 @@ async function go(filters){
     $('err').style.display='none';
     $('app').style.display='block';
     $('filterBar').style.display='flex';
+    $('viewTabs').style.display='flex';
     $('ts').textContent='Updated '+new Date().toLocaleTimeString();
     render(d,filters);
   }catch(e){showErr(e.message);}
@@ -804,8 +921,134 @@ function render(d, filters={}){
 
 const saved=localStorage.getItem('st');
 if(saved){_token=saved;$('tok').value=saved;go({});}
+
+// ── Installs list view ───────────────────────────────────────────────
+var CURRENT_VIEW = 'agg';
+var INSTALL_SORT = 'requests';
+var INSTALL_SORT_DIR = -1;
+var _installs = [];
+
+function switchView(view) {
+  CURRENT_VIEW = view;
+  $('vtAgg').className  = 'view-tab' + (view === 'agg'  ? ' active' : '');
+  $('vtList').className = 'view-tab' + (view === 'list' ? ' active' : '');
+  $('filterBar').style.display = view === 'agg'  ? 'flex' : 'none';
+  var ae = $('app'); if(ae) ae.style.display = view === 'agg' ? 'block' : 'none';
+  var le = $('installsView'); if(le) le.style.display = view === 'list' ? 'block' : 'none';
+  if (view === 'list') loadInstalls();
+}
+
+async function loadInstalls() {
+  console.log('[installs] token=', _token ? _token.slice(0,8)+'...' : 'EMPTY');
+  if (!_token) { console.log('[installs] abort: no token'); return; }
+  try {
+    var r = await fetch('/v1/installs', { headers: { 'Authorization': 'Bearer ' + _token } });
+    console.log('[installs] status=', r.status);
+    if (!r.ok) { showErr('Failed to load installs: ' + r.status); return; }
+    _installs = await r.json();
+    console.log('[installs] rows=', _installs.length, _installs[0]);
+    renderInstallList();
+  } catch(e) { console.error('[installs] error:', e); showErr(e.message); }
+}
+
+function setInstallSort(col) {
+  if (INSTALL_SORT === col) { INSTALL_SORT_DIR = -INSTALL_SORT_DIR; }
+  else { INSTALL_SORT = col; INSTALL_SORT_DIR = -1; }
+  ['requests','savings','accounts','flags','lastseen'].forEach(function(c) {
+    var b = $('isort-' + c);
+    if (b) b.className = 'sort-btn' + (c === INSTALL_SORT ? ' active' : '');
+  });
+  renderInstallList();
+}
+
+function renderInstallList() {
+  var wrap = $('installTableWrap');
+  if (!wrap) return;
+  var q = (($('installSearch')||{}).value||'').toLowerCase();
+  var rows = _installs.slice().filter(function(r) {
+    if (!q) return true;
+    return r.installId.toLowerCase().indexOf(q)!==-1 ||
+           (r.version||'').toLowerCase().indexOf(q)!==-1 ||
+           (r.os||'').toLowerCase().indexOf(q)!==-1;
+  });
+  rows.sort(function(a,b) {
+    var av,bv;
+    if      (INSTALL_SORT==='requests') {av=a.totalRequests;bv=b.totalRequests;}
+    else if (INSTALL_SORT==='savings')  {av=a.savingsUsd;bv=b.savingsUsd;}
+    else if (INSTALL_SORT==='accounts') {av=a.accountCount;bv=b.accountCount;}
+    else if (INSTALL_SORT==='flags')    {av=a.flagEvents;bv=b.flagEvents;}
+    else if (INSTALL_SORT==='lastseen') {av=a.lastSeen;bv=b.lastSeen;}
+    else {av=0;bv=0;}
+    if(av<bv) return INSTALL_SORT_DIR;
+    if(av>bv) return -INSTALL_SORT_DIR;
+    return 0;
+  });
+  if (rows.length===0) { wrap.innerHTML='<div class="empty">No installs found.</div>'; return; }
+  var HC={healthy:'#68d391',cooldown_wait:'#f6e05e',busy:'#63b3ed',paused:'#fc8181',stopped:'#fc8181'};
+  function ar(col) {
+    if(INSTALL_SORT!==col) return '<span class="arr">&#8597;</span>';
+    return '<span class="arr">'+(INSTALL_SORT_DIR===-1?'&#8595;':'&#8593;')+'</span>';
+  }
+  var html='<table class="install-table"><thead><tr>'+
+    '<th>Install ID</th>'+
+    '<th onclick="setInstallSort(&apos;requests&apos;)" class="'+(INSTALL_SORT==='requests'?'sort-active':'')+'">Requests'+ar('requests')+'</th>'+
+    '<th onclick="setInstallSort(&apos;accounts&apos;)" class="'+(INSTALL_SORT==='accounts'?'sort-active':'')+'">Accounts'+ar('accounts')+'</th>'+
+    '<th onclick="setInstallSort(&apos;savings&apos;)"  class="'+(INSTALL_SORT==='savings' ?'sort-active':'')+'">Savings' +ar('savings') +'</th>'+
+    '<th onclick="setInstallSort(&apos;flags&apos;)"    class="'+(INSTALL_SORT==='flags'   ?'sort-active':'')+'">Flags'   +ar('flags')   +'</th>'+
+    '<th>Health</th>'+
+    '<th>Version / OS</th>'+
+    '<th onclick="setInstallSort(&apos;lastseen&apos;)" class="'+(INSTALL_SORT==='lastseen'?'sort-active':'')+'">Last Seen'+ar('lastseen')+'</th>'+
+    '<th></th>'+
+    '</tr></thead><tbody>';
+  rows.forEach(function(r) {
+    var hc=HC[r.routingHealthState]||'#718096';
+    var shortId=r.installId.slice(0,8)+'…';
+    var ls=r.lastSeen?new Date(r.lastSeen).toLocaleString():'—';
+    var fc=r.flagEvents>0?'#fc8181':'#718096';
+    var pf='';
+    if(r.proCount>0||r.freeCount>0)
+      pf='<span style="color:#68d391;font-size:10px">P:'+r.proCount+'</span> <span style="color:#718096;font-size:10px">F:'+r.freeCount+'</span>';
+    html+='<tr class="install-row" onclick="drillDown(&apos;'+r.installId+'&apos;)">'+
+      '<td><div class="install-id"><strong>'+shortId+'</strong>'+r.installId.slice(8)+'</div></td>'+
+      '<td style="font-family:monospace;font-weight:700">'+fmt(r.totalRequests)+'</td>'+
+      '<td>'+r.accountCount+(pf?'<br>'+pf:'')+'</td>'+
+      '<td style="color:#68d391;font-family:monospace;font-weight:700">'+usd(r.savingsUsd)+'</td>'+
+      '<td style="color:'+fc+';font-weight:700;font-family:monospace">'+r.flagEvents+'</td>'+
+      '<td><span class="health-dot" style="background:'+hc+'"></span><span style="font-size:11px;color:'+hc+'">'+escI(r.routingHealthState||'?')+'</span></td>'+
+      '<td style="font-size:11px"><span style="color:#63b3ed">v'+escI(r.version)+'</span> <span style="color:#718096">'+escI(r.os)+'/'+escI(r.arch)+'</span></td>'+
+      '<td style="font-size:11px;color:#718096;font-family:monospace">'+ls+'</td>'+
+      '<td><button class="sort-btn" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();drillDown(&apos;'+r.installId+'&apos;)">Filter &#8594;</button></td>'+
+      '</tr>';
+  });
+  html+='</tbody></table>';
+  wrap.innerHTML=html;
+}
+
+function drillDown(installId) {
+  switchView('agg');
+  var sel=$('fInstall');
+  if(sel) { sel.value=installId; }
+  applyFilters();
+}
+
+function escI(s){if(!s)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
 setInterval(()=>{if(_token){const f={};const i=$('fInstall').value;if(i)f.installId=i;const v=$('fVersion').value;if(v)f.version=v;const o=$('fOS').value;if(o)f.os=o;const m=$('fModel').value;if(m)f.model=m;const fr=$('fFrom').value;if(fr)f.from=fr;const to=$('fTo').value;if(to)f.to=to;go(f);}},60000);
 </script>
+<div class="main" id="installsView" style="display:none">
+  <div class="install-list-panel">
+    <h2>✶ Installations</h2>
+    <div class="install-toolbar">
+      <input class="install-search" id="installSearch" placeholder="Search…" oninput="renderInstallList()" />
+      <button class="sort-btn" id="isort-requests" onclick="setInstallSort(&apos;requests&apos;)">Requests ↕</button>
+      <button class="sort-btn" id="isort-savings" onclick="setInstallSort(&apos;savings&apos;)">Savings ↕</button>
+      <button class="sort-btn" id="isort-accounts" onclick="setInstallSort(&apos;accounts&apos;)">Accounts ↕</button>
+      <button class="sort-btn" id="isort-flags" onclick="setInstallSort(&apos;flags&apos;)">Flags ↕</button>
+      <button class="sort-btn" id="isort-lastseen" onclick="setInstallSort(&apos;lastseen&apos;)">Last Seen ↕</button>
+    </div>
+    <div id="installTableWrap"></div>
+  </div>
+</div>
 </body></html>`;
 }
 
@@ -966,7 +1209,7 @@ tr:last-child td{border-bottom:none}
 </div>
 
 <script>
-var _token = '';
+
 var _notifications = [];
 
 function $(i) { return document.getElementById(i); }
@@ -1315,6 +1558,36 @@ const server = createServer(async (req, res) => {
 	if (method === "GET" && url === "/v1/health") {
 		res.writeHead(200, { "Content-Type": "application/json" });
 		res.end(JSON.stringify({ status: "ok", ts: new Date().toISOString() }));
+		return;
+	}
+
+	// Installs list (protected)
+	if (method === "GET" && url.startsWith("/v1/installs")) {
+		if (!STATS_TOKEN) {
+			res.writeHead(403, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ error: "STATS_TOKEN not configured" }));
+			return;
+		}
+		const auth = req.headers.authorization || "";
+		if (auth !== `Bearer ${STATS_TOKEN}`) {
+			res.writeHead(401, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ error: "Unauthorized" }));
+			return;
+		}
+		try {
+			const q = parseQueryString(url);
+			const filters = {};
+			if (q.from)    filters.from    = q.from;
+			if (q.to)      filters.to      = q.to;
+			if (q.version) filters.version = q.version;
+			if (q.os)      filters.os      = q.os;
+			const list = computeInstallList(filters);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify(list));
+		} catch (err) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ error: "Failed to compute install list" }));
+		}
 		return;
 	}
 

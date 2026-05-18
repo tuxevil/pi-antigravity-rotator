@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.12.2] - 2026-05-18
+
+### Fixed
+- **Gemini Flash/Pro regression (`INVALID_ARGUMENT`)**: The `id` field added to `functionCall` and `functionResponse` history parts for Claude multi-turn support was also being sent to Gemini native models, which reject it. The field is now only included when the model is Claude (`/^claude-/i`).
+
 ## [1.12.1] - 2026-05-18
 
 ### Fixed

@@ -246,12 +246,15 @@ function sanitizeClaudeViaGeminiSchema(schema: unknown): unknown {
 	if (!isRecord(schema)) return schema;
 
 	// Only remove fields that Gemini's API layer truly rejects at the network level.
-	// We keep Draft 2020-12 keywords like minimum/maximum/pattern/title/etc.
+	// We keep standard Draft 2020-12 keywords but must strip exclusiveMinimum/exclusiveMaximum
+	// as boolean values (Draft 4) — the API layer rejects them even for Claude-bound requests.
 	const UNSUPPORTED = new Set([
 		"$schema", "$id", "$ref", "$defs", "definitions",
 		"if", "then", "else", "not",
 		"patternProperties", "unevaluatedProperties", "unevaluatedItems",
 		"contentEncoding", "contentMediaType",
+		// Gemini's protobuf layer rejects these regardless of target model
+		"exclusiveMinimum", "exclusiveMaximum",
 	]);
 
 	const out: Record<string, unknown> = {};
@@ -475,32 +478,60 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	// Map OpenAI reasoning_effort → Gemini thinkingLevel
 	const thinkingLevel = mapReasoningEffortToThinkingLevel(input.reasoning_effort, input.model);
 
+	const generationConfig: Record<string, unknown> = {};
+
+	// If thinking is disabled, we can pass temperature/maxTokens.
+	// If thinking is enabled, the API rejects temperature/maxTokens with 400 Invalid Argument.
+	if (thinkingLevel === undefined || isClaude) {
+		if (typeof input.temperature === "number") generationConfig.temperature = input.temperature;
+		if (typeof input.max_tokens === "number") generationConfig.maxOutputTokens = input.max_tokens;
+	}
+	// Add thinkingConfig only for Gemini native models (not Claude).
+	// Cloud Code Assist uses thinkingBudget (integer) rather than thinkingLevel (string).
+	if (!isClaude && thinkingLevel !== undefined) {
+		generationConfig.thinkingConfig = {
+			includeThoughts: true,
+			thinkingBudget: thinkingLevel,
+		};
+	}
+
 	const request: Record<string, unknown> = {
 		contents,
-		generationConfig: {
-			...(typeof input.temperature === "number" ? { temperature: input.temperature } : {}),
-			...(typeof input.max_tokens === "number" ? { maxOutputTokens: input.max_tokens } : {}),
-			// Always request thought blocks. Models that don't support thinking ignore this.
-			thinkingConfig: {
-				includeThoughts: true,
-				...(thinkingLevel ? { thinkingLevel } : {}),
-			},
-		},
+		generationConfig,
 	};
 
 	if (systemParts.length > 0) {
-		request.systemInstruction = {
-			role: "user",
-			parts: [{ text: systemParts.join("\n\n") }],
-		};
+		if (!isClaude && thinkingLevel !== undefined) {
+			// Gemini thinking models (gemini-3.1-pro-high/low) reject the systemInstruction
+			// field entirely — prepend system prompt to the first user content turn instead.
+			const firstTurn = contents[0];
+			if (firstTurn && firstTurn.role === "user" && (firstTurn.parts[0] as any)?.text !== undefined) {
+				(firstTurn.parts[0] as any).text = systemParts.join("\n\n") + "\n\n" + (firstTurn.parts[0] as any).text;
+			} else if (firstTurn && firstTurn.role === "user") {
+				firstTurn.parts.unshift({ text: systemParts.join("\n\n") + "\n\n" });
+			} else {
+				contents.unshift({
+					role: "user",
+					parts: [{ text: systemParts.join("\n\n") }],
+				});
+			}
+		} else {
+			request.systemInstruction = {
+				role: "system",
+				parts: [{ text: systemParts.join("\n\n") }],
+			};
+		}
 	}
 
 	if (geminiTools.length > 0) request.tools = geminiTools;
 	if (geminiToolConfig) request.toolConfig = geminiToolConfig;
 
+	let mappedModel = input.model;
+	if (mappedModel === "gemini-3.1-pro-high") mappedModel = "gemini-pro-agent";
+
 	return {
 		project: "compat-placeholder",
-		model: input.model,
+		model: mappedModel,
 		userAgent: "antigravity",
 		requestType: "agent",
 		request,
@@ -522,28 +553,47 @@ export function anthropicToAntigravityBody(input: AnthropicMessagesRequest): Req
 }
 
 /**
- * Maps an OpenAI reasoning_effort string to a Gemini thinkingLevel.
- * Gemini 3 Pro only supports LOW and HIGH; Flash supports MINIMAL/LOW/MEDIUM/HIGH.
+ * Maps an OpenAI reasoning_effort / model name suffix to a Gemini thinkingBudget integer.
+ * Cloud Code Assist uses thinkingBudget (integer token count), not thinkingLevel (string).
+ * Values match models.json: -high=10001, -low=1001, flash=dynamic(-1 means dynamic).
+ * Returns undefined for models that don't need an explicit budget (e.g. Claude, plain flash).
  */
-function mapReasoningEffortToThinkingLevel(effort: string | undefined, modelId: string): string | undefined {
-	const isGemini3Pro = /gemini-3(?:\.1)?-pro/i.test(modelId);
-	
+function mapReasoningEffortToThinkingLevel(effort: string | undefined, modelId: string): number | undefined {
+	const lowerModel = modelId.toLowerCase();
+	const isGemini31Pro = /gemini-3\.1-pro/i.test(modelId);
+	const isGemini3Flash = lowerModel.includes("gemini-3-flash");
+
 	let effectiveEffort = effort;
 	if (!effectiveEffort) {
-		const lowerModel = modelId.toLowerCase();
-		if (lowerModel.endsWith("-high") || lowerModel.includes("claude-")) effectiveEffort = "high";
+		if (lowerModel.endsWith("-high") || lowerModel.includes("gemini-pro-agent")) effectiveEffort = "high";
 		else if (lowerModel.endsWith("-low")) effectiveEffort = "low";
-		else if (lowerModel.includes("gemini-3-flash")) effectiveEffort = "high";
+		else if (isGemini3Flash) effectiveEffort = "high";
+		// Claude models: skip — thinking is handled by the anthropic-beta header
 	}
 
 	if (!effectiveEffort) return undefined;
 
-	switch (effectiveEffort.toLowerCase()) {
-		case "low": return isGemini3Pro ? "LOW" : "LOW";
-		case "medium": return isGemini3Pro ? "HIGH" : "MEDIUM";
-		case "high": return "HIGH";
-		default: return undefined;
+	// Gemini 3.1 Pro uses fixed budgets matching models.json
+	if (isGemini31Pro) {
+		switch (effectiveEffort.toLowerCase()) {
+			case "high": return 10001;
+			case "medium": return 5000;
+			case "low": return 1001;
+			default: return undefined;
+		}
 	}
+
+	// Flash uses dynamic budget (-1 means let the model decide)
+	if (isGemini3Flash) {
+		switch (effectiveEffort.toLowerCase()) {
+			case "high": return -1;
+			case "medium": return 4096;
+			case "low": return 1024;
+			default: return undefined;
+		}
+	}
+
+	return undefined;
 }
 
 export function parseAntigravitySse(raw: string): CompatCompletion {

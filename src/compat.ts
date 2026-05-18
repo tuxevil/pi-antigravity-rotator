@@ -74,6 +74,7 @@ export interface AnthropicMessagesRequest {
 	stream?: boolean;
 	max_tokens?: number;
 	temperature?: number;
+	thinking?: { type: string; budget_tokens?: number; [key: string]: unknown };
 	[key: string]: unknown;
 }
 
@@ -84,6 +85,84 @@ export interface CompatCompletion {
 	outputTokens: number;
 	responseId?: string;
 	toolCalls?: OpenAIToolCall[];
+}
+
+// Model-specific specs for Antigravity backend
+// Matches Antigravity-Manager model_specs.json
+interface ModelSpec {
+	maxOutputTokens: number;
+	thinkingBudget: number;
+	isThinking: boolean;
+}
+const MODEL_SPECS: Record<string, ModelSpec> = {
+	"gemini-pro-agent": { maxOutputTokens: 65535, thinkingBudget: 10001, isThinking: true },
+	"gemini-3-flash-agent": { maxOutputTokens: 65536, thinkingBudget: -1, isThinking: true },
+	"gemini-3-pro-high": { maxOutputTokens: 65535, thinkingBudget: 10001, isThinking: true },
+	"gemini-3-pro-low": { maxOutputTokens: 65535, thinkingBudget: 1001, isThinking: true },
+	"gemini-3.1-pro-high": { maxOutputTokens: 65535, thinkingBudget: 10001, isThinking: true },
+	"gemini-3.1-pro-low": { maxOutputTokens: 65535, thinkingBudget: 1001, isThinking: true },
+	"gemini-3.1-pro-preview": { maxOutputTokens: 65535, thinkingBudget: 10001, isThinking: true },
+	"gemini-3-flash": { maxOutputTokens: 65536, thinkingBudget: 32768, isThinking: true },
+	"gemini-2.5-flash": { maxOutputTokens: 65535, thinkingBudget: 24576, isThinking: true },
+	"gemini-2.5-pro": { maxOutputTokens: 65535, thinkingBudget: 1024, isThinking: true },
+	"claude-sonnet-4-6": { maxOutputTokens: 64000, thinkingBudget: 32768, isThinking: true },
+	"claude-sonnet-4-6-thinking": { maxOutputTokens: 64000, thinkingBudget: 32768, isThinking: true },
+	"claude-opus-4-6-thinking": { maxOutputTokens: 64000, thinkingBudget: 32768, isThinking: true },
+};
+
+// Default limits for unknown models
+const GEMINI_MAX_OUTPUT_TOKENS = 65536;
+const CLAUDE_MAX_OUTPUT_TOKENS = 64000;
+const FALLBACK_THINKING_BUDGET = 24576;
+const CLAUDE_DEFAULT_THINKING_BUDGET = 32768;
+
+/**
+ * Get model spec for a model, falling back to defaults based on family.
+ */
+function getModelSpec(model: string): ModelSpec {
+	const lower = model.toLowerCase();
+	// Direct lookup
+	if (MODEL_SPECS[lower]) return MODEL_SPECS[lower];
+	// Search with normalization
+	for (const [key, spec] of Object.entries(MODEL_SPECS)) {
+		if (lower === key || lower.includes(key)) return spec;
+	}
+	// Fallback based on family
+	const family = getModelFamily(model);
+	if (family === "claude") {
+		return { maxOutputTokens: CLAUDE_MAX_OUTPUT_TOKENS, thinkingBudget: CLAUDE_DEFAULT_THINKING_BUDGET, isThinking: true };
+	}
+	if (family === "gemini") {
+		return { maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS, thinkingBudget: FALLBACK_THINKING_BUDGET, isThinking: true };
+	}
+	return { maxOutputTokens: 65536, thinkingBudget: FALLBACK_THINKING_BUDGET, isThinking: false };
+}
+
+/**
+ * Determine the model family from the model name.
+ * Used for model-specific behavior differences (thinking config, tool config, etc.).
+ */
+function getModelFamily(model: string): "claude" | "gemini" | "unknown" {
+	const lower = model.toLowerCase();
+	if (lower.includes("claude")) return "claude";
+	if (lower.includes("gemini")) return "gemini";
+	return "unknown";
+}
+
+/**
+ * Check if a model supports thinking/reasoning output.
+ */
+function isThinkingModel(model: string): boolean {
+	const spec = getModelSpec(model);
+	if (spec.isThinking) return true;
+	const lower = model.toLowerCase();
+	if (lower.includes("claude") && lower.includes("thinking")) return true;
+	if (lower.includes("gemini") && (lower.includes("thinking") || lower.includes("pro") || lower.includes("flash"))) return true;
+	if (lower.includes("gemini")) {
+		const versionMatch = lower.match(/gemini-(\d+)/);
+		if (versionMatch && parseInt(versionMatch[1], 10) >= 3) return true;
+	}
+	return false;
 }
 
 type AntigravityPart = { text: string } | { inlineData: { mimeType: string; data: string } };
@@ -120,12 +199,30 @@ function cacheThoughtSignature(callId: string, signature: string): void {
 	thoughtSignatureCache.set(callId, signature);
 }
 
+/**
+ * Strip cache_control fields from content blocks.
+ * Cloud Code API rejects cache_control with "Extra inputs are not permitted".
+ * This is critical for Anthropic-format requests where Claude Code CLI
+ * sends cache_control on various content blocks.
+ */
+function cleanCacheControl<T>(content: T): T {
+	if (!Array.isArray(content)) return content;
+	return content.map((block: Record<string, unknown>) => {
+		if (!block || typeof block !== "object") return block;
+		if ("cache_control" in block) {
+			const { cache_control, ...cleanBlock } = block;
+			return cleanBlock;
+		}
+		return block;
+	}) as T;
+}
+
 function extractText(content: ChatMessage["content"]): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
-	return content
-		.filter((p) => (p.type === "text" && typeof p.text === "string") || (p.type === "thinking" && typeof p.thinking === "string"))
-		.map((p) => p.type === "thinking" ? `[Thinking]\n${p.thinking}\n[/Thinking]` : p.text)
+	return cleanCacheControl(content)
+		.filter((p: { type?: string; text?: string; thinking?: string }) => (p.type === "text" && typeof p.text === "string") || (p.type === "thinking" && typeof p.thinking === "string"))
+		.map((p: { type?: string; text?: string; thinking?: string }) => p.type === "thinking" ? `[Thinking]\n${p.thinking}\n[/Thinking]` : (p.text as string))
 		.join("\n");
 }
 
@@ -139,14 +236,22 @@ function extractParts(content: ChatMessage["content"]): AntigravityPart[] {
 	if (content === null) return [];
 	if (typeof content === "string") return content ? [{ text: content }] : [];
 	if (!Array.isArray(content)) return [];
+	// Strip cache_control from all content blocks before processing
+	const cleaned = cleanCacheControl(content);
 	const parts: AntigravityPart[] = [];
-	for (const part of content) {
+	for (const part of cleaned) {
+		if (!isRecord(part)) continue;
 		if (part.type === "text" && typeof part.text === "string" && part.text) {
 			parts.push({ text: part.text });
 			continue;
 		}
 		if (part.type === "thinking" && typeof part.thinking === "string" && part.thinking) {
-			parts.push({ text: `[Thinking]\n${part.thinking}\n[/Thinking]` });
+			// Convert thinking blocks to Gemini thought parts with signature
+			const thoughtPart: Record<string, unknown> = { text: part.thinking, thought: true };
+			if (typeof part.signature === "string" && part.signature.length >= 50) {
+				thoughtPart.thoughtSignature = part.signature;
+			}
+			parts.push(thoughtPart as unknown as AntigravityPart);
 			continue;
 		}
 		if (part.type === "image_url" && isRecord(part.image_url) && typeof part.image_url.url === "string") {
@@ -365,19 +470,71 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	const geminiTools = convertOpenAIToolsToGemini(inputTools);
 	const geminiToolConfig = input.tool_choice !== undefined ? convertToolChoiceToGemini(input.tool_choice) : undefined;
 
-	// Map OpenAI reasoning_effort → Gemini thinkingLevel
-	const thinkingLevel = mapReasoningEffortToThinkingLevel(input.reasoning_effort, input.model);
+	// Cap maxOutputTokens based on model-specific limits
+	const modelSpec = getModelSpec(input.model);
+	let maxOutputTokens = typeof input.max_tokens === "number" ? input.max_tokens : undefined;
+	const modelFamily = getModelFamily(input.model);
+	
+	// Apply model-specific cap
+	if (maxOutputTokens && maxOutputTokens > modelSpec.maxOutputTokens) {
+		compatLogger.debug(`Capping ${input.model} maxOutputTokens from ${maxOutputTokens} to ${modelSpec.maxOutputTokens}`);
+		maxOutputTokens = modelSpec.maxOutputTokens;
+	}
+
+	// Build thinkingConfig based on model family
+	let thinkingConfig: Record<string, unknown>;
+	if (modelFamily === "claude" && isThinkingModel(input.model)) {
+		// Claude thinking models need thinking_budget and include_thoughts (v1internal uses snake_case for Claude)
+		const thinkingBudget = modelSpec.thinkingBudget;
+		thinkingConfig = { include_thoughts: true, thinking_budget: thinkingBudget };
+		// Ensure maxOutputTokens > thinking_budget + output response tokens
+		if (!maxOutputTokens || maxOutputTokens <= thinkingBudget) {
+			maxOutputTokens = Math.min(thinkingBudget + 8192, modelSpec.maxOutputTokens);
+			compatLogger.debug(`Adjusted Claude maxOutputTokens to ${maxOutputTokens} (thinking_budget=${thinkingBudget} + 8192)`);
+		}
+	} else if (isThinkingModel(input.model)) {
+		// Gemini thinking models on v1internal: use thinkingBudget (number), NOT thinkingLevel (string)
+		// v1internal rejects thinkingLevel with 400 INVALID_ARGUMENT
+		// thinkingBudget = -1 means "adaptive" (dynamic budget)
+		const thinkingBudget = modelSpec.thinkingBudget;
+		if (thinkingBudget === -1) {
+			// Adaptive mode: omit thinkingBudget, let the model decide
+			thinkingConfig = { includeThoughts: true };
+		} else {
+			thinkingConfig = {
+				includeThoughts: true,
+				thinkingBudget,
+			};
+		}
+		// Ensure maxOutputTokens > thinkingBudget + 8192 (v1internal requirement)
+		// Skip for adaptive mode (-1) since there's no fixed budget
+		if (thinkingBudget !== -1 && (!maxOutputTokens || maxOutputTokens <= thinkingBudget)) {
+			maxOutputTokens = Math.min(thinkingBudget + 8192, modelSpec.maxOutputTokens);
+			compatLogger.debug(`Adjusted Gemini maxOutputTokens to ${maxOutputTokens} (thinkingBudget=${thinkingBudget} + 8192)`);
+		}
+	} else {
+		// Non-thinking models: map reasoning_effort to thinkingBudget if provided
+		// v1internal does NOT accept thinkingLevel (string) — always use thinkingBudget (number)
+		let budget: number | undefined;
+		if (input.reasoning_effort) {
+			switch (input.reasoning_effort.toLowerCase()) {
+				case "low": budget = Math.round(modelSpec.thinkingBudget / 4); break;
+				case "medium": budget = Math.round(modelSpec.thinkingBudget / 2); break;
+				case "high": budget = modelSpec.thinkingBudget; break;
+			}
+		}
+		thinkingConfig = {
+			includeThoughts: true,
+			...(budget ? { thinkingBudget: budget } : {}),
+		};
+	}
 
 	const request: Record<string, unknown> = {
 		contents,
 		generationConfig: {
 			...(typeof input.temperature === "number" ? { temperature: input.temperature } : {}),
-			...(typeof input.max_tokens === "number" ? { maxOutputTokens: input.max_tokens } : {}),
-			// Always request thought blocks. Models that don't support thinking ignore this.
-			thinkingConfig: {
-				includeThoughts: true,
-				...(thinkingLevel ? { thinkingLevel } : {}),
-			},
+			...(maxOutputTokens ? { maxOutputTokens } : {}),
+			thinkingConfig,
 		},
 	};
 
@@ -389,7 +546,14 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	}
 
 	if (geminiTools.length > 0) request.tools = geminiTools;
-	if (geminiToolConfig) request.toolConfig = geminiToolConfig;
+	// Use VALIDATED mode for Claude models, AUTO for others
+	if (geminiToolConfig) {
+		request.toolConfig = geminiToolConfig;
+	} else if (geminiTools.length > 0 && modelFamily === "claude") {
+		request.toolConfig = { functionCallingConfig: { mode: "VALIDATED" } };
+	} else if (geminiTools.length > 0) {
+		request.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+	}
 
 	return {
 		project: "compat-placeholder",
@@ -401,7 +565,21 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 }
 
 export function anthropicToAntigravityBody(input: AnthropicMessagesRequest): RequestBody {
-	const systemText = typeof input.system === "string" ? input.system : Array.isArray(input.system) ? extractText(input.system as ChatMessage["content"]) : "";
+	// Strip cache_control from system and messages (Cloud Code API rejects it)
+	const cleanedSystem = typeof input.system === "string" ? input.system : Array.isArray(input.system) ? cleanCacheControl(input.system as Array<Record<string, unknown>>) : input.system;
+	const cleanedMessages = input.messages.map((msg) => {
+		if (msg.content && typeof msg.content !== "string") {
+			return { ...msg, content: cleanCacheControl(msg.content) };
+		}
+		return msg;
+	});
+
+	const systemText = typeof cleanedSystem === "string" ? cleanedSystem : Array.isArray(cleanedSystem) ? extractText(cleanedSystem as ChatMessage["content"]) : "";
+
+	// Extract thinking config from Anthropic format
+	const isThinking = isThinkingModel(input.model);
+	const thinkingBudget = isThinking && isRecord(input.thinking) && input.thinking.type === "enabled" && typeof input.thinking.budget_tokens === "number" ? (input.thinking as Record<string, unknown>).budget_tokens as number : undefined;
+
 	return openAIToAntigravityBody({
 		model: input.model,
 		stream: input.stream,
@@ -409,34 +587,9 @@ export function anthropicToAntigravityBody(input: AnthropicMessagesRequest): Req
 		max_tokens: input.max_tokens,
 		messages: [
 			...(systemText ? [{ role: "system" as const, content: systemText }] : []),
-			...input.messages,
+			...cleanedMessages,
 		],
 	});
-}
-
-/**
- * Maps an OpenAI reasoning_effort string to a Gemini thinkingLevel.
- * Gemini 3 Pro only supports LOW and HIGH; Flash supports MINIMAL/LOW/MEDIUM/HIGH.
- */
-function mapReasoningEffortToThinkingLevel(effort: string | undefined, modelId: string): string | undefined {
-	const isGemini3Pro = /gemini-3(?:\.1)?-pro/i.test(modelId);
-	
-	let effectiveEffort = effort;
-	if (!effectiveEffort) {
-		const lowerModel = modelId.toLowerCase();
-		if (lowerModel.endsWith("-high") || lowerModel.includes("claude-")) effectiveEffort = "high";
-		else if (lowerModel.endsWith("-low")) effectiveEffort = "low";
-		else if (lowerModel.includes("gemini-3-flash")) effectiveEffort = "high";
-	}
-
-	if (!effectiveEffort) return undefined;
-
-	switch (effectiveEffort.toLowerCase()) {
-		case "low": return isGemini3Pro ? "LOW" : "LOW";
-		case "medium": return isGemini3Pro ? "HIGH" : "MEDIUM";
-		case "high": return "HIGH";
-		default: return undefined;
-	}
 }
 
 export function parseAntigravitySse(raw: string): CompatCompletion {

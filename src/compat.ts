@@ -339,15 +339,116 @@ function sanitizeGeminiSchema(schema: unknown): unknown {
 	return out;
 }
 
+/**
+ * Lighter sanitization for Claude models routed through Gemini's API.
+ * Gemini's outer API still validates schemas before routing to Claude, so
+ * we must remove fields Gemini's protobuf doesn't know about (like `const`,
+ * `$ref`, etc.). However, unlike the Gemini-native sanitizer, we KEEP
+ * standard JSON Schema Draft 2020-12 keywords (minimum, maximum, pattern,
+ * etc.) that Claude requires and that Gemini's API does pass through.
+ */
+function sanitizeClaudeViaGeminiSchema(schema: unknown): unknown {
+	if (!isRecord(schema)) return schema;
+
+	// Only remove fields that Gemini's API layer truly rejects at the network level.
+	// We keep Draft 2020-12 keywords like minimum/maximum/pattern/title/etc.
+	const UNSUPPORTED = new Set([
+		"$schema", "$id", "$ref", "$defs", "definitions",
+		"if", "then", "else", "not",
+		"patternProperties", "unevaluatedProperties", "unevaluatedItems",
+		"contentEncoding", "contentMediaType",
+	]);
+
+	const out: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(schema)) {
+		if (UNSUPPORTED.has(key)) continue;
+
+		// `const` is not supported by Gemini's API — convert to a single-value enum
+		if (key === "const") {
+			out["enum"] = [value];
+			continue;
+		}
+
+		if (key === "anyOf" || key === "oneOf" || key === "allOf") {
+			if (Array.isArray(value)) {
+				// Case 1: all items are pure {const: value} — convert to flat enum.
+				const allPureConst = value.every(
+					(item) => isRecord(item) && Object.keys(item).length === 1 && "const" in item,
+				);
+				if (allPureConst) {
+					out["enum"] = value.map((item) => (item as Record<string, unknown>)["const"]);
+					if (value.every((item) => typeof (item as Record<string, unknown>)["const"] === "string")) {
+						if (!out["type"]) out["type"] = "string";
+					}
+					continue;
+				}
+
+				// Case 2: all items are {type: T, const: V} (same type, each with a const).
+				// e.g. [{type:"string",const:"fact"},{type:"string",const:"lesson"}]
+				// Merge into a single flat {type: T, enum: [V1, V2, ...]} — avoids
+				// the redundant anyOf-with-single-enum pattern that Claude rejects.
+				const allTypeConst = value.every(
+					(item) =>
+						isRecord(item) &&
+						Object.keys(item).length === 2 &&
+						"type" in item &&
+						"const" in item,
+				);
+				if (allTypeConst) {
+					const firstType = (value[0] as Record<string, unknown>)["type"];
+					const allSameType = value.every((item) => (item as Record<string, unknown>)["type"] === firstType);
+					if (allSameType) {
+						if (!out["type"]) out["type"] = firstType;
+						out["enum"] = value.map((item) => (item as Record<string, unknown>)["const"]);
+						continue;
+					}
+				}
+
+				// General case: recurse and sanitize each variant.
+				const cleaned = value.map(sanitizeClaudeViaGeminiSchema).filter(
+					(v) => isRecord(v) && Object.keys(v).length > 0,
+				);
+				if (cleaned.length === 1) {
+					Object.assign(out, cleaned[0]);
+				} else if (cleaned.length > 1) {
+					out[key] = cleaned;
+				}
+				// cleaned.length === 0: skip entirely
+			}
+			continue;
+		}
+
+		if (key === "properties" && isRecord(value)) {
+			out[key] = Object.fromEntries(
+				Object.entries(value).map(([k, v]) => [k, sanitizeClaudeViaGeminiSchema(v)]),
+			);
+			continue;
+		}
+
+		if (key === "items") {
+			out[key] = sanitizeClaudeViaGeminiSchema(value);
+			continue;
+		}
+
+		out[key] = isRecord(value) ? sanitizeClaudeViaGeminiSchema(value) : value;
+	}
+	return out;
+}
+
 /** Convert OpenAI tools array to Gemini functionDeclarations */
-function convertOpenAIToolsToGemini(tools: OpenAITool[]): { functionDeclarations: GeminiFunctionDeclaration[] }[] {
+function convertOpenAIToolsToGemini(tools: OpenAITool[], isClaude: boolean = false): { functionDeclarations: GeminiFunctionDeclaration[] }[] {
 	const decls: GeminiFunctionDeclaration[] = tools
 		.filter((t) => t.type === "function" && isNonEmptyString(t.function?.name))
-		.map((t) => ({
-			name: t.function.name,
-			...(t.function.description ? { description: t.function.description } : {}),
-			...(t.function.parameters ? { parameters: sanitizeGeminiSchema(t.function.parameters) as Record<string, unknown> } : {}),
-		}));
+		.map((t) => {
+			const sanitized = t.function.parameters
+				? (isClaude ? sanitizeClaudeViaGeminiSchema(t.function.parameters) : sanitizeGeminiSchema(t.function.parameters)) as Record<string, unknown>
+				: undefined;
+			return {
+				name: t.function.name,
+				...(t.function.description ? { description: t.function.description } : {}),
+				...(sanitized ? { parameters: sanitized } : {}),
+			};
+		});
 	return decls.length > 0 ? [{ functionDeclarations: decls }] : [];
 }
 
@@ -412,6 +513,9 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	// part when replaying multi-turn tool conversations. Since we receive
 	// We always use native Gemini functionCall parts for all tool calls in the history.
 
+	// Determine if model is Claude — affects schema sanitization and tool call ID handling
+	const isClaude = /^claude-/i.test(input.model);
+
 	const contents: GeminiContent[] = [];
 	for (let i = 0; i < conversationMessages.length; i++) {
 		const msg = conversationMessages[i];
@@ -434,13 +538,14 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 						const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
 						parts.push({
 							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
-							functionCall: { name: tc.function.name, args },
+							// Include id only for Claude — Gemini native models reject the id field
+							functionCall: { ...(isClaude ? { id: tc.id } : {}), name: tc.function.name, args },
 						});
 					} catch {
 						const cachedSig = isFirstInMessage ? thoughtSignatureCache.get(tc.id) : undefined;
 						parts.push({
 							...(cachedSig ? { thoughtSignature: cachedSig } : {}),
-							functionCall: { name: tc.function.name, args: {} },
+							functionCall: { ...(isClaude ? { id: tc.id } : {}), name: tc.function.name, args: {} },
 						});
 					}
 					isFirstInMessage = false;
@@ -451,10 +556,12 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 			const prevMsg = conversationMessages[i - 1];
 			const responseText = typeof msg.content === "string" ? msg.content : extractText(msg.content);
 			const fnName = msg.name || "unknown";
-			// Current result: use native Gemini functionResponse part
+			// Include tool_call_id so Gemini can pass it as tool_use_id to Claude
+			const toolCallId = msg.tool_call_id;
 			let responseData: unknown;
 			try { responseData = JSON.parse(responseText); } catch { responseData = { output: responseText }; }
-			contents.push({ role: "user", parts: [{ functionResponse: { name: fnName, response: responseData } }] });
+			// Include id only for Claude — Gemini native models reject the id field in functionResponse
+			contents.push({ role: "user", parts: [{ functionResponse: { ...(isClaude && toolCallId ? { id: toolCallId } : {}), name: fnName, response: responseData } }] });
 		} else {
 			// user message
 			const msgParts = extractParts(msg.content);
@@ -467,7 +574,7 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 
 	// Build tools / toolConfig if present
 	const inputTools = Array.isArray(input.tools) ? (input.tools as OpenAITool[]) : [];
-	const geminiTools = convertOpenAIToolsToGemini(inputTools);
+	const geminiTools = convertOpenAIToolsToGemini(inputTools, isClaude);
 	const geminiToolConfig = input.tool_choice !== undefined ? convertToolChoiceToGemini(input.tool_choice) : undefined;
 
 	// Cap maxOutputTokens based on model-specific limits

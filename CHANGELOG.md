@@ -1,6 +1,19 @@
 # Changelog
 
+## [1.12.2] - 2026-05-18
+
+### Fixed
+- **Gemini Flash/Pro regression (`INVALID_ARGUMENT`)**: The `id` field added to `functionCall` and `functionResponse` history parts for Claude multi-turn support was also being sent to Gemini native models, which reject it. The field is now only included when the model is Claude (`/^claude-/i`).
+
+## [1.12.1] - 2026-05-18
+
+### Fixed
+- **Claude tool schema compatibility (JSON Schema Draft 2020-12)**: When routing requests to Claude models (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`) through Gemini's API, a new `sanitizeClaudeViaGeminiSchema` function is used instead of the Gemini-native sanitizer. It only removes fields that Gemini's outer API layer rejects (e.g. `$ref`, `$defs`, `if/then/else`) and converts `const` → `enum`, while preserving valid Draft 2020-12 keywords (`minimum`, `maximum`, `pattern`, `minLength`, `title`, `default`, etc.) that Claude requires.
+- **Claude `anyOf [{type,const}]` → flat `enum` collapse**: Schemas with `anyOf` items of the form `[{"type":"string","const":"fact"},{"type":"string","const":"lesson"}]` are now correctly collapsed into `{"type":"string","enum":["fact","lesson"]}`. Previously this produced a redundant `anyOf` with single-element enums that Claude rejected as invalid.
+- **Claude multi-turn tool call IDs (`tool_use.id: Field required`)**: When replaying tool-call history for Claude models, the OpenAI tool call `id` (e.g. `call_xxx`) is now included in the Gemini `functionCall.id` field, and the `tool_call_id` from tool response messages is included in the Gemini `functionResponse.id` field. Gemini passes these through to Claude as `tool_use.id` / `tool_use_id`, fixing the "Field required" error on multi-turn agentic conversations.
+
 ## [1.12.0] - 2026-05-17
+
 
 ### Added
 - **Native Reasoning/Thinking Support**: Interleaved thinking blocks from Gemini 3.1 Pro, Gemini 3 Flash, and Claude models are now properly exposed to OpenAI and Anthropic compatible clients as `reasoning_content` and `thinking_delta` chunks.

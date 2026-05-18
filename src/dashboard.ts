@@ -1168,6 +1168,192 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .notif-bell-dot {
     background: var(--yellow);
   }
+
+  /* ── List View ── */
+  .view-toggle-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .view-tab {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-family: var(--font);
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+  }
+
+  .view-tab.active {
+    background: rgba(124, 92, 252, 0.14);
+    border-color: rgba(124, 92, 252, 0.35);
+    color: var(--text);
+  }
+
+  .view-tab:hover:not(.active) {
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+  }
+
+  .list-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+
+  .list-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .list-toolbar-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-dim);
+    margin-right: auto;
+  }
+
+  .list-search {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: var(--font);
+    width: 180px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .list-search:focus {
+    border-color: rgba(124, 92, 252, 0.4);
+  }
+
+  .list-sort-btn {
+    font-size: 11px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--font);
+    font-weight: 600;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .list-sort-btn.active {
+    border-color: rgba(124, 92, 252, 0.35);
+    color: var(--accent);
+    background: rgba(124, 92, 252, 0.08);
+  }
+
+  .list-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .list-table th {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    padding: 8px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .list-table th:hover { color: var(--text); }
+
+  .list-table th .sort-arrow {
+    display: inline-block;
+    margin-left: 4px;
+    opacity: 0.4;
+    font-size: 9px;
+  }
+
+  .list-table th.sort-active .sort-arrow { opacity: 1; color: var(--accent); }
+
+  .list-table td {
+    padding: 9px 14px;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    vertical-align: middle;
+  }
+
+  .list-table tr:last-child td { border-bottom: none; }
+
+  .list-table tr.list-row {
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .list-table tr.list-row:hover td {
+    background: rgba(124, 92, 252, 0.05);
+  }
+
+  .list-row-label {
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .list-row-email {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .list-quota-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .list-quota-bar-bg {
+    width: 60px;
+    height: 5px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 3px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .list-quota-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+  }
+
+  .list-highlight td {
+    background: rgba(124, 92, 252, 0.12) !important;
+    transition: background 0.8s ease-out !important;
+  }
+
+  .list-empty {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 32px;
+    font-size: 13px;
+  }
 </style>
 </head>
 <body>
@@ -1210,6 +1396,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 </div>
 
+<div class="view-toggle-bar">
+  <button class="view-tab active" id="viewTabGrid" onclick="switchView('grid')">⊞ Grid</button>
+  <button class="view-tab" id="viewTabList" onclick="switchView('list')">☰ List</button>
+</div>
+
 <div class="routing-panel state-stopped" id="routingHealth"></div>
 
 <div class="routing-panel" id="tokenUsagePanel" style="margin-top:12px">
@@ -1245,6 +1436,18 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </div>
 
 <div class="accounts-grid" id="accounts"></div>
+
+<div class="list-panel" id="listPanel" style="display:none">
+  <div class="list-toolbar">
+    <span class="list-toolbar-label">Installations</span>
+    <input class="list-search" id="listSearch" placeholder="Search…" oninput="renderListView()" />
+    <button class="list-sort-btn" id="lsort-requests" onclick="setListSort('requests')">Requests ↕</button>
+    <button class="list-sort-btn" id="lsort-quota" onclick="setListSort('quota')">Quota ↕</button>
+    <button class="list-sort-btn" id="lsort-tokens" onclick="setListSort('tokens')">Tokens ↕</button>
+    <button class="list-sort-btn" id="lsort-status" onclick="setListSort('status')">Status ↕</button>
+  </div>
+  <div id="listTableWrap"></div>
+</div>
 
 <div class="routing-panel" id="heatmapPanel" style="margin-top:12px;display:none">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -1602,7 +1805,7 @@ function renderAccounts(data) {
       return '<span class="badge badge-model">' + escapeHtml(m.split('-').slice(0, 2).join('-')) + '</span>';
     }).join('');
 
-    return '<div class="account-card ' + escapeHtml(a.status) + '">' +
+    return '<div class="account-card ' + escapeHtml(a.status) + '" data-account-email="' + escapeHtml(a.email) + '">' +
       '<div class="card-header">' +
         '<div class="card-label">' + escapeHtml(maskText(a.label)) + '</div>' +
         '<div class="card-badges">' +
@@ -1649,6 +1852,189 @@ function renderAccounts(data) {
   }).join('');
 
   renderProAdvisor(data.proAdvisor);
+}
+
+
+// ── List View ─────────────────────────────────────────────────────────────
+var CURRENT_VIEW = 'grid';
+var LIST_SORT = 'requests';
+var LIST_SORT_DIR = -1; // -1 = desc, 1 = asc
+
+function switchView(view) {
+  CURRENT_VIEW = view;
+  document.getElementById('viewTabGrid').className = 'view-tab' + (view === 'grid' ? ' active' : '');
+  document.getElementById('viewTabList').className = 'view-tab' + (view === 'list' ? ' active' : '');
+  document.getElementById('accounts').style.display = view === 'grid' ? '' : 'none';
+  document.getElementById('listPanel').style.display = view === 'list' ? '' : 'none';
+  if (view === 'list' && window.__lastData) renderListView();
+}
+
+function setListSort(col) {
+  if (LIST_SORT === col) {
+    LIST_SORT_DIR = -LIST_SORT_DIR;
+  } else {
+    LIST_SORT = col;
+    LIST_SORT_DIR = -1;
+  }
+  ['requests','quota','tokens','status'].forEach(function(c) {
+    var btn = document.getElementById('lsort-' + c);
+    if (btn) btn.className = 'list-sort-btn' + (c === LIST_SORT ? ' active' : '');
+  });
+  renderListView();
+}
+
+function renderListView() {
+  if (!window.__lastData) return;
+  var data = window.__lastData;
+  var wrap = document.getElementById('listTableWrap');
+  var query = ((document.getElementById('listSearch') || {}).value || '').toLowerCase();
+
+  var rows = data.accounts.slice();
+
+  // Filter by search
+  if (query) {
+    rows = rows.filter(function(a) {
+      return (a.label || '').toLowerCase().indexOf(query) !== -1 ||
+             (a.email || '').toLowerCase().indexOf(query) !== -1 ||
+             (a.status || '').toLowerCase().indexOf(query) !== -1;
+    });
+  }
+
+  // Aggregate token totals per account (from tokensByAccount in usage data if present,
+  // otherwise fall back to account-level totalTokens if server exposes it)
+  var tokensByAccount = {};
+  var tokenUsage = data.tokenUsage || {};
+  ['minutes','hours','days','months'].forEach(function(tier) {
+    (tokenUsage[tier] || []).forEach(function(b) {
+      if (!b.byAccount) return;
+      Object.keys(b.byAccount).forEach(function(acct) {
+        var d = b.byAccount[acct] || {};
+        if (!tokensByAccount[acct]) tokensByAccount[acct] = { input: 0, output: 0 };
+        tokensByAccount[acct].input  += d.inputTokens  || 0;
+        tokensByAccount[acct].output += d.outputTokens || 0;
+      });
+    });
+  });
+
+  // Fallback: use per-account token fields exposed directly on the account object
+  rows.forEach(function(a) {
+    if (!tokensByAccount[a.email] && (a.totalInputTokens || a.totalOutputTokens)) {
+      tokensByAccount[a.email] = {
+        input:  a.totalInputTokens  || 0,
+        output: a.totalOutputTokens || 0
+      };
+    }
+  });
+
+  // Sort
+  rows.sort(function(a, b) {
+    var av, bv;
+    if (LIST_SORT === 'requests') {
+      av = a.totalRequests || 0;
+      bv = b.totalRequests || 0;
+    } else if (LIST_SORT === 'quota') {
+      av = a.quota && a.quota.length ? a.quota.reduce(function(s, q) { return s + q.percentRemaining; }, 0) / a.quota.length : -1;
+      bv = b.quota && b.quota.length ? b.quota.reduce(function(s, q) { return s + q.percentRemaining; }, 0) / b.quota.length : -1;
+    } else if (LIST_SORT === 'tokens') {
+      var ta = tokensByAccount[a.email] || { input: 0, output: 0 };
+      var tb = tokensByAccount[b.email] || { input: 0, output: 0 };
+      av = ta.input + ta.output;
+      bv = tb.input + tb.output;
+    } else if (LIST_SORT === 'status') {
+      var statusOrder = { active: 0, ready: 1, cooldown: 2, exhausted: 3, error: 4, disabled: 5, flagged: 6 };
+      av = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 9;
+      bv = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 9;
+    } else {
+      av = 0; bv = 0;
+    }
+    if (av < bv) return LIST_SORT_DIR;
+    if (av > bv) return -LIST_SORT_DIR;
+    return 0;
+  });
+
+  if (rows.length === 0) {
+    wrap.innerHTML = '<div class="list-empty">No accounts match the filter.</div>';
+    return;
+  }
+
+  var arrowFor = function(col) {
+    if (LIST_SORT !== col) return '<span class="sort-arrow">\u2195</span>';
+    return '<span class="sort-arrow">' + (LIST_SORT_DIR === -1 ? '\u2193' : '\u2191') + '</span>';
+  };
+
+  var html = '<table class="list-table"><thead><tr>' +
+    '<th>Account</th>' +
+    '<th onclick="setListSort(&apos;status&apos;)" class="' + (LIST_SORT === 'status' ? 'sort-active' : '') + '">Status' + arrowFor('status') + '</th>' +
+    '<th onclick="setListSort(&apos;requests&apos;)" class="' + (LIST_SORT === 'requests' ? 'sort-active' : '') + '">Total Reqs' + arrowFor('requests') + '</th>' +
+    '<th>This Rotation</th>' +
+    '<th onclick="setListSort(&apos;quota&apos;)" class="' + (LIST_SORT === 'quota' ? 'sort-active' : '') + '">Avg Quota' + arrowFor('quota') + '</th>' +
+    '<th onclick="setListSort(&apos;tokens&apos;)" class="' + (LIST_SORT === 'tokens' ? 'sort-active' : '') + '">Tokens (in/out)' + arrowFor('tokens') + '</th>' +
+    '<th>Last Used</th>' +
+    '<th>Type</th>' +
+  '</tr></thead><tbody>';
+
+  rows.forEach(function(a) {
+    var avgQuota = a.quota && a.quota.length > 0
+      ? Math.round(a.quota.reduce(function(s, q) { return s + q.percentRemaining; }, 0) / a.quota.length)
+      : null;
+    var quotaColor = avgQuota === null ? 'var(--text-dim)' : avgQuota > 50 ? 'var(--green)' : avgQuota > 20 ? 'var(--yellow)' : 'var(--red)';
+
+    var statusColors = {
+      active: 'var(--green)', ready: 'var(--text-dim)', cooldown: 'var(--yellow)',
+      exhausted: 'var(--red)', error: 'var(--orange)', disabled: '#888', flagged: '#ff4444'
+    };
+    var statusColor = statusColors[a.status] || 'var(--text-dim)';
+
+    var ta = tokensByAccount[a.email] || { input: 0, output: 0 };
+    var totalTokens = ta.input + ta.output;
+
+    var lastUsed = a.lastUsed ? formatTime(a.lastUsed) : '--';
+    var tierBadge = a.proDetected
+      ? '<span class="badge badge-pro" style="font-size:9px">PRO</span>'
+      : '<span class="badge badge-free" style="font-size:9px">FREE</span>';
+    if (a.familyManager) tierBadge += '<span class="badge badge-fmgr" style="font-size:9px">FMGR</span>';
+
+    var quotaCell = avgQuota === null
+      ? '<span style="color:var(--text-dim)">--</span>'
+      : '<div class="list-quota-bar">' +
+          '<div class="list-quota-bar-bg"><div class="list-quota-bar-fill" style="width:' + avgQuota + '%;background:' + quotaColor + '"></div></div>' +
+          '<span style="font-family:JetBrains Mono,monospace;font-size:11px;color:' + quotaColor + '">' + avgQuota + '%</span>' +
+        '</div>';
+
+    var tokensCell = totalTokens > 0
+      ? '<span style="font-family:JetBrains Mono,monospace">' + formatTokenCount(ta.input) + '\u00a0/\u00a0' + formatTokenCount(ta.output) + '</span>'
+      : '<span style="color:var(--text-dim)">--</span>';
+
+    html += '<tr class="list-row" onclick="jumpToAccount(&apos;' + jsString(a.email) + '&apos;)">' +
+      '<td>' +
+        '<div class="list-row-label">' + escapeHtml(maskText(a.label)) + '</div>' +
+        '<div class="list-row-email">' + escapeHtml(maskEmail(a.email)) + '</div>' +
+      '</td>' +
+      '<td><span style="color:' + statusColor + ';font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.4px">' + escapeHtml(a.status) + '</span></td>' +
+      '<td style="font-family:JetBrains Mono,monospace;font-weight:700">' + (a.totalRequests || 0) + '</td>' +
+      '<td style="font-family:JetBrains Mono,monospace;color:var(--text-dim)">' + (a.requestsSinceRotation || 0) + '</td>' +
+      '<td>' + quotaCell + '</td>' +
+      '<td>' + tokensCell + '</td>' +
+      '<td style="font-family:JetBrains Mono,monospace;font-size:11px;color:var(--text-dim)">' + lastUsed + '</td>' +
+      '<td>' + tierBadge + '</td>' +
+    '</tr>';
+  });
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+function jumpToAccount(email) {
+  // Switch to grid first
+  switchView('grid');
+  setTimeout(function() {
+    var target = document.querySelector('[data-account-email="' + email.replace(/"/g, '\\"') + '"]');
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.classList.add('list-highlight');
+      setTimeout(function() { target.classList.remove('list-highlight'); }, 2000);
+    }
+  }, 80);
 }
 
 function renderHealthPill(label, value) {

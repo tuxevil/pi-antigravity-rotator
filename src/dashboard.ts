@@ -2620,6 +2620,7 @@ function renderForecastPanel(data) {
       '<th style="padding:4px 8px">Accounts</th>' +
       '<th style="padding:4px 8px">Burn Rate</th>' +
       '<th style="padding:4px 8px">Estimate</th>' +
+      '<th style="padding:4px 8px">Next Reset</th>' +
     '</tr>';
 
   models.forEach(function(m) {
@@ -2631,6 +2632,23 @@ function renderForecastPanel(data) {
     var displayName = m;
     if (m === 'claude-opus-4-6-thinking') displayName = 'claude';
     if (m === 'gemini-3.1-pro') displayName = 'gemini-3.1-pro';
+
+    var minResetRemaining = null;
+    q.entries.forEach(function(entry) {
+      if (entry.resetTime && entry.timerType !== 'fresh') {
+        var remaining = new Date(entry.resetTime).getTime() - now;
+        if (remaining > 0) {
+          var isRolling5h = entry.percentRemaining === 100 && Math.abs(remaining - (5 * 3600000)) < 600000;
+          var isRolling7d = entry.percentRemaining === 100 && Math.abs(remaining - (7 * 86400000)) < 600000;
+          if (!isRolling5h && !isRolling7d) {
+            if (minResetRemaining === null || remaining < minResetRemaining) {
+              minResetRemaining = remaining;
+            }
+          }
+        }
+      }
+    });
+    var nextResetLabel = minResetRemaining !== null ? formatDuration(minResetRemaining) : '--';
 
     // Estimate: assume ~100 requests per full 100% quota window (empirical)
     // Total remaining "request capacity" ≈ sum of (percent/100 * 100) per account
@@ -2669,6 +2687,7 @@ function renderForecastPanel(data) {
       '<td style="padding:4px 8px;text-align:center">' + q.accountCount + '</td>' +
       '<td style="padding:4px 8px">' + rateLabel + '</td>' +
       '<td style="padding:4px 8px;color:' + estimateColor + ';font-weight:700">' + estimateLabel + '</td>' +
+      '<td style="padding:4px 8px;color:var(--text-dim)">' + nextResetLabel + '</td>' +
     '</tr>';
   });
 

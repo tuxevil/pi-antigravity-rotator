@@ -839,6 +839,10 @@ function writeOpenAIStream(res: ServerResponse, model: string, completion: Compa
 		}
 		res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
 	}
+	// Emit usage chunk so agents (hermes, openwebui) can display token statistics
+	if (completion.inputTokens > 0 || completion.outputTokens > 0) {
+		res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [], usage: { prompt_tokens: completion.inputTokens, completion_tokens: completion.outputTokens, total_tokens: completion.inputTokens + completion.outputTokens } })}\n\n`);
+	}
 	res.write("data: [DONE]\n\n");
 	res.end();
 }
@@ -858,7 +862,8 @@ function writeAnthropicStream(res: ServerResponse, model: string, completion: Co
 	res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: contentIndex, content_block: { type: "text", text: "" } })}\n\n`);
 	if (completion.text) res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: contentIndex, delta: { type: "text_delta", text: completion.text } })}\n\n`);
 	res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: contentIndex })}\n\n`);
-	res.write(`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: completion.outputTokens } })}\n\n`);
+	// message_delta: include both input_tokens and output_tokens so hermes shows full context count
+	res.write(`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { input_tokens: completion.inputTokens, output_tokens: completion.outputTokens } })}\n\n`);
 	res.write(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`);
 	res.end();
 }
@@ -986,10 +991,15 @@ async function streamCompatSse(
 	if (!reqClosed && !res.writableEnded) {
 		if (format === "openai") {
 			res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
+			// Emit a usage chunk so agents (hermes, openwebui, etc.) can display token statistics
+			if (inputTokens > 0 || outputTokens > 0) {
+				res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [], usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens } })}\n\n`);
+			}
 			res.write("data: [DONE]\n\n");
 		} else {
 			res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`);
-			res.write(`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: outputTokens } })}\n\n`);
+			// message_delta carries output_tokens; also include input_tokens so Hermes shows full context count
+			res.write(`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { input_tokens: inputTokens, output_tokens: outputTokens } })}\n\n`);
 			res.write(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`);
 		}
 		res.end();

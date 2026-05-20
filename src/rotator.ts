@@ -1,6 +1,6 @@
 // Account rotation and token management with per-model routing
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import {
 	type AccountConfig,
 	type AccountRuntime,
@@ -10,6 +10,9 @@ import {
 	type ModelQuota,
 	type ModelRotationState,
 	type PersistedState,
+	type RoutingAccountDiagnostic,
+	type RoutingModelDiagnostics,
+	type RoutingRejectionReason,
 	type StatusResponse,
 	type TokenBucket,
 	type TokenUsageData,
@@ -24,18 +27,20 @@ import {
 	resolveDisplayModelKey,
 } from "./types.js";
 import { reportFlagEvent, FLAG_PATTERNS, type FlagEventData } from "./telemetry.js";
-import { getStatePath } from "./paths.js";
-import { saveAccountsConfig } from "./account-store.js";
+import { getStatePath, getTokenUsagePath } from "./paths.js";
+import { applyConfigDefaults, saveAccountsConfig } from "./account-store.js";
 import { getOAuthClientConfig } from "./oauth.js";
 import { fetchWithRetry } from "./fetch-with-retry.js";
 import { logger } from "./logger.js";
 import { getUpdateInfo } from "./version-check.js";
 import { getNotifications } from "./notification-poller.js";
+import { backupFile, readJsonFile, writeJsonFileAtomic } from "./storage.js";
+import { getConfiguredAdminToken } from "./admin-auth.js";
 
 const rotatorLogger = logger.child("rotator");
 
 const STATE_FILE = getStatePath();
-const TOKENS_FILE = STATE_FILE.replace("state.json", "token-usage.json");
+const TOKENS_FILE = getTokenUsagePath();
 
 function currentUtcDay(now = Date.now()): string {
 	return new Date(now).toISOString().slice(0, 10);
@@ -68,8 +73,10 @@ export class AccountRotator {
 	private projectModelBreakers: Record<string, number> = {};
 	private modelBreakers: Record<string, number> = {};
 	private provider429Events: Array<{ ts: number; projectId: string; modelKey: string; account: string }> = [];
+	private routingDiagnostics: Record<string, RoutingModelDiagnostics> = {};
 
 	constructor(private config: Config) {
+		this.config = applyConfigDefaults(config);
 		this.initAccounts();
 		this.loadState();
 		this.startQuotaPolling();
@@ -96,14 +103,81 @@ export class AccountRotator {
 			allowFreshWindowStartsOverride: false,
 			dailyRequestCount: 0,
 			dailyRequestDay: currentUtcDay(),
+			healthScore: 1,
+			tokenBucket: {
+				tokens: Math.max(0, Math.min(this.config.tokenBucketInitialTokens ?? 50, this.config.tokenBucketMaxTokens ?? 50)),
+				lastRefillAt: Date.now(),
+			},
 		}));
+		this.refreshHealthScores();
+	}
+
+	private isTokenBucketEnabled(): boolean {
+		return !!this.config.tokenBucketEnabled;
+	}
+
+	private getTokenBucketCapacity(): number {
+		return Math.max(1, this.config.tokenBucketMaxTokens ?? 50);
+	}
+
+	private getTokenBucketRefillPerMinute(): number {
+		return Math.max(0.0001, this.config.tokenBucketRefillPerMinute ?? 6);
+	}
+
+	private refillTokenBucket(account: AccountRuntime, now: number): void {
+		const capacity = this.getTokenBucketCapacity();
+		if (!this.isTokenBucketEnabled()) {
+			account.tokenBucket.tokens = capacity;
+			account.tokenBucket.lastRefillAt = now;
+			return;
+		}
+		const elapsedMinutes = Math.max(0, now - account.tokenBucket.lastRefillAt) / 60_000;
+		if (elapsedMinutes <= 0) return;
+		account.tokenBucket.tokens = Math.min(capacity, account.tokenBucket.tokens + elapsedMinutes * this.getTokenBucketRefillPerMinute());
+		account.tokenBucket.lastRefillAt = now;
+	}
+
+	private getTokenBucketSnapshot(account: AccountRuntime, now: number): {
+		enabled: boolean;
+		tokens: number;
+		capacity: number;
+		nextRefillInMs: number;
+	} {
+		const capacity = this.getTokenBucketCapacity();
+		if (!this.isTokenBucketEnabled()) {
+			return { enabled: false, tokens: capacity, capacity, nextRefillInMs: 0 };
+		}
+		this.refillTokenBucket(account, now);
+		const tokens = Math.max(0, Math.min(capacity, account.tokenBucket.tokens));
+		if (tokens >= 1) {
+			return { enabled: true, tokens, capacity, nextRefillInMs: 0 };
+		}
+		const tokensNeeded = 1 - tokens;
+		const nextRefillInMs = Math.ceil((tokensNeeded / this.getTokenBucketRefillPerMinute()) * 60_000);
+		return { enabled: true, tokens, capacity, nextRefillInMs: Math.max(0, nextRefillInMs) };
+	}
+
+	private consumeTokenBucket(account: AccountRuntime, now: number): boolean {
+		if (!this.isTokenBucketEnabled()) return true;
+		this.refillTokenBucket(account, now);
+		if (account.tokenBucket.tokens < 1) return false;
+		account.tokenBucket.tokens = Math.max(0, account.tokenBucket.tokens - 1);
+		account.tokenBucket.lastRefillAt = now;
+		return true;
+	}
+
+	private refundTokenBucket(account: AccountRuntime, now: number): void {
+		if (!this.isTokenBucketEnabled()) return;
+		this.refillTokenBucket(account, now);
+		account.tokenBucket.tokens = Math.min(this.getTokenBucketCapacity(), account.tokenBucket.tokens + 1);
+		account.tokenBucket.lastRefillAt = now;
 	}
 
 	private loadState(): void {
 		if (!existsSync(STATE_FILE)) return;
 		try {
-			const raw = readFileSync(STATE_FILE, "utf-8");
-			const state: PersistedState = JSON.parse(raw);
+			const state = readJsonFile<PersistedState>(STATE_FILE);
+			if (!state) return;
 
 			// Load per-model account assignments
 			if (state.modelAccounts) {
@@ -163,8 +237,8 @@ export class AccountRotator {
 		// Load token usage from separate file
 		try {
 			if (existsSync(TOKENS_FILE)) {
-				const raw = readFileSync(TOKENS_FILE, "utf-8");
-				const parsed = JSON.parse(raw);
+				const parsed = readJsonFile<any>(TOKENS_FILE);
+				if (!parsed) return;
 				const normalize = (arr: any[]): TokenBucket[] => (arr || []).map((b: any) => ({
 					period: b.period ?? b.hour ?? "unknown",
 					inputTokens: Number(b.inputTokens || 0),
@@ -227,11 +301,12 @@ export class AccountRotator {
 				allowFreshWindowStartsOverride: account.allowFreshWindowStartsOverride,
 			};
 		}
-			try {
-				writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
-			} catch (err) {
-				this.log(`Failed to save state: ${err}`, "error");
-			}
+		try {
+			backupFile(STATE_FILE, "state");
+			writeJsonFileAtomic(STATE_FILE, state);
+		} catch (err) {
+			this.log(`Failed to save state: ${err}`, "error");
+		}
 	}
 
 	// =========================================================================
@@ -472,9 +547,8 @@ export class AccountRotator {
 
 	private pickBestModelAccount(modelKey: string, now: number, excludeIdx: number = -1): AccountRuntime | null {
 		let best: AccountRuntime | null = null;
-		let bestPriority = Infinity;
-		let bestQuota = -2;
-		let bestDistance = Infinity;
+		let bestMetrics: { priority: number; quota: number; tier: number; health: number; distance: number; tokenRatio: number; hybridScore: number } | null = null;
+		const policy = this.config.routingPolicy || "timer-first";
 
 		for (let i = 0; i < this.accounts.length; i++) {
 			if (i === excludeIdx) continue;
@@ -486,17 +560,25 @@ export class AccountRotator {
 			if (!this.isFreshWindowAllowed(account, modelKey)) continue;
 
 			const priority = this.getModelTimerPriority(account, modelKey);
+			const tier = this.getTierRank(account);
+			const health = account.healthScore;
 			const distance =
 				excludeIdx >= 0 ? (i - excludeIdx + this.accounts.length) % this.accounts.length : i + 1;
-			if (
-				priority < bestPriority ||
-				(priority === bestPriority && quota > bestQuota) ||
-				(priority === bestPriority && quota === bestQuota && distance < bestDistance)
-			) {
+			const tokenSnapshot = this.getTokenBucketSnapshot(account, now);
+			const tokenRatio = tokenSnapshot.capacity > 0 ? tokenSnapshot.tokens / tokenSnapshot.capacity : 0;
+			if (policy === "hybrid" && tokenSnapshot.enabled && tokenSnapshot.tokens < 1) continue;
+			const metrics = {
+				priority,
+				quota,
+				tier,
+				health,
+				distance,
+				tokenRatio,
+				hybridScore: this.calculateHybridScore(priority, quota, tier, health, tokenRatio, distance),
+			};
+			if (!bestMetrics || this.compareRoutingCandidate(metrics, bestMetrics, policy)) {
 				best = account;
-				bestPriority = priority;
-				bestQuota = quota;
-				bestDistance = distance;
+				bestMetrics = metrics;
 			}
 		}
 
@@ -585,6 +667,187 @@ export class AccountRotator {
 		return null;
 	}
 
+	private getAccountStatusForUi(account: AccountRuntime, now: number, activeForModels: string[]): AccountStatus["status"] {
+		const inCooldownModels = Object.values(account.cooldownsByModel).filter((ts) => ts > now);
+		if (account.flagged) return "flagged";
+		if (account.disabled) return "disabled";
+		if (account.consecutiveErrors > 0 && !account.disabled) return "error";
+		if (inCooldownModels.length > 0) return "cooldown";
+		if (activeForModels.length > 0) return "active";
+		return "ready";
+	}
+
+	private mapRoutingRejection(reason: string): { reason: RoutingRejectionReason; detail: string } {
+		if (reason === "model circuit breaker active") return { reason: "model-breaker", detail: reason };
+		if (reason === "project circuit breaker active") return { reason: "project-breaker", detail: reason };
+		if (reason === "project concurrency limit reached") return { reason: "project-concurrency", detail: reason };
+		if (reason === "daily account budget exhausted") return { reason: "daily-account-stop", detail: reason };
+		if (reason === "daily project budget exhausted") return { reason: "daily-project-stop", detail: reason };
+		return { reason: "cooldown", detail: reason };
+	}
+
+	private getRoutingRejectionForModel(
+		account: AccountRuntime,
+		modelKey: string,
+		now: number,
+		policy: Config["routingPolicy"],
+	): { reason: RoutingRejectionReason; detail: string } | null {
+		if (account.disabled) return { reason: "disabled", detail: "account disabled" };
+		if (account.flagged) return { reason: "flagged", detail: "account quarantined or flagged" };
+		const defaultCooldown = account.cooldownsByModel["__default__"] ?? 0;
+		if (defaultCooldown > now) return { reason: "cooldown", detail: "default cooldown active" };
+		const modelCooldown = account.cooldownsByModel[modelKey] ?? 0;
+		if (modelCooldown > now) return { reason: "cooldown", detail: "model cooldown active" };
+		if ((account.inFlightByModel[modelKey] ?? 0) >= (this.config.maxConcurrentRequestsPerAccount ?? 1)) {
+			return { reason: "account-concurrency", detail: "account concurrency limit reached" };
+		}
+		const unavailable = this.getUnavailableReasonForModel(account, modelKey, now);
+		if (unavailable) return this.mapRoutingRejection(unavailable);
+		if (this.getModelQuota(account, modelKey) === 0) return { reason: "quota-zero", detail: "quota is exhausted for this model" };
+		if (!this.isFreshWindowAllowed(account, modelKey)) return { reason: "fresh-window-blocked", detail: "fresh window is blocked by operator policy" };
+		if (policy === "hybrid") {
+			const snapshot = this.getTokenBucketSnapshot(account, now);
+			if (snapshot.enabled && snapshot.tokens < 1) {
+				return { reason: "token-bucket-empty", detail: "local token bucket is empty" };
+			}
+		}
+		return null;
+	}
+
+	private compareRoutingCandidate(
+		candidate: { priority: number; quota: number; tier: number; health: number; distance: number; tokenRatio: number; hybridScore: number },
+		best: { priority: number; quota: number; tier: number; health: number; distance: number; tokenRatio: number; hybridScore: number },
+		policy: Config["routingPolicy"],
+	): boolean {
+		if (policy === "hybrid") {
+			return (
+				candidate.hybridScore > best.hybridScore ||
+				(candidate.hybridScore === best.hybridScore && candidate.priority < best.priority) ||
+				(candidate.hybridScore === best.hybridScore && candidate.priority === best.priority && candidate.distance < best.distance)
+			);
+		}
+		if (policy === "tier-first") {
+			return (
+				candidate.tier < best.tier ||
+				(candidate.tier === best.tier && candidate.quota > best.quota) ||
+				(candidate.tier === best.tier && candidate.quota === best.quota && candidate.priority < best.priority) ||
+				(candidate.tier === best.tier && candidate.quota === best.quota && candidate.priority === best.priority && candidate.health > best.health) ||
+				(candidate.tier === best.tier && candidate.quota === best.quota && candidate.priority === best.priority && candidate.health === best.health && candidate.tokenRatio > best.tokenRatio) ||
+				(candidate.tier === best.tier && candidate.quota === best.quota && candidate.priority === best.priority && candidate.health === best.health && candidate.tokenRatio === best.tokenRatio && candidate.distance < best.distance)
+			);
+		}
+		if (policy === "quota-first") {
+			return (
+				candidate.quota > best.quota ||
+				(candidate.quota === best.quota && candidate.priority < best.priority) ||
+				(candidate.quota === best.quota && candidate.priority === best.priority && candidate.tier < best.tier) ||
+				(candidate.quota === best.quota && candidate.priority === best.priority && candidate.tier === best.tier && candidate.health > best.health) ||
+				(candidate.quota === best.quota && candidate.priority === best.priority && candidate.tier === best.tier && candidate.health === best.health && candidate.tokenRatio > best.tokenRatio) ||
+				(candidate.quota === best.quota && candidate.priority === best.priority && candidate.tier === best.tier && candidate.health === best.health && candidate.tokenRatio === best.tokenRatio && candidate.distance < best.distance)
+			);
+		}
+		return (
+			candidate.priority < best.priority ||
+			(candidate.priority === best.priority && candidate.quota > best.quota) ||
+			(candidate.priority === best.priority && candidate.quota === best.quota && candidate.tier < best.tier) ||
+			(candidate.priority === best.priority && candidate.quota === best.quota && candidate.tier === best.tier && candidate.health > best.health) ||
+			(candidate.priority === best.priority && candidate.quota === best.quota && candidate.tier === best.tier && candidate.health === best.health && candidate.tokenRatio > best.tokenRatio) ||
+			(candidate.priority === best.priority && candidate.quota === best.quota && candidate.tier === best.tier && candidate.health === best.health && candidate.tokenRatio === best.tokenRatio && candidate.distance < best.distance)
+		);
+	}
+
+	private calculateHybridScore(
+		priority: number,
+		quota: number,
+		tier: number,
+		health: number,
+		tokenRatio: number,
+		distance: number,
+	): number {
+		const timerScore = (4 - priority) * 35;
+		const quotaScore = Math.max(0, quota) * 0.7;
+		const tierScore = Math.max(0, 3 - tier) * 18;
+		const healthScore = Math.max(0, Math.min(1, health)) * 25;
+		const tokenScore = Math.max(0, Math.min(1, tokenRatio)) * 20;
+		const lruScore = Math.max(0, 10 - distance);
+		return Number((timerScore + quotaScore + tierScore + healthScore + tokenScore + lruScore).toFixed(3));
+	}
+
+	private buildRoutingDiagnostics(modelKey: string, now: number): RoutingModelDiagnostics {
+		const policy = this.config.routingPolicy || "timer-first";
+		let selectedEmail: string | null = null;
+		let selectedScore = -Infinity;
+		let selectedMetrics: { priority: number; quota: number; tier: number; health: number; distance: number; tokenRatio: number; hybridScore: number } | null = null;
+		const diagnostics: RoutingAccountDiagnostic[] = [];
+
+		for (let i = 0; i < this.accounts.length; i++) {
+			const account = this.accounts[i];
+			const activeForModels: string[] = [];
+			for (const [model, mState] of this.modelState.entries()) {
+				if (this.accounts[mState.activeAccountIndex] === account && this.isRoutableForModel(account, model, now)) activeForModels.push(model);
+			}
+			const status = this.getAccountStatusForUi(account, now, activeForModels);
+			const rejection = this.getRoutingRejectionForModel(account, modelKey, now, policy);
+			const snapshot = this.getTokenBucketSnapshot(account, now);
+			const priority = rejection ? null : this.getModelTimerPriority(account, modelKey);
+			const quota = rejection ? null : this.getModelQuota(account, modelKey);
+			const tierRank = this.getTierRank(account);
+			const distance = i + 1;
+			const tokenRatio = snapshot.capacity > 0 ? snapshot.tokens / snapshot.capacity : 0;
+			const hybridScore = rejection || priority === null || quota === null
+				? null
+				: this.calculateHybridScore(priority, quota, tierRank, account.healthScore, tokenRatio, distance);
+
+			diagnostics.push({
+				email: account.config.email,
+				label: account.config.label || account.config.email,
+				status,
+				score: hybridScore,
+				timerPriority: priority,
+				quota,
+				tier: account.config.tier || "unknown",
+				healthScore: account.healthScore,
+				distance: rejection ? null : distance,
+				tokenBucket: snapshot,
+				rejectedReason: rejection?.reason ?? null,
+				rejectedDetail: rejection?.detail ?? null,
+			});
+
+			if (rejection || priority === null || quota === null || hybridScore === null) continue;
+			const metrics = { priority, quota, tier: tierRank, health: account.healthScore, distance, tokenRatio, hybridScore };
+			if (!selectedMetrics || this.compareRoutingCandidate(metrics, selectedMetrics, policy)) {
+				selectedMetrics = metrics;
+				selectedScore = hybridScore;
+				selectedEmail = account.config.email;
+			}
+		}
+
+		const availableCandidates = diagnostics.filter((entry) => !entry.rejectedReason).length;
+		const rejectedCandidates = diagnostics.length - availableCandidates;
+		let reason = selectedEmail
+			? `Best route is ${selectedEmail} using ${policy}.`
+			: "No routable account is available for this model.";
+		if (!selectedEmail) {
+			const reasons = diagnostics
+				.filter((entry) => entry.rejectedReason)
+				.map((entry) => entry.rejectedDetail || entry.rejectedReason)
+				.slice(0, 3);
+			if (reasons.length > 0) reason += ` ${reasons.join("; ")}.`;
+		} else if (policy === "hybrid") {
+			reason = `Best route is ${selectedEmail} using hybrid score ${selectedScore.toFixed(1)}.`;
+		}
+
+		return {
+			modelKey,
+			policy,
+			selectedEmail,
+			reason,
+			availableCandidates,
+			rejectedCandidates,
+			accounts: diagnostics,
+		};
+	}
+
 	// =========================================================================
 	// Account Selection (per-model)
 	// =========================================================================
@@ -635,6 +898,16 @@ export class AccountRotator {
 					);
 					return this.rotateModelForRequest(modelKey);
 				}
+				if ((this.config.routingPolicy || "timer-first") === "hybrid") {
+					const tokenSnapshot = this.getTokenBucketSnapshot(current, now);
+					if (tokenSnapshot.enabled && tokenSnapshot.tokens < 1) {
+						this.log(
+							`${current.config.label || current.config.email} [${modelKey}]: local token bucket is empty, rotating to another candidate`,
+							"warn",
+						);
+						return this.rotateModelForRequest(modelKey, now, idx);
+					}
+				}
 			}
 			this.startRequest(current, modelKey ?? undefined);
 			try {
@@ -642,6 +915,7 @@ export class AccountRotator {
 				if (modelKey) this.countModelAssignment(modelKey);
 				return current;
 			} catch (err) {
+				this.refundTokenBucket(current, Date.now());
 				this.finishRequest(current, modelKey ?? undefined);
 				throw err;
 			}
@@ -680,6 +954,7 @@ export class AccountRotator {
 				await this.ensureValidToken(best);
 				return best;
 			} catch (err) {
+				this.refundTokenBucket(best, Date.now());
 				this.finishRequest(best, modelKey);
 				throw err;
 			}
@@ -739,6 +1014,7 @@ export class AccountRotator {
 				await this.ensureValidToken(best);
 				return best;
 			} catch (err) {
+				this.refundTokenBucket(best, Date.now());
 				this.finishRequest(best);
 				throw err;
 			}
@@ -958,9 +1234,29 @@ export class AccountRotator {
 		}
 	}
 
+	private getTierRank(account: AccountRuntime): number {
+		const tier = account.config.tier || "unknown";
+		if (tier === "ultra") return 0;
+		if (tier === "pro") return 1;
+		if (tier === "free") return 2;
+		return 3;
+	}
+
+	private refreshHealthScores(): void {
+		for (const account of this.accounts) {
+			const quotaAverage = account.quota.length > 0
+				? account.quota.reduce((sum, quota) => sum + quota.percentRemaining, 0) / account.quota.length
+				: 50;
+			const errorPenalty = Math.min(0.5, account.consecutiveErrors * 0.1);
+			const cooldownPenalty = Object.keys(account.cooldownsByModel).length > 0 ? 0.1 : 0;
+			const availabilityPenalty = account.flagged ? 1 : account.disabled ? 0.75 : 0;
+			account.healthScore = Math.max(0, Math.min(1, quotaAverage / 100 - errorPenalty - cooldownPenalty - availabilityPenalty));
+		}
+	}
+
 	private saveTokenUsage(): void {
 		try {
-			writeFileSync(TOKENS_FILE, JSON.stringify(this.tokenBuckets, null, 2), "utf-8");
+			writeJsonFileAtomic(TOKENS_FILE, this.tokenBuckets);
 		} catch { /* best effort */ }
 	}
 
@@ -1140,6 +1436,50 @@ export class AccountRotator {
 		return true;
 	}
 
+	disableAccount(email: string): boolean {
+		const account = this.accounts.find((a) => a.config.email === email);
+		if (!account) return false;
+		account.disabled = true;
+		account.lastError = "Disabled by operator";
+		this.saveState();
+		this.log(`${email}: disabled by operator`, "warn");
+		return true;
+	}
+
+	quarantineAccount(email: string, reason = "Quarantined by operator"): boolean {
+		const account = this.accounts.find((a) => a.config.email === email);
+		if (!account) return false;
+		account.flagged = true;
+		account.lastError = reason;
+		this.saveState();
+		this.log(`${email}: quarantined by operator`, "warn");
+		return true;
+	}
+
+	restoreAccount(email: string): boolean {
+		const account = this.accounts.find((a) => a.config.email === email);
+		if (!account) return false;
+		account.disabled = false;
+		account.flagged = false;
+		account.consecutiveErrors = 0;
+		account.lastError = null;
+		this.saveState();
+		this.log(`${email}: restored by operator`, "warn");
+		return true;
+	}
+
+	updateAccountMetadata(email: string, patch: Partial<AccountConfig>): boolean {
+		const account = this.accounts.find((a) => a.config.email === email);
+		if (!account) return false;
+		account.config = { ...account.config, ...patch };
+		const existing = this.config.accounts.find((entry) => entry.email === email);
+		if (existing) Object.assign(existing, patch);
+		saveAccountsConfig(this.config);
+		this.saveState();
+		this.log(`${email}: metadata updated by operator`, "warn");
+		return true;
+	}
+
 	setAllowFreshWindowStarts(enabled: boolean): boolean {
 		if (this.allowFreshWindowStarts === enabled) return false;
 		this.allowFreshWindowStarts = enabled;
@@ -1299,6 +1639,7 @@ export class AccountRotator {
 		const key = modelKey ?? "__default__";
 		account.inFlightByModel[key] = (account.inFlightByModel[key] ?? 0) + 1;
 		this.recalculateInFlightRequests(account);
+		this.consumeTokenBucket(account, Date.now());
 	}
 
 	finishRequest(account: AccountRuntime, modelKey?: string): void {
@@ -1316,6 +1657,10 @@ export class AccountRotator {
 		if (!this.isAvailableForModel(account, modelKey, now)) return false;
 		if (this.getModelQuota(account, modelKey) === 0) return false;
 		if (!this.isFreshWindowAllowed(account, modelKey)) return false;
+		if ((this.config.routingPolicy || "timer-first") === "hybrid") {
+			const tokenSnapshot = this.getTokenBucketSnapshot(account, now);
+			if (tokenSnapshot.enabled && tokenSnapshot.tokens < 1) return false;
+		}
 		return true;
 	}
 
@@ -1332,6 +1677,12 @@ export class AccountRotator {
 			if (cooldown > now) retryTimes.push(cooldown);
 			const projectBreaker = this.projectModelBreakers[projectModelKey(account.config.projectId, modelKey)] ?? 0;
 			if (projectBreaker > now) retryTimes.push(projectBreaker);
+			if ((this.config.routingPolicy || "timer-first") === "hybrid") {
+				const tokenSnapshot = this.getTokenBucketSnapshot(account, now);
+				if (tokenSnapshot.enabled && tokenSnapshot.tokens < 1 && tokenSnapshot.nextRefillInMs > 0) {
+					retryTimes.push(now + tokenSnapshot.nextRefillInMs);
+				}
+			}
 		}
 		if (retryTimes.length === 0) return 0;
 		return Math.max(1000, Math.min(...retryTimes) - now);
@@ -1339,6 +1690,7 @@ export class AccountRotator {
 
 	getStatus(): StatusResponse {
 		const now = Date.now();
+		this.refreshHealthScores();
 
 		// Build per-model active account map from accounts that can actually serve now.
 		const activeAccounts: Record<string, string> = {};
@@ -1357,24 +1709,8 @@ export class AccountRotator {
 					activeForModels.push(model);
 				}
 			}
-
-			let status: AccountStatus["status"];
-			const inCooldownModels = Object.entries(a.cooldownsByModel).filter(([_, ts]) => ts > now);
-			const allModelsInCooldown = inCooldownModels.length > 0 && inCooldownModels.length >= Object.keys(a.cooldownsByModel).length; // rough heuristic
-			
-			if (a.flagged) {
-				status = "flagged";
-			} else if (a.disabled) {
-				status = "disabled";
-			} else if (a.consecutiveErrors > 0 && !a.disabled) {
-				status = "error";
-			} else if (inCooldownModels.length > 0) {
-				status = "cooldown";
-			} else if (activeForModels.length > 0) {
-				status = "active";
-			} else {
-				status = "ready";
-			}
+			const status = this.getAccountStatusForUi(a, now, activeForModels);
+			const tokenBucket = this.getTokenBucketSnapshot(a, now);
 
 			return {
 				email: a.config.email,
@@ -1386,18 +1722,39 @@ export class AccountRotator {
 				cooldownsByModel: a.cooldownsByModel,
 				lastUsed: a.lastUsed,
 				lastError: a.lastError,
-					consecutiveErrors: a.consecutiveErrors,
-					hasValidToken: !!(a.accessToken && a.tokenExpires > now),
-					quota: a.quota,
-					inFlightRequests: a.inFlightRequests,
-					inFlightByModel: a.inFlightByModel,
-					proDetected: a.config.type === "pro",
+				consecutiveErrors: a.consecutiveErrors,
+				hasValidToken: !!(a.accessToken && a.tokenExpires > now),
+				quota: a.quota,
+				inFlightRequests: a.inFlightRequests,
+				inFlightByModel: a.inFlightByModel,
+				proDetected: a.config.type === "pro",
+				tier: a.config.tier || "unknown",
+				healthScore: a.healthScore,
+				tokenBucket,
 				allowFreshWindowStartsOverride: a.allowFreshWindowStartsOverride,
 				effectiveFreshWindowStartsAllowed: this.isEffectiveFreshWindowAllowed(a),
 			};
 		});
 
 		const routingHealth = this.getRoutingHealth(now, accounts);
+		const knownModels = new Set<string>();
+		for (const model of this.modelState.keys()) knownModels.add(model);
+		for (const model of Object.keys(this.modelBreakers)) knownModels.add(model);
+		for (const key of Object.keys(this.projectModelBreakers)) {
+			const model = key.split("::")[1];
+			if (model) knownModels.add(model);
+		}
+		for (const account of this.accounts) {
+			for (const quota of account.quota) knownModels.add(quota.modelKey);
+			for (const cooldownModel of Object.keys(account.cooldownsByModel)) {
+				if (cooldownModel !== "__default__") knownModels.add(cooldownModel);
+			}
+		}
+		const routingDiagnostics: Record<string, RoutingModelDiagnostics> = {};
+		for (const modelKey of knownModels) {
+			routingDiagnostics[modelKey] = this.buildRoutingDiagnostics(modelKey, now);
+		}
+		this.routingDiagnostics = routingDiagnostics;
 
 		const updateInfo = getUpdateInfo();
 
@@ -1428,6 +1785,14 @@ export class AccountRotator {
 			operatorControls: {
 				allowFreshWindowStarts: this.allowFreshWindowStarts,
 			},
+			security: {
+				adminTokenConfigured: !!getConfiguredAdminToken(),
+				warning: getConfiguredAdminToken()
+					? null
+					: `Admin routes are exposed on ${this.config.bindHost}:${this.config.proxyPort} because PI_ROTATOR_ADMIN_TOKEN is not configured.`,
+				bindHost: this.config.bindHost || "0.0.0.0",
+			},
+			routingDiagnostics,
 			circuitBreakers: {
 				model: modelBreakersSummary,
 				project: projectBreakersSummary,
@@ -1441,6 +1806,54 @@ export class AccountRotator {
 			updateInfo,
 			notifications: getNotifications(),
 		};
+	}
+
+	getConfig(): Config {
+		return applyConfigDefaults(structuredClone(this.config));
+	}
+
+	replaceConfig(nextConfig: Config): void {
+		const normalized = applyConfigDefaults(nextConfig);
+		const previous = new Map(this.accounts.map((account) => [account.config.email, account]));
+		this.config = normalized;
+		this.accounts = normalized.accounts.map((config) => {
+			const existing = previous.get(config.email);
+			if (existing) {
+				return {
+					...existing,
+					config: { ...existing.config, ...config },
+				};
+			}
+			return {
+				config,
+				accessToken: null,
+				tokenExpires: 0,
+				requestsSinceRotation: 0,
+				totalRequests: 0,
+				cooldownsByModel: {},
+				quotaExhaustedAt: 0,
+				quota: [],
+				lastQuotaPoll: 0,
+				lastUsed: 0,
+				lastError: null,
+				consecutiveErrors: 0,
+				disabled: false,
+				flagged: false,
+				inFlightRequests: 0,
+				inFlightByModel: {},
+				allowFreshWindowStartsOverride: false,
+				dailyRequestCount: 0,
+				dailyRequestDay: currentUtcDay(),
+				healthScore: 1,
+				tokenBucket: {
+					tokens: Math.max(0, Math.min(this.config.tokenBucketInitialTokens ?? 50, this.config.tokenBucketMaxTokens ?? 50)),
+					lastRefillAt: Date.now(),
+				},
+			};
+		});
+		saveAccountsConfig(this.config);
+		this.saveState();
+		this.refreshHealthScores();
 	}
 
 	getAccountCount(): number {
@@ -1491,7 +1904,7 @@ export class AccountRotator {
 		const existingIndex = this.accounts.findIndex((account) => account.config.email === accountConfig.email);
 		if (existingIndex >= 0) {
 			const existing = this.accounts[existingIndex];
-			existing.config = { ...existing.config, ...accountConfig };
+			existing.config = { ...existing.config, ...accountConfig, tier: accountConfig.tier || existing.config.tier || "unknown" };
 			existing.disabled = false;
 			existing.flagged = false;
 			existing.lastError = null;
@@ -1502,7 +1915,7 @@ export class AccountRotator {
 			this.log(`${accountConfig.email}: account updated via hosted login`);
 		} else {
 			const runtime: AccountRuntime = {
-				config: accountConfig,
+				config: { ...accountConfig, tier: accountConfig.tier || "unknown" },
 				accessToken: null,
 				tokenExpires: 0,
 				requestsSinceRotation: 0,
@@ -1521,6 +1934,11 @@ export class AccountRotator {
 				allowFreshWindowStartsOverride: false,
 				dailyRequestCount: 0,
 				dailyRequestDay: currentUtcDay(),
+				healthScore: 1,
+				tokenBucket: {
+					tokens: Math.max(0, Math.min(this.config.tokenBucketInitialTokens ?? 50, this.config.tokenBucketMaxTokens ?? 50)),
+					lastRefillAt: Date.now(),
+				},
 			};
 			this.accounts.push(runtime);
 			this.config.accounts.push(runtime.config);

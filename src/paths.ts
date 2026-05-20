@@ -34,3 +34,7 @@ export function getAccountsPath(): string {
 export function getStatePath(): string {
 	return join(getConfigDir(), "state.json");
 }
+
+export function getTokenUsagePath(): string {
+	return join(getConfigDir(), "token-usage.json");
+}

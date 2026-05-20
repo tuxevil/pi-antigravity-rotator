@@ -1,6 +1,22 @@
 // Account types and configuration
 
 export type AccountType = "pro" | "free";
+export type AccountTier = "ultra" | "pro" | "free" | "unknown";
+export type RoutingPolicy = "timer-first" | "tier-first" | "quota-first" | "hybrid";
+
+export type RoutingRejectionReason =
+	| "disabled"
+	| "flagged"
+	| "account-concurrency"
+	| "project-concurrency"
+	| "cooldown"
+	| "fresh-window-blocked"
+	| "quota-zero"
+	| "project-breaker"
+	| "model-breaker"
+	| "daily-account-stop"
+	| "daily-project-stop"
+	| "token-bucket-empty";
 
 export interface AccountConfig {
 	email: string;
@@ -11,12 +27,16 @@ export interface AccountConfig {
 	label?: string;
 	// Optional - pro/free is detected dynamically from quota API reset times
 	type?: AccountType;
+	tier?: AccountTier;
+	familyManager?: boolean;
 }
 
 export interface Config {
 	accounts: AccountConfig[];
 	requestsPerRotation: number;
 	proxyPort: number;
+	bindHost?: string;
+	routingPolicy?: RoutingPolicy;
 	// Rotate when a model's quota drops by this many percentage points (0 = disabled, use request count)
 	rotateOnQuotaDrop: number;
 	// How often to poll quota (ms). Default: 5min
@@ -46,6 +66,10 @@ export interface Config {
 	protectivePauseMs?: number;
 	// Use request-count rotation only before quota data is available. Default: true.
 	useRequestCountRotationWhenQuotaUnknownOnly?: boolean;
+	tokenBucketEnabled?: boolean;
+	tokenBucketMaxTokens?: number;
+	tokenBucketRefillPerMinute?: number;
+	tokenBucketInitialTokens?: number;
 }
 
 // Quota API response from Google
@@ -172,6 +196,11 @@ export interface AccountRuntime {
 	allowFreshWindowStartsOverride: boolean;
 	dailyRequestCount: number;
 	dailyRequestDay: string;
+	healthScore: number;
+	tokenBucket: {
+		tokens: number;
+		lastRefillAt: number;
+	};
 }
 
 // Per-model rotation state tracked by the rotator
@@ -252,6 +281,12 @@ export interface StatusResponse {
 	operatorControls: {
 		allowFreshWindowStarts: boolean;
 	};
+	security: {
+		adminTokenConfigured: boolean;
+		warning: string | null;
+		bindHost: string;
+	};
+	routingDiagnostics: Record<string, RoutingModelDiagnostics>;
 	circuitBreakers: {
 		model: Record<string, { until: number; remainingMs: number }>;
 		project: Record<string, { until: number; remainingMs: number }>;
@@ -295,8 +330,46 @@ export interface AccountStatus {
 	inFlightByModel: Record<string, number>;
 	// Pro family sharing
 	proDetected: boolean;
+	tier: AccountTier;
+	healthScore: number;
+	tokenBucket: {
+		enabled: boolean;
+		tokens: number;
+		capacity: number;
+		nextRefillInMs: number;
+	};
 	allowFreshWindowStartsOverride: boolean;
 	effectiveFreshWindowStartsAllowed: boolean;
+}
+
+export interface RoutingAccountDiagnostic {
+	email: string;
+	label: string;
+	status: AccountStatus["status"];
+	score: number | null;
+	timerPriority: number | null;
+	quota: number | null;
+	tier: AccountTier;
+	healthScore: number;
+	distance: number | null;
+	tokenBucket: {
+		enabled: boolean;
+		tokens: number;
+		capacity: number;
+		nextRefillInMs: number;
+	};
+	rejectedReason: RoutingRejectionReason | null;
+	rejectedDetail: string | null;
+}
+
+export interface RoutingModelDiagnostics {
+	modelKey: string;
+	policy: RoutingPolicy;
+	selectedEmail: string | null;
+	reason: string;
+	availableCandidates: number;
+	rejectedCandidates: number;
+	accounts: RoutingAccountDiagnostic[];
 }
 
 

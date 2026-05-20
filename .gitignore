@@ -2,6 +2,8 @@ node_modules/
 dist/
 accounts.json
 state.json
+backups/
+*.bak
 *.log
 cheatsheet.md
 docs/request-safety/
@@ -9,3 +11,4 @@ token-usage.json
 .telemetry-id
 .first-boot
 .star-prompted
+docker-data/

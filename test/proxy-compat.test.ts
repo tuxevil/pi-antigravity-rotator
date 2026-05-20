@@ -66,6 +66,11 @@ function createAccount(): AccountRuntime {
 		allowFreshWindowStartsOverride: false,
 		dailyRequestCount: 0,
 		dailyRequestDay: "2026-05-16",
+		healthScore: 1,
+		tokenBucket: {
+			tokens: 50,
+			lastRefillAt: Date.now(),
+		},
 	};
 }
 

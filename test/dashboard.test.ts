@@ -42,4 +42,17 @@ describe("dashboard", () => {
 		assert.match(html, /PII: Visible/);
 		assert.match(html, /function toggleMask\(\)/);
 	});
+
+	it("includes the v2 config editor controls", () => {
+		const html = renderDashboard();
+		assert.match(html, /Config Editor/);
+		assert.match(html, /configEditorModal/);
+		assert.match(html, /routingInspectorModal/);
+		assert.match(html, /Routing Inspector/);
+		assert.match(html, /\/api\/config/);
+		assert.match(html, /openConfigEditorModal/);
+		assert.match(html, /openRoutingInspectorModal/);
+		assert.match(html, /saveConfigEditor/);
+		assert.match(html, /Attention Needed/);
+	});
 });

@@ -12,6 +12,7 @@ const validAccount = {
 	refreshToken: "refresh-token",
 	projectId: "project-id",
 	label: "user",
+	tier: "unknown",
 };
 
 describe("validators", () => {
@@ -33,12 +34,18 @@ describe("validators", () => {
 	it("accepts a valid config with optional fields", () => {
 		const result = validateConfig({
 			proxyPort: 51200,
+			bindHost: "127.0.0.1",
+			routingPolicy: "hybrid",
 			requestsPerRotation: 5,
 			rotateOnQuotaDrop: 0,
 			quotaPollIntervalMs: 300_000,
 			maxConcurrentRequestsPerAccount: 1,
 			protectivePauseMs: 0,
 			useRequestCountRotationWhenQuotaUnknownOnly: true,
+			tokenBucketEnabled: true,
+			tokenBucketMaxTokens: 50,
+			tokenBucketRefillPerMinute: 6,
+			tokenBucketInitialTokens: 20,
 			accounts: [validAccount],
 		});
 		assert.equal(result.ok, true);

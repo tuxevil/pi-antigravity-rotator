@@ -1,6 +1,39 @@
+![Pi Antigravity Rotator logo](./pi-antigravity-rotator_logo.png)
+
 # Pi Antigravity Rotator
 
 Multi-account rotation proxy for Google Antigravity. Distributes API usage across multiple Google accounts with per-model routing, real-time quota tracking, automatic token management, and infringement detection.
+
+> **⚠️ WARNING:** Using this proxy may put connected Google accounts at risk of Terms of Service enforcement, including restriction, suspension, or permanent bans. Use at your own risk.
+
+<details>
+<summary><strong>⚠️ Terms of Service Warning — Read Before Installing</strong></summary>
+
+> [!CAUTION]
+> This is an unofficial tool and is not endorsed by Google. Routing traffic through this proxy may violate Google's Terms of Service or trigger automated abuse or policy enforcement systems.
+>
+> **By using this proxy, you acknowledge:**
+> - Your account may be restricted, suspended, shadow-banned, or permanently banned
+> - Multi-account rotation and proxying can increase account risk compared to normal interactive usage
+> - You assume all responsibility for the accounts and traffic routed through this tool
+>
+> **Recommendation:** Do not use your primary Google account. Prefer disposable or lower-risk accounts, and keep account exposure conservative.
+
+</details>
+
+## Support Me
+
+If this tool has helped you optimize your API usage and save costs, consider supporting its development!
+
+<a href="https://ko-fi.com/tuxevil" target="_blank"><img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" height="36" alt="Buy Me a Coffee at ko-fi.com" /></a>
+
+## v2.0 Highlights
+
+- Full dashboard config editor with import/export.
+- Official Docker and compose deployment.
+- `pi-antigravity-rotator doctor` for config/state validation.
+- Optional account `tier` metadata and runtime `healthScore`.
+- Strong security warnings when admin routes are open without `PI_ROTATOR_ADMIN_TOKEN`.
 
 ## Features
 
@@ -49,6 +82,14 @@ npm run login
 npm start
 ```
 
+### Option C: Docker
+
+```bash
+docker compose up -d
+```
+
+The included compose file persists runtime data under `./docker-data` and sets `PI_ROTATOR_DIR=/data`.
+
 ## Adding Accounts
 
 Run `npm run login` once per Google account:
@@ -89,6 +130,8 @@ If login fails at project discovery:
 
 After starting the proxy, open `http://localhost:51200/dashboard` or `http://<your-server-ip>:51200/dashboard` from any machine on the same network (the proxy binds to `0.0.0.0`).
 
+If `PI_ROTATOR_ADMIN_TOKEN` is unset, dashboard and `/api/*` access remains open for backwards compatibility. v2.0 now surfaces loud warnings about that state in startup logs, `/api/status`, and the dashboard itself.
+
 The dashboard shows:
 
 - **Top Status & Controls** -- Real-time routing state, uptime, requests, and PII masking toggle.
@@ -98,7 +141,8 @@ The dashboard shows:
 - **Quota Forecast** -- Predictive modeling showing when each model's quota will run out based on the current requests/hour burn rate.
 - **Searchable Request Log** -- Live feed of the last 200 requests with exact timestamps, models, masked accounts, status codes, and latency.
 - **Account Cards** -- Sorted by total quota. Shows status (`active`, `ready`, `cooldown`, `flagged`, `disabled`), quota bars with timers, and precise error messages.
-- **Operator Panels** -- "Attention Needed" summaries for quarantined accounts and a real-time event feed of rotator actions.
+- **Operator Panels** -- "Attention Needed" summaries for quarantined accounts, unroutable models, token-bucket pressure, and a real-time event feed of rotator actions.
+- **Routing Inspector** -- On-demand modal showing the active routing policy, candidate scores, local token bucket state, and rejection reasons per model.
 
 ![Dashboard](dashboard.png)
 
@@ -220,6 +264,8 @@ export PI_ROTATOR_DIR=/path/to/config
 export PI_ROTATOR_QUOTA_USER_AGENT="antigravity/1.107.0 darwin/arm64"
 # Optional: require this token for dashboard/API access. If unset, legacy open access is preserved.
 export PI_ROTATOR_ADMIN_TOKEN="change-me"
+# Optional: bind the proxy to a safer local-only interface.
+export PI_ROTATOR_BIND_HOST="127.0.0.1"
 # Optional: max accepted proxy request body size in bytes. Default: 26214400 (25 MiB).
 export PI_ROTATOR_MAX_BODY_BYTES=26214400
 # Optional: log verbosity. One of debug, info, warn, error, silent. Default: info.
@@ -230,6 +276,24 @@ export PI_AI_ANTIGRAVITY_VERSION=1.107.0
 # Or CLI flag
 pi-antigravity-rotator start --config-dir /path/to/config
 ```
+
+New v2.0 config fields:
+
+- `bindHost`: interface to bind on. Default: `0.0.0.0`.
+- `routingPolicy`: current default is `timer-first`. Optional values now include `tier-first`, `quota-first`, and `hybrid`.
+- `tokenBucketEnabled`: enables the local per-account request bucket used by `hybrid`. Default: `false`.
+- `tokenBucketMaxTokens`: bucket capacity when enabled. Default: `50`.
+- `tokenBucketRefillPerMinute`: refill speed when enabled. Default: `6`.
+- `tokenBucketInitialTokens`: startup fill level when enabled. Default: `50`.
+- `accounts[].tier`: optional `ultra`, `pro`, `free`, or `unknown`.
+
+## Doctor
+
+```bash
+pi-antigravity-rotator doctor
+```
+
+This validates `accounts.json`, checks local state files, lists backups, and warns when admin auth is not configured.
 
 `accounts.json` is created automatically by the login command.
 Login now fails if Google does not return a project ID. No shared fallback.
@@ -463,9 +527,3 @@ export PI_ROTATOR_TELEMETRY=off
 ```
 
 Or use any of: `PI_ROTATOR_TELEMETRY=false`, `PI_ROTATOR_TELEMETRY=0`.
-
-## Support Me
-
-If this tool has helped you optimize your API usage and save costs, consider supporting its development!
-
-<a href="https://ko-fi.com/tuxevil" target="_blank"><img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" height="36" alt="Buy Me a Coffee at ko-fi.com" /></a>

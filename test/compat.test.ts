@@ -151,6 +151,19 @@ describe("compat adapters", () => {
 		assert.match(JSON.stringify(body.request), /"data":"def456"/);
 	});
 
+	it("strips cache_control fields from OpenAI content blocks", () => {
+		const body = openAIToAntigravityBody({
+			model: "gemini-3-flash",
+			messages: [{
+				role: "user",
+				content: [
+					{ type: "text", text: "hello", cache_control: { type: "ephemeral" } } as never,
+				],
+			}],
+		});
+		assert.doesNotMatch(JSON.stringify(body.request), /cache_control/);
+	});
+
 	it("parses Antigravity SSE into a compat completion", () => {
 		const parsed = parseAntigravitySse([
 			'data: {"response":{"responseId":"abc","candidates":[{"content":{"parts":[{"text":"hel"}]}}]}}',
@@ -161,6 +174,13 @@ describe("compat adapters", () => {
 		assert.equal(parsed.inputTokens, 3);
 		assert.equal(parsed.outputTokens, 2);
 		assert.equal(parsed.responseId, "abc");
+	});
+
+	it("handles empty SSE payloads without crashing", () => {
+		const parsed = parseAntigravitySse("");
+		assert.equal(parsed.text, "");
+		assert.equal(parsed.inputTokens, 0);
+		assert.equal(parsed.outputTokens, 0);
 	});
 
 	it("accepts model role in messages", () => {

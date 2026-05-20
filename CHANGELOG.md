@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added
+- **Hybrid Routing Policy**: Added optional `routingPolicy: "hybrid"` with weighted selection across timer priority, quota, tier, health, local token bucket state, and distance.
+- **Routing Inspector**: Added a dashboard modal that explains the currently selected route, candidate scores, and why each account was excluded for a model.
+- **Rate Limit Parser Module**: Extracted robust retry parsing into `src/rate-limit-parser.ts` with support for `Retry-After`, `x-ratelimit-reset`, `quotaResetDelay`, `quotaResetTimeStamp`, `retryDelay`, and duration strings.
+
+### Changed
+- **Token Bucket Guardrail**: Added optional per-account token buckets to slow repeated reuse of the same account without changing the default v2.0 routing behavior.
+- **Attention Needed Coverage**: The dashboard now surfaces unroutable models and token-bucket exhaustion alongside existing security, cooldown, disabled, flagged, and error alerts.
+- **Compat Hardening**: Added coverage for `cache_control` stripping, schema forwarding, missing-signature tool history, and empty SSE parsing.
+
+## [2.0.0] - 2026-05-20
+
+### Added
+- **Admin Config APIs**: Added `GET /api/config`, `PUT /api/config`, `GET /api/config/export`, and `POST /api/config/import` for validated runtime config management.
+- **Dashboard Config Editor**: Added an embedded JSON editor with load/save/import/export controls and hosted login access.
+- **Docker Deployment**: Added `Dockerfile`, `docker-compose.yml`, and `.dockerignore` for headless deployments with persistent `/data`.
+- **Doctor Command**: Added `pi-antigravity-rotator doctor` to validate config, inspect backups, and report missing admin auth.
+- **Gemini-Compatible Discovery**: Added `/v1beta/models` and a minimal Gemini-style `generateContent` route family.
+
+### Changed
+- **Version 2.0**: Bumped package version to `2.0.0` on branch `v2.0`.
+- **Persistence Hardening**: Config, state, and token usage now write atomically with timestamped backups.
+- **Routing Metadata**: Added optional account `tier` plus runtime `healthScore` as timer-first tie-breakers.
+- **Security Visibility**: Startup logs, `/api/status`, and the dashboard now warn when `PI_ROTATOR_ADMIN_TOKEN` is missing.
+
+### Migration
+- Existing `accounts.json` stays compatible. New defaults are `bindHost: "0.0.0.0"`, `routingPolicy: "timer-first"`, and `accounts[].tier: "unknown"`.
+
 ## [1.14.0] - 2026-05-19
 
 ### Added

@@ -1,16 +1,18 @@
 // Entry point - loads config and starts the proxy
 
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./types.js";
 import { AccountRotator } from "./rotator.js";
 import { startProxy } from "./proxy.js";
-import { getAccountsPath, getConfigDir } from "./paths.js";
-import { formatValidationErrors, validateConfig } from "./validators.js";
+import { getConfigDir } from "./paths.js";
 import { TelemetryReporter, setActiveReporter } from "./telemetry.js";
+import { loadConfigFromDisk } from "./account-store.js";
+import { getConfiguredAdminToken } from "./admin-auth.js";
+import { writeTextFileAtomic } from "./storage.js";
 
 function loadConfig(): Config {
-	const configPath = getAccountsPath();
+	const configPath = join(getConfigDir(), "accounts.json");
 	if (!existsSync(configPath)) {
 		console.error(`Config not found: ${configPath}`);
 		console.error("Run 'pi-antigravity-rotator login' to add your first account.");
@@ -18,41 +20,12 @@ function loadConfig(): Config {
 	}
 
 	try {
-		const raw = readFileSync(configPath, "utf-8");
-		const parsed: unknown = JSON.parse(raw);
-		const validation = validateConfig(parsed);
-		if (!validation.ok || !validation.value) {
-			console.error(`Invalid config ${configPath}: ${formatValidationErrors(validation.errors)}`);
-			process.exit(1);
-		}
-		const config: Config = validation.value;
+		const config = loadConfigFromDisk();
 
 		if (!config.accounts || config.accounts.length === 0) {
 			console.error("No accounts configured. Run 'pi-antigravity-rotator login' to add one.");
 			process.exit(1);
 		}
-
-		// Set defaults
-		config.proxyPort = config.proxyPort || 51200;
-		config.requestsPerRotation = config.requestsPerRotation || 5;
-		config.rotateOnQuotaDrop = config.rotateOnQuotaDrop ?? 20;
-		config.quotaPollIntervalMs = config.quotaPollIntervalMs || 300_000;
-		config.maxConcurrentRequestsPerAccount = config.maxConcurrentRequestsPerAccount ?? 1;
-		config.maxConcurrentRequestsPerProjectModel = config.maxConcurrentRequestsPerProjectModel ?? 1;
-		config.projectCircuitBreaker429Threshold = config.projectCircuitBreaker429Threshold ?? 3;
-		config.projectCircuitBreakerWindowMs = config.projectCircuitBreakerWindowMs ?? 10 * 60 * 1000;
-		config.projectCircuitBreakerCooldownMs = config.projectCircuitBreakerCooldownMs ?? 60 * 60 * 1000;
-		config.modelCircuitBreaker429Threshold = config.modelCircuitBreaker429Threshold ?? 3;
-		config.modelCircuitBreakerCooldownMs = config.modelCircuitBreakerCooldownMs ?? 6 * 60 * 60 * 1000;
-		config.dailyAccountSlowRequests = config.dailyAccountSlowRequests ?? 250;
-		config.dailyAccountStopRequests = config.dailyAccountStopRequests ?? 350;
-		config.dailyProjectSlowRequests = config.dailyProjectSlowRequests ?? 900;
-		config.dailyProjectStopRequests = config.dailyProjectStopRequests ?? 1200;
-		config.slowModeJitterMinMs = config.slowModeJitterMinMs ?? 8_000;
-		config.slowModeJitterMaxMs = config.slowModeJitterMaxMs ?? 25_000;
-		config.protectivePauseMs = config.protectivePauseMs ?? 6 * 60 * 60 * 1000;
-		config.useRequestCountRotationWhenQuotaUnknownOnly =
-			config.useRequestCountRotationWhenQuotaUnknownOnly ?? true;
 
 		return config;
 	} catch (err) {
@@ -84,7 +57,7 @@ function maybeShowStarNudge(): void {
 	} else {
 		// First ever boot — record timestamp
 		firstBootMs = Date.now();
-		try { writeFileSync(firstBootPath, String(firstBootMs), "utf-8"); } catch { /* best effort */ }
+		try { writeTextFileAtomic(firstBootPath, String(firstBootMs)); } catch { /* best effort */ }
 		return; // too early, come back after 24h
 	}
 
@@ -98,7 +71,15 @@ function maybeShowStarNudge(): void {
 	console.log("  ╰──────────────────────────────────────────────────────────╯");
 	console.log();
 
-	try { writeFileSync(promptedPath, String(Date.now()), "utf-8"); } catch { /* best effort */ }
+	try { writeTextFileAtomic(promptedPath, String(Date.now())); } catch { /* best effort */ }
+}
+
+function maybeWarnAboutAdminExposure(config: Config): void {
+	if (getConfiguredAdminToken()) return;
+	console.warn("WARNING: PI_ROTATOR_ADMIN_TOKEN is not configured.");
+	console.warn(`WARNING: Dashboard and /api/* routes are open on ${config.bindHost}:${config.proxyPort}.`);
+	console.warn("WARNING: For local-only use, prefer bindHost=127.0.0.1 or set PI_ROTATOR_ADMIN_TOKEN.");
+	console.warn();
 }
 
 export function main(): void {
@@ -110,6 +91,8 @@ export function main(): void {
 	console.log(`Rotation: ${config.requestsPerRotation} requests / ${config.rotateOnQuotaDrop}% quota drop`);
 	console.log(`Quota poll: every ${Math.round((config.quotaPollIntervalMs || 300000) / 1000)}s`);
 	console.log(`Concurrency cap: ${config.maxConcurrentRequestsPerAccount} request/account, ${config.maxConcurrentRequestsPerProjectModel} request/project+model`);
+	console.log(`Bind host: ${config.bindHost}`);
+	console.log(`Routing policy: ${config.routingPolicy}`);
 	console.log(`Safety breaker: ${config.projectCircuitBreaker429Threshold} provider 429s / ${Math.round((config.projectCircuitBreakerWindowMs || 0) / 60000)}m pauses project+model for ${Math.round((config.projectCircuitBreakerCooldownMs || 0) / 60000)}m`);
 	console.log(`Protective pause: ${Math.round((config.protectivePauseMs || 0) / 3600000)}h after serious flag`);
 	console.log();
@@ -120,6 +103,7 @@ export function main(): void {
 	console.log();
 
 	maybeShowStarNudge();
+	maybeWarnAboutAdminExposure(config);
 
 	const rotator = new AccountRotator(config);
 
@@ -157,7 +141,7 @@ export function main(): void {
 	process.on("SIGINT", () => void shutdown());
 	process.on("SIGTERM", () => void shutdown());
 
-	startProxy(rotator, config.proxyPort);
+	startProxy(rotator, config.proxyPort, config.bindHost || "0.0.0.0");
 }
 
 // Direct execution

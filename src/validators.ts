@@ -39,6 +39,9 @@ export function validateAccountConfig(value: unknown, path = "account"): Validat
 	if (!isNonEmptyString(value.projectId)) errors.push(`${path}.projectId must be a non-empty string`);
 	if (value.label !== undefined && typeof value.label !== "string") errors.push(`${path}.label must be a string`);
 	if (value.type !== undefined && value.type !== "pro" && value.type !== "free") errors.push(`${path}.type must be "pro" or "free"`);
+	if (value.tier !== undefined && !["ultra", "pro", "free", "unknown"].includes(String(value.tier))) {
+		errors.push(`${path}.tier must be "ultra", "pro", "free", or "unknown"`);
+	}
 	if (value.familyManager !== undefined && typeof value.familyManager !== "boolean") errors.push(`${path}.familyManager must be a boolean`);
 
 	return errors.length > 0 ? fail(errors) : ok(value as unknown as AccountConfig);
@@ -58,6 +61,10 @@ export function validateConfig(value: unknown): ValidationResult<Config> {
 	}
 
 	if (value.proxyPort !== undefined && !isPositiveNumber(value.proxyPort)) errors.push("config.proxyPort must be a positive number");
+	if (value.bindHost !== undefined && !isNonEmptyString(value.bindHost)) errors.push("config.bindHost must be a non-empty string");
+	if (value.routingPolicy !== undefined && !["timer-first", "tier-first", "quota-first", "hybrid"].includes(String(value.routingPolicy))) {
+		errors.push('config.routingPolicy must be "timer-first", "tier-first", "quota-first", or "hybrid"');
+	}
 	if (value.requestsPerRotation !== undefined && !isPositiveNumber(value.requestsPerRotation)) errors.push("config.requestsPerRotation must be a positive number");
 	if (value.rotateOnQuotaDrop !== undefined && !isNonNegativeNumber(value.rotateOnQuotaDrop)) errors.push("config.rotateOnQuotaDrop must be a non-negative number");
 	if (value.quotaPollIntervalMs !== undefined && !isPositiveNumber(value.quotaPollIntervalMs)) errors.push("config.quotaPollIntervalMs must be a positive number");
@@ -78,6 +85,18 @@ export function validateConfig(value: unknown): ValidationResult<Config> {
 	if (value.protectivePauseMs !== undefined && !isNonNegativeNumber(value.protectivePauseMs)) errors.push("config.protectivePauseMs must be a non-negative number");
 	if (value.useRequestCountRotationWhenQuotaUnknownOnly !== undefined && typeof value.useRequestCountRotationWhenQuotaUnknownOnly !== "boolean") {
 		errors.push("config.useRequestCountRotationWhenQuotaUnknownOnly must be a boolean");
+	}
+	if (value.tokenBucketEnabled !== undefined && typeof value.tokenBucketEnabled !== "boolean") {
+		errors.push("config.tokenBucketEnabled must be a boolean");
+	}
+	if (value.tokenBucketMaxTokens !== undefined && !isPositiveNumber(value.tokenBucketMaxTokens)) {
+		errors.push("config.tokenBucketMaxTokens must be a positive number");
+	}
+	if (value.tokenBucketRefillPerMinute !== undefined && !isPositiveNumber(value.tokenBucketRefillPerMinute)) {
+		errors.push("config.tokenBucketRefillPerMinute must be a positive number");
+	}
+	if (value.tokenBucketInitialTokens !== undefined && !isNonNegativeNumber(value.tokenBucketInitialTokens)) {
+		errors.push("config.tokenBucketInitialTokens must be a non-negative number");
 	}
 
 	return errors.length > 0 ? fail(errors) : ok(value as unknown as Config);

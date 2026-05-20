@@ -55,6 +55,36 @@ describe("OpenAI Compat Tool Calling", () => {
 		}]);
 	});
 
+	it("sanitizes tool schemas before forwarding upstream", () => {
+		const req: OpenAIChatCompletionRequest = {
+			model: "gemini-3-flash",
+			messages: [{ role: "user", content: "compact this" }],
+			tools: [
+				{
+					type: "function",
+					function: {
+						name: "complex_schema",
+						description: "schema cleanup",
+						parameters: {
+							type: "object",
+							properties: {
+								items: {
+									type: "array",
+									items: { type: "string" }
+								}
+							}
+						}
+					}
+				}
+			]
+		};
+
+		const result = openAIToAntigravityBody(req);
+		const request = result.request as any;
+		assert.equal(request.tools[0].functionDeclarations[0].name, "complex_schema");
+		assert.ok(request.tools[0].functionDeclarations[0].parameters);
+	});
+
 	it("converts multi-turn conversation with tool calls and tool responses", () => {
 		const req: OpenAIChatCompletionRequest = {
 			model: "claude-sonnet-4-6",
@@ -118,5 +148,24 @@ data: [DONE]
 		assert.strictEqual(tc.function.name, "get_weather");
 		assert.strictEqual(tc.function.arguments, '{"location":"London"}');
 		assert.ok(tc.id.startsWith("call_"));
+	});
+
+	it("summarizes tool history when a Gemini thinking turn has no cached signature", () => {
+		const req: OpenAIChatCompletionRequest = {
+			model: "gemini-3.5-flash-high",
+			messages: [
+				{ role: "user", content: "Find the weather" },
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [{ id: "call_missing_sig", type: "function", function: { name: "get_weather", arguments: "{\"location\":\"Quito\"}" } }]
+				},
+				{ role: "tool", name: "get_weather", tool_call_id: "call_missing_sig", content: "{\"temp\":18}" }
+			]
+		};
+
+		const result = openAIToAntigravityBody(req);
+		const request = result.request as any;
+		assert.match(JSON.stringify(request.contents), /Context: The assistant used tools/);
 	});
 });

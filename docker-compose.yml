@@ -1,0 +1,14 @@
+services:
+  pi-antigravity-rotator:
+    build: .
+    container_name: pi-antigravity-rotator
+    ports:
+      - "51200:51200"
+    environment:
+      PI_ROTATOR_DIR: /data
+      PI_ROTATOR_TELEMETRY: "on"
+      PI_ROTATOR_ADMIN_TOKEN: "${PI_ROTATOR_ADMIN_TOKEN:-}"
+      PI_ROTATOR_QUOTA_USER_AGENT: "${PI_ROTATOR_QUOTA_USER_AGENT:-}"
+    volumes:
+      - ./docker-data:/data
+    restart: unless-stopped

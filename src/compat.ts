@@ -1190,20 +1190,21 @@ async function completeViaRotator(
 }
 
 
+const MODEL_CATALOG = [
+	{ id: "gemini-3.5-flash-low", family: "gemini-3.5-flash", ctx: 1048576, quotaPool: "gemini-3.5-flash", multimodal: true, tools: true },
+	{ id: "gemini-3.5-flash-high", family: "gemini-3.5-flash", ctx: 1048576, quotaPool: "gemini-3.5-flash", multimodal: true, tools: true },
+	{ id: "gemini-3-flash", family: "gemini-3.5-flash", ctx: 1048576, quotaPool: "gemini-3.5-flash", multimodal: true, tools: true },
+	{ id: "gemini-3.1-pro-low", family: "gemini-3.1-pro", ctx: 1048576, quotaPool: "gemini-3.1-pro", multimodal: true, tools: true },
+	{ id: "gemini-3.1-pro-high", family: "gemini-3.1-pro", ctx: 1048576, quotaPool: "gemini-3.1-pro", multimodal: true, tools: true },
+	{ id: "claude-sonnet-4-6", family: "claude", ctx: 500000, quotaPool: "claude-opus-4-6-thinking", multimodal: true, tools: true },
+	{ id: "claude-opus-4-6-thinking", family: "claude", ctx: 500000, quotaPool: "claude-opus-4-6-thinking", multimodal: true, tools: true },
+	{ id: "gpt-oss-120b-medium", family: "gpt-oss", ctx: 131072, quotaPool: "claude-opus-4-6-thinking", multimodal: false, tools: true },
+] as const;
+
 export function serveOpenAIModels(res: ServerResponse): void {
-	const models = [
-		{ id: "gemini-3.5-flash-low", ctx: 1048576 },
-		{ id: "gemini-3.5-flash-high", ctx: 1048576 },
-		{ id: "gemini-3-flash", ctx: 1048576 },
-		{ id: "gemini-3.1-pro-low", ctx: 1048576 },
-		{ id: "gemini-3.1-pro-high", ctx: 1048576 },
-		{ id: "claude-sonnet-4-6", ctx: 500000 },
-		{ id: "claude-opus-4-6-thinking", ctx: 500000 },
-		{ id: "gpt-oss-120b-medium", ctx: 131072 },
-	];
 	writeJson(res, 200, {
 		object: "list",
-		data: models.map(({ id, ctx }) => ({
+		data: MODEL_CATALOG.map(({ id, ctx, family, quotaPool, multimodal, tools }) => ({
 			id,
 			object: "model",
 			created: 0,
@@ -1212,8 +1213,78 @@ export function serveOpenAIModels(res: ServerResponse): void {
 			max_model_len: ctx,
 			meta: {
 				context_length: ctx,
+				family,
+				quota_pool: quotaPool,
+				multimodal,
+				tool_calling: tools,
 			}
 		})),
+	});
+}
+
+export function serveGeminiModels(res: ServerResponse): void {
+	writeJson(res, 200, {
+		models: MODEL_CATALOG.map(({ id, ctx, family, quotaPool, multimodal, tools }) => ({
+			name: `models/${id}`,
+			baseModelId: family,
+			version: "v2.0",
+			displayName: id,
+			description: `Pi Antigravity Rotator Gemini-compatible model entry for ${id}`,
+			inputTokenLimit: ctx,
+			outputTokenLimit: ctx,
+			supportedGenerationMethods: ["generateContent", "streamGenerateContent"],
+			capabilities: {
+				tools,
+				multimodal,
+				quotaPool,
+			},
+		})),
+	});
+}
+
+export async function handleGeminiGenerateContent(req: IncomingMessage, res: ServerResponse, rotator: AccountRotator): Promise<void> {
+	let parsed: unknown;
+	try {
+		parsed = await readJsonBody(req);
+	} catch (err) {
+		if (err instanceof PayloadTooLargeError) return writeJson(res, 413, { error: { message: "Payload too large", status: "INVALID_ARGUMENT" } });
+		return writeJson(res, 400, { error: { message: "Invalid JSON body", status: "INVALID_ARGUMENT" } });
+	}
+	if (!isRecord(parsed)) return writeJson(res, 400, { error: { message: "Body must be an object", status: "INVALID_ARGUMENT" } });
+
+	const pathname = new URL(req.url || "/", "http://localhost").pathname;
+	const modelToken = pathname.match(/\/v1beta\/models\/(.+):(generateContent|streamGenerateContent)$/)?.[1];
+	const model = modelToken ? decodeURIComponent(modelToken).replace(/^models\//, "") : null;
+	if (!model) return writeJson(res, 400, { error: { message: "Model path is required", status: "INVALID_ARGUMENT" } });
+
+	const body: RequestBody = {
+		model,
+		project: "",
+		request: {
+			contents: Array.isArray(parsed.contents) ? parsed.contents : [],
+			systemInstruction: parsed.systemInstruction,
+			generationConfig: parsed.generationConfig,
+			tools: parsed.tools,
+		},
+	};
+	const result = await completeViaRotator(req, res, rotator, body, "none");
+	if (result.status !== 200) {
+		return writeJson(res, result.status, { error: { message: result.errorText || "Upstream error", status: "UPSTREAM_ERROR" } });
+	}
+	if (result.streamed) return;
+	writeJson(res, 200, {
+		candidates: [{
+			content: {
+				role: "model",
+				parts: [{ text: result.completion.text }],
+			},
+			finishReason: "STOP",
+		}],
+		usageMetadata: {
+			promptTokenCount: result.completion.inputTokens,
+			candidatesTokenCount: result.completion.outputTokens,
+			totalTokenCount: result.completion.inputTokens + result.completion.outputTokens,
+		},
 	});
 }
 

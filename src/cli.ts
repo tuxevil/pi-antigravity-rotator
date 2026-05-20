@@ -38,6 +38,13 @@ switch (command) {
 		}
 		break;
 	}
+	case "doctor": {
+		const { printDoctorReport, runDoctor } = await import("./doctor.js");
+		const result = runDoctor();
+		printDoctorReport(result);
+		process.exit(result.ok ? 0 : 1);
+		break;
+	}
 	default:
 		console.log("Pi Antigravity Rotator");
 		console.log();
@@ -45,6 +52,7 @@ switch (command) {
 		console.log("  pi-antigravity-rotator start     Start the proxy (default)");
 		console.log("  pi-antigravity-rotator login     Add a new Google account");
 		console.log("  pi-antigravity-rotator status    Show account status (JSON)");
+		console.log("  pi-antigravity-rotator doctor    Validate config and local state");
 		console.log();
 		console.log("Options:");
 		console.log("  --config-dir <path>    Config directory (default: ~/.pi-antigravity-rotator/)");

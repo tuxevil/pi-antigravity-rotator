@@ -1,6 +1,7 @@
 // Web dashboard for monitoring account rotation status
 
 import type { ServerResponse } from "node:http";
+import type { Config } from "./types.js";
 import type { AccountRotator } from "./rotator.js";
 
 export function serveDashboard(res: ServerResponse): void {
@@ -16,9 +17,49 @@ export function serveStatusApi(res: ServerResponse, rotator: AccountRotator): vo
   res.end(JSON.stringify(rotator.getStatus()));
 }
 
+export function serveConfigApi(res: ServerResponse, rotator: AccountRotator): void {
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+  });
+  res.end(JSON.stringify(rotator.getConfig()));
+}
+
+export function serveConfigExportApi(res: ServerResponse, rotator: AccountRotator): void {
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "Content-Disposition": 'attachment; filename="pi-antigravity-rotator-config.json"',
+  });
+  res.end(JSON.stringify(rotator.getConfig(), null, 2));
+}
+
+export function serveConfigImportApi(res: ServerResponse, rotator: AccountRotator, config: Config): void {
+  rotator.replaceConfig(config);
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok: true, importedAccounts: config.accounts.length }));
+}
+
 export function serveEnableApi(res: ServerResponse, rotator: AccountRotator, email: string): void {
   const ok = rotator.enableAccount(email);
   res.writeHead(ok ? 200 : 409, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok, email }));
+}
+
+export function serveDisableApi(res: ServerResponse, rotator: AccountRotator, email: string): void {
+  const ok = rotator.disableAccount(email);
+  res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok, email }));
+}
+
+export function serveQuarantineApi(res: ServerResponse, rotator: AccountRotator, email: string): void {
+  const ok = rotator.quarantineAccount(email);
+  res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok, email }));
+}
+
+export function serveRestoreApi(res: ServerResponse, rotator: AccountRotator, email: string): void {
+  const ok = rotator.restoreAccount(email);
+  res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ ok, email }));
 }
 
@@ -1377,6 +1418,38 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 </div>
 
+<div class="modal" id="configEditorModal" onclick="closeModal(event, 'configEditorModal')">
+  <div class="modal-card" onclick="event.stopPropagation()" style="max-width: 960px; width: min(960px, 92vw);">
+    <div class="modal-header">
+      <strong>Config Editor</strong>
+      <button class="modal-close" onclick="closeModal(null, 'configEditorModal')" aria-label="Close config editor modal">×</button>
+    </div>
+    <div style="padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <div id="configEditorStatus" style="font-size:12px;color:var(--text-dim)"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-secondary" onclick="loadConfigEditor()">Reload</button>
+          <button class="btn-secondary" onclick="saveConfigEditor()">Save</button>
+          <button class="btn-secondary" onclick="exportConfig()">Export</button>
+          <button class="btn-secondary" onclick="importConfigPrompt()">Import</button>
+          <button class="btn-secondary" onclick="window.location.href='/login' + (ADMIN_TOKEN ? ('?token=' + encodeURIComponent(ADMIN_TOKEN)) : '')">Hosted Login</button>
+        </div>
+      </div>
+      <textarea id="configEditor" spellcheck="false" style="width:100%;min-height:420px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:12px;font-family:'JetBrains Mono', monospace;font-size:12px;line-height:1.5"></textarea>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="routingInspectorModal" onclick="closeModal(event, 'routingInspectorModal')">
+  <div class="modal-card" onclick="event.stopPropagation()" style="max-width: 1100px; width: min(1100px, 94vw);">
+    <div class="modal-header">
+      <strong>Routing Inspector</strong>
+      <button class="modal-close" onclick="closeModal(null, 'routingInspectorModal')" aria-label="Close routing inspector modal">×</button>
+    </div>
+    <div id="routingInspectorPanel" style="padding:16px;"></div>
+  </div>
+</div>
+
 
 
 <div class="modal" id="donationModal" onclick="closeModal(event, 'donationModal')">
@@ -1526,6 +1599,8 @@ function renderAccounts(data) {
     healthGrid +
     '<div class="ops-buttons">' +
       '<button class="btn-secondary" onclick="refresh()">Refresh</button>' +
+      '<button class="btn-secondary" onclick="openRoutingInspectorModal()">Routing Inspector</button>' +
+      '<button class="btn-secondary" onclick="openConfigEditorModal()">Config Editor</button>' +
       '<button class="btn-secondary" onclick="toggleFlagged()">' +
         (window.__hideFlagged ? 'Show Flagged' : 'Hide Flagged') +
       '</button>' +
@@ -1561,6 +1636,7 @@ function renderAccounts(data) {
   renderUpdateBanner(data.updateInfo);
   renderNotifications(data.notifications);
   renderAttentionPanel(data);
+  renderRoutingInspector(data);
   renderTokenChart(data.tokenUsage);
   renderHeatmap(data.tokenUsage);
   renderLatencyPanel(data.latencyStats);
@@ -1604,12 +1680,14 @@ function renderAccounts(data) {
       }
       return '';
     }).join('');
+    var tierLabel = a.tier ? String(a.tier).toUpperCase() : 'UNKNOWN';
 
     return '<div class="account-card ' + escapeHtml(a.status) + '" data-account-email="' + escapeHtml(a.email) + '">' +
       '<div class="card-header">' +
         '<div class="card-label">' + escapeHtml(maskText(a.label)) + '</div>' +
         '<div class="card-badges">' +
           '<span class="badge badge-' + escapeHtml(a.status) + (isActive ? ' pulse' : '') + '">' + escapeHtml(a.status) + '</span>' +
+          '<span class="badge badge-model">' + escapeHtml(tierLabel) + '</span>' +
           modelBadges +
         '</div>' +
       '</div>' +
@@ -1627,6 +1705,8 @@ function renderAccounts(data) {
         '<div class="card-stat"><div class="stat-label">Token</div><div class="stat-value" style="color:' +
           (a.hasValidToken ? 'var(--green)' : 'var(--text-dim)') + '">' +
           (a.hasValidToken ? 'Valid' : 'Expired') + '</div></div>' +
+        '<div class="card-stat"><div class="stat-label">Health</div><div class="stat-value">' +
+          Math.round((a.healthScore || 0) * 100) + '%</div></div>' +
         '<div class="card-stat"><div class="stat-label">Fresh Policy</div><div class="stat-value" style="color:' +
           (a.effectiveFreshWindowStartsAllowed ? 'var(--green)' : 'var(--yellow)') + '">' +
           (a.allowFreshWindowStartsOverride ? 'Override ON' : (a.effectiveFreshWindowStartsAllowed ? 'Global ON' : 'Blocked')) + '</div></div>' +
@@ -1640,6 +1720,9 @@ function renderAccounts(data) {
       (isCooldown ? '<div class="card-hint">Cooling down after a provider rate-limit response. The rotator will wait for the retry window instead of forcing more traffic into this account.</div>' : '') +
       '<div class="card-actions">' +
         (a.status === 'disabled' ? '<button class="btn-enable" onclick="enableAccount(\\'' + jsString(a.email) + '\\')">Re-enable</button>' : '') +
+        (a.status !== 'disabled' ? '<button class="btn-enable" onclick="disableAccount(\\'' + jsString(a.email) + '\\')">Disable</button>' : '') +
+        (a.status !== 'flagged' ? '<button class="btn-enable" onclick="quarantineAccount(\\'' + jsString(a.email) + '\\')">Quarantine</button>' : '') +
+        ((a.status === 'flagged' || a.status === 'disabled') ? '<button class="btn-enable" onclick="restoreAccount(\\'' + jsString(a.email) + '\\')">Restore</button>' : '') +
         '<button class="btn-enable" onclick="setAccountFreshWindowOverride(\\'' + jsString(a.email) + '\\', ' + (!a.allowFreshWindowStartsOverride) + ')">' +
           (a.allowFreshWindowStartsOverride ? 'Use Global Fresh Policy' : 'Allow Fresh On This Account') +
         '</button>' +
@@ -1837,9 +1920,17 @@ function renderAttentionPanel(data) {
   var button = document.getElementById('attentionBtn');
   var badge = document.getElementById('attentionBadge');
   var accounts = data.accounts || [];
+  var security = data.security || {};
+  var routingDiagnostics = data.routingDiagnostics || {};
   var flagged = accounts.filter(function(a) { return a.status === 'flagged'; });
   var disabled = accounts.filter(function(a) { return a.status === 'disabled'; });
   var errors = accounts.filter(function(a) { return a.status === 'error'; });
+  var unroutableModels = Object.keys(routingDiagnostics)
+    .map(function(modelKey) { return routingDiagnostics[modelKey]; })
+    .filter(function(diag) { return diag && !diag.selectedEmail; });
+  var tokenBucketExhausted = accounts.filter(function(a) {
+    return a.tokenBucket && a.tokenBucket.enabled && Number(a.tokenBucket.tokens || 0) < 1;
+  });
   var cooldown = accounts
     .filter(function(a) { return a.status === 'cooldown'; })
     .map(function(a) {
@@ -1850,6 +1941,18 @@ function renderAttentionPanel(data) {
     .sort(function(a, b) { return a.remaining - b.remaining; })
     .slice(0, 4);
   var items = [];
+
+  if (security.warning) {
+    items.push(renderAttentionItem(
+      'Security warning',
+      security.warning,
+      [
+        'Set PI_ROTATOR_ADMIN_TOKEN to protect dashboard and admin APIs.',
+        'For local-only usage, prefer bindHost 127.0.0.1.'
+      ],
+      'warning'
+    ));
+  }
 
   if (flagged.length > 0) {
     items.push(renderAttentionItem(
@@ -1881,6 +1984,24 @@ function renderAttentionPanel(data) {
       'These accounts are still visible but currently erroring. Review the per-account error details below before they escalate to disabled.',
       errors.map(function(a) { return maskText(a.label); }),
       'error'
+    ));
+  }
+  if (unroutableModels.length > 0) {
+    items.push(renderAttentionItem(
+      'No routing candidate',
+      'These models currently have no selected account. The inspector shows which checks are blocking routing right now.',
+      unroutableModels.map(function(diag) { return diag.modelKey + ': ' + (diag.reason || 'No reason available'); }),
+      'warning'
+    ));
+  }
+  if (tokenBucketExhausted.length > 0) {
+    items.push(renderAttentionItem(
+      'Token bucket exhausted',
+      'Hybrid routing is holding these accounts briefly to avoid hammering the provider before the local refill window resets.',
+      tokenBucketExhausted.map(function(a) {
+        return maskText(a.label) + ' ' + formatDuration(a.tokenBucket.nextRefillInMs || 0);
+      }),
+      'cooldown'
     ));
   }
 
@@ -2718,8 +2839,151 @@ function setEventFilter(filter) {
   refresh();
 }
 
+async function loadConfigEditor() {
+  var res = await authFetch('/api/config');
+  var data = await res.json();
+  document.getElementById('configEditor').value = JSON.stringify(data, null, 2);
+  document.getElementById('configEditorStatus').textContent = 'Loaded current config from disk.';
+}
+
+async function saveConfigEditor() {
+  var raw = document.getElementById('configEditor').value;
+  try {
+    var parsed = JSON.parse(raw);
+    var res = await authFetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed)
+    });
+    var data = await res.json();
+    if (!res.ok) throw new Error((data.errors || [data.error || 'Invalid config']).join('; '));
+    document.getElementById('configEditorStatus').textContent = 'Saved config and refreshed runtime.';
+    refresh();
+  } catch (err) {
+    document.getElementById('configEditorStatus').textContent = 'Save failed: ' + (err && err.message ? err.message : String(err));
+  }
+}
+
+async function exportConfig() {
+  var res = await authFetch('/api/config/export');
+  var data = await res.text();
+  var blob = new Blob([data], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'pi-antigravity-rotator-config.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importConfigPrompt() {
+  var raw = prompt('Paste a full config JSON document to import.');
+  if (!raw) return;
+  try {
+    var parsed = JSON.parse(raw);
+    var res = await authFetch('/api/config/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed)
+    });
+    var data = await res.json();
+    if (!res.ok) throw new Error((data.errors || [data.error || 'Import failed']).join('; '));
+    document.getElementById('configEditor').value = JSON.stringify(parsed, null, 2);
+    document.getElementById('configEditorStatus').textContent = 'Imported config successfully.';
+    refresh();
+  } catch (err) {
+    document.getElementById('configEditorStatus').textContent = 'Import failed: ' + (err && err.message ? err.message : String(err));
+  }
+}
+
+async function openConfigEditorModal() {
+  openModal('configEditorModal');
+  await loadConfigEditor();
+}
+
+function renderRoutingInspector(data) {
+  var panel = document.getElementById('routingInspectorPanel');
+  if (!panel) return;
+  var diagnostics = data && data.routingDiagnostics ? data.routingDiagnostics : {};
+  var modelKeys = Object.keys(diagnostics).sort();
+  if (modelKeys.length === 0) {
+    panel.innerHTML = '<div class="modal-empty">No routing diagnostics available yet.</div>';
+    return;
+  }
+
+  panel.innerHTML = modelKeys.map(function(modelKey) {
+    var diag = diagnostics[modelKey];
+    var rows = (diag.accounts || []).map(function(entry) {
+      var score = entry.score === null || entry.score === undefined ? '--' : Number(entry.score).toFixed(1);
+      var quota = entry.quota === null || entry.quota === undefined ? '--' : entry.quota + '%';
+      var priority = entry.timerPriority === null || entry.timerPriority === undefined ? '--' : String(entry.timerPriority);
+      var tokenText = entry.tokenBucket && entry.tokenBucket.enabled
+        ? Number(entry.tokenBucket.tokens || 0).toFixed(1) + ' / ' + entry.tokenBucket.capacity
+        : 'off';
+      var decision = entry.rejectedReason
+        ? '<span style="color:var(--yellow)">' + escapeHtml(entry.rejectedDetail || entry.rejectedReason) + '</span>'
+        : '<span style="color:var(--green)">selected candidate</span>';
+      return '<tr>' +
+        '<td style="padding:6px 8px;border-top:1px solid var(--border)">' + escapeHtml(maskText(entry.label || entry.email)) + '</td>' +
+        '<td style="padding:6px 8px;border-top:1px solid var(--border)">' + escapeHtml(entry.status) + '</td>' +
+        '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:JetBrains Mono,monospace">' + escapeHtml(priority) + '</td>' +
+        '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:JetBrains Mono,monospace">' + escapeHtml(quota) + '</td>' +
+        '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:JetBrains Mono,monospace">' + escapeHtml(String(Math.round((entry.healthScore || 0) * 100)) + '%') + '</td>' +
+        '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:JetBrains Mono,monospace">' + escapeHtml(tokenText) + '</td>' +
+        '<td style="padding:6px 8px;border-top:1px solid var(--border);font-family:JetBrains Mono,monospace">' + escapeHtml(score) + '</td>' +
+        '<td style="padding:6px 8px;border-top:1px solid var(--border)">' + decision + '</td>' +
+      '</tr>';
+    }).join('');
+
+    return '<div style="margin-bottom:16px;padding:14px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,0.02)">' +
+      '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' +
+        '<strong>' + escapeHtml(modelKey) + '</strong>' +
+        '<span style="font-size:12px;color:var(--text-dim)">policy: ' + escapeHtml(diag.policy || '--') + ' · available: ' + escapeHtml(String(diag.availableCandidates || 0)) + ' · rejected: ' + escapeHtml(String(diag.rejectedCandidates || 0)) + '</span>' +
+      '</div>' +
+      '<div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">' + escapeHtml(diag.reason || 'No diagnostic summary available.') + '</div>' +
+      '<div style="overflow:auto">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+          '<thead><tr style="text-align:left;color:var(--text-dim)">' +
+            '<th style="padding:4px 8px">Account</th>' +
+            '<th style="padding:4px 8px">Status</th>' +
+            '<th style="padding:4px 8px">Timer</th>' +
+            '<th style="padding:4px 8px">Quota</th>' +
+            '<th style="padding:4px 8px">Health</th>' +
+            '<th style="padding:4px 8px">Bucket</th>' +
+            '<th style="padding:4px 8px">Score</th>' +
+            '<th style="padding:4px 8px">Decision</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function openRoutingInspectorModal() {
+  openModal('routingInspectorModal');
+  renderRoutingInspector(window.__lastData || {});
+}
+
 async function enableAccount(email) {
   await authFetch('/api/enable/' + encodeURIComponent(email), { method: 'POST' });
+  refresh();
+}
+
+async function disableAccount(email) {
+  if (!confirm('Disable this account? It will stop serving traffic until restored.')) return;
+  await authFetch('/api/disable/' + encodeURIComponent(email), { method: 'POST' });
+  refresh();
+}
+
+async function quarantineAccount(email) {
+  if (!confirm('Quarantine this account? It will be flagged and excluded from routing.')) return;
+  await authFetch('/api/quarantine/' + encodeURIComponent(email), { method: 'POST' });
+  refresh();
+}
+
+async function restoreAccount(email) {
+  await authFetch('/api/restore/' + encodeURIComponent(email), { method: 'POST' });
   refresh();
 }
 
@@ -2809,6 +3073,8 @@ function toggleMask() {
 document.addEventListener('keydown', function(event) {
   if (event.key === 'Escape') {
     closeModal(null, 'attentionModal');
+    closeModal(null, 'configEditorModal');
+    closeModal(null, 'routingInspectorModal');
     closeModal(null, 'advisorModal');
     closeModal(null, 'donationModal');
   }

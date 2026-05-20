@@ -15,7 +15,13 @@ import type { AccountRotator } from "./rotator.js";
 import {
 	serveDashboard,
 	serveStatusApi,
+	serveConfigApi,
+	serveConfigExportApi,
+	serveConfigImportApi,
 	serveEnableApi,
+	serveDisableApi,
+	serveQuarantineApi,
+	serveRestoreApi,
 	serveFreshWindowStartsApi,
 	serveAccountFreshWindowStartsApi,
 	serveClearInFlightApi,
@@ -24,13 +30,15 @@ import {
 import { handleHostedCallback, serveLoginLanding, startHostedLogin } from "./onboarding.js";
 import { requireAdmin } from "./admin-auth.js";
 import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
-import { validateProxyRequestBody } from "./validators.js";
+import { validateConfig, validateProxyRequestBody } from "./validators.js";
 import { logger } from "./logger.js";
 import { trackFeature, reportFlagEvent, FLAG_PATTERNS, type FlagPattern } from "./telemetry.js";
 import type { FlagEventData } from "./telemetry.js";
 import { startVersionChecker, performSelfUpdate } from "./version-check.js";
 import { startNotificationPoller } from "./notification-poller.js";
-import { handleAnthropicMessages, handleOpenAIChatCompletions, serveOpenAIModels } from "./compat.js";
+import { handleAnthropicMessages, handleGeminiGenerateContent, serveGeminiModels, handleOpenAIChatCompletions, serveOpenAIModels } from "./compat.js";
+import { applyConfigDefaults } from "./account-store.js";
+import { classifyRateLimitReason, parseRetryAfterMs } from "./rate-limit-parser.js";
 
 const proxyLogger = logger.child("proxy");
 
@@ -74,68 +82,8 @@ export type RotationOutcome<T> =
 	| { ok: true; result: T; endpoint: string }
 	| { ok: false; status: number; errorText: string; retryAfterMs?: number; endpoint?: string };
 
-/**
- * Extract retry delay from error response (mirrors pi-mono's extractRetryDelay).
- * Returns delay in milliseconds.
- */
-function extractRetryDelay(errorText: string, headers: Headers): number {
-	// Check headers
-	const retryAfter = headers.get("retry-after");
-	if (retryAfter) {
-		const seconds = Number(retryAfter);
-		if (Number.isFinite(seconds) && seconds > 0) {
-			return Math.ceil(seconds * 1000 + 1000);
-		}
-	}
-
-	const resetAfter = headers.get("x-ratelimit-reset-after");
-	if (resetAfter) {
-		const seconds = Number(resetAfter);
-		if (Number.isFinite(seconds) && seconds > 0) {
-			return Math.ceil(seconds * 1000 + 1000);
-		}
-	}
-
-	// Parse body patterns
-	const durationMatch = errorText.match(/reset after (?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s/i);
-	if (durationMatch) {
-		const hours = durationMatch[1] ? parseInt(durationMatch[1], 10) : 0;
-		const minutes = durationMatch[2] ? parseInt(durationMatch[2], 10) : 0;
-		const seconds = parseFloat(durationMatch[3]);
-		if (!Number.isNaN(seconds)) {
-			return Math.ceil(((hours * 60 + minutes) * 60 + seconds) * 1000 + 1000);
-		}
-	}
-
-	const retryInMatch = errorText.match(/Please retry in ([0-9.]+)(ms|s)/i);
-	if (retryInMatch?.[1]) {
-		const value = parseFloat(retryInMatch[1]);
-		if (!Number.isNaN(value) && value > 0) {
-			const ms = retryInMatch[2].toLowerCase() === "ms" ? value : value * 1000;
-			return Math.ceil(ms + 1000);
-		}
-	}
-
-	const retryDelayMatch = errorText.match(/"retryDelay":\s*"([0-9.]+)(ms|s)"/i);
-	if (retryDelayMatch?.[1]) {
-		const value = parseFloat(retryDelayMatch[1]);
-		if (!Number.isNaN(value) && value > 0) {
-			const ms = retryDelayMatch[2].toLowerCase() === "ms" ? value : value * 1000;
-			return Math.ceil(ms + 1000);
-		}
-	}
-
-	// Default: 60 seconds
-	return 60_000;
-}
-
 function capCooldown(ms: number): number {
 	return Math.min(ms, MAX_COOLDOWN_MS);
-}
-
-function isResourceExhausted(errorText: string): boolean {
-	const lower = errorText.toLowerCase();
-	return lower.includes("resource_exhausted") || lower.includes("resource exhausted");
 }
 
 function formatError(err: unknown): string {
@@ -179,6 +127,11 @@ function extractTokenUsage(buffer: string): { inputTokens: number; outputTokens:
 
 // Keep last ~32KB of stream to find usage metadata in the final chunk
 const USAGE_TAIL_BYTES = 32 * 1024;
+
+async function readJsonRequest(req: IncomingMessage): Promise<unknown> {
+	const body = await readLimitedBody(req);
+	return body.length === 0 ? {} : JSON.parse(body.toString("utf-8"));
+}
 
 async function streamResponseBody(
 	body: Response["body"],
@@ -449,12 +402,13 @@ export async function withRotation<T>(
 
 			if (response.status === 429) {
 				const errorText = await response.text().catch(() => "");
-				const providerResourceExhausted = isResourceExhausted(errorText);
+				const rateLimitReason = classifyRateLimitReason(errorText, response.status);
+				const providerResourceExhausted = rateLimitReason === "quota-exhausted";
 				const cooldownMs = providerResourceExhausted
 					? RESOURCE_EXHAUSTED_COOLDOWN_MS
-					: capCooldown(extractRetryDelay(errorText, response.headers));
+					: capCooldown(parseRetryAfterMs(errorText, response.headers));
 				log(
-					`[${label}] 429 rate limited${providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}, cooldown ${Math.ceil(cooldownMs / 1000)}s. Error text: ${errorText.slice(0, 300)}`,
+					`[${label}] 429 rate limited${providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}${rateLimitReason !== "rate-limit" ? ` [${rateLimitReason}]` : ""}, cooldown ${Math.ceil(cooldownMs / 1000)}s. Error text: ${errorText.slice(0, 300)}`,
 					rotator,
 					"warn",
 				);
@@ -724,12 +678,13 @@ async function handleProxyRequest(
 
 			if (response.status === 429) {
 				const errorText = await response.text().catch(() => "");
-				const providerResourceExhausted = isResourceExhausted(errorText);
+				const rateLimitReason = classifyRateLimitReason(errorText, response.status);
+				const providerResourceExhausted = rateLimitReason === "quota-exhausted";
 				const cooldownMs = providerResourceExhausted
 					? RESOURCE_EXHAUSTED_COOLDOWN_MS
-					: capCooldown(extractRetryDelay(errorText, response.headers));
+					: capCooldown(parseRetryAfterMs(errorText, response.headers));
 				proxyLog(
-					`[${label}] 429 rate limited${providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}, cooldown ${Math.ceil(cooldownMs / 1000)}s. Error text: ${errorText.slice(0, 300)}`,
+					`[${label}] 429 rate limited${providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}${rateLimitReason !== "rate-limit" ? ` [${rateLimitReason}]` : ""}, cooldown ${Math.ceil(cooldownMs / 1000)}s. Error text: ${errorText.slice(0, 300)}`,
 					"warn",
 				);
 				recordOutcome(429);
@@ -938,7 +893,7 @@ export function flattenHeaders(headers: IncomingMessage["headers"]): Record<stri
 	return flat;
 }
 
-export function startProxy(rotator: AccountRotator, port: number): void {
+export function startProxy(rotator: AccountRotator, port: number, bindHost = "0.0.0.0"): void {
 	startVersionChecker();
 	startNotificationPoller();
 	const sseClients = new Set<ServerResponse>();
@@ -1010,6 +965,38 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			return;
 		}
 
+		if (method === "GET" && pathname === "/api/config") {
+			if (!requireAdmin(req, res)) return;
+			serveConfigApi(res, rotator);
+			return;
+		}
+
+		if (method === "GET" && pathname === "/api/config/export") {
+			if (!requireAdmin(req, res)) return;
+			serveConfigExportApi(res, rotator);
+			return;
+		}
+
+		if ((method === "PUT" && pathname === "/api/config") || (method === "POST" && pathname === "/api/config/import")) {
+			if (!requireAdmin(req, res)) return;
+			readJsonRequest(req).then((parsed) => {
+				const candidate = parsed && typeof parsed === "object" && "config" in (parsed as Record<string, unknown>)
+					? (parsed as { config: unknown }).config
+					: parsed;
+				const validation = validateConfig(candidate);
+				if (!validation.ok || !validation.value) {
+					res.writeHead(400, { "Content-Type": "application/json" });
+					res.end(JSON.stringify({ ok: false, errors: validation.errors }));
+					return;
+				}
+				serveConfigImportApi(res, rotator, applyConfigDefaults(validation.value));
+			}).catch((err) => {
+				res.writeHead(err instanceof PayloadTooLargeError ? 413 : 400, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+			});
+			return;
+		}
+
 		if (method === "GET" && pathname === "/api/events") {
 			if (!requireAdmin(req, res)) return;
 			// Server-Sent Events for live dashboard
@@ -1029,6 +1016,27 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			if (!requireAdmin(req, res)) return;
 			const email = decodeURIComponent(url.slice("/api/enable/".length));
 			serveEnableApi(res, rotator, email);
+			return;
+		}
+
+		if (method === "POST" && url.startsWith("/api/disable/")) {
+			if (!requireAdmin(req, res)) return;
+			const email = decodeURIComponent(url.slice("/api/disable/".length));
+			serveDisableApi(res, rotator, email);
+			return;
+		}
+
+		if (method === "POST" && url.startsWith("/api/quarantine/")) {
+			if (!requireAdmin(req, res)) return;
+			const email = decodeURIComponent(url.slice("/api/quarantine/".length));
+			serveQuarantineApi(res, rotator, email);
+			return;
+		}
+
+		if (method === "POST" && url.startsWith("/api/restore/")) {
+			if (!requireAdmin(req, res)) return;
+			const email = decodeURIComponent(url.slice("/api/restore/".length));
+			serveRestoreApi(res, rotator, email);
 			return;
 		}
 
@@ -1092,6 +1100,11 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 			return;
 		}
 
+		if (method === "GET" && pathname === "/v1beta/models") {
+			serveGeminiModels(res);
+			return;
+		}
+
 		if (method === "POST" && pathname === "/v1/chat/completions") {
 			handleOpenAIChatCompletions(req, res, rotator).catch((err) => {
 				log(`OpenAI compat error: ${err}`, rotator, "error");
@@ -1107,6 +1120,15 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 				log(`Anthropic compat error: ${err}`, rotator, "error");
 				if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ type: "error", error: { type: "server_error", message: "Internal Anthropic compat error" } }));
+			});
+			return;
+		}
+
+		if (method === "POST" && /\/v1beta\/models\/.+:(generateContent|streamGenerateContent)$/.test(pathname)) {
+			handleGeminiGenerateContent(req, res, rotator).catch((err) => {
+				log(`Gemini compat error: ${err}`, rotator, "error");
+				if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ error: { message: "Internal Gemini compat error", status: "INTERNAL" } }));
 			});
 			return;
 		}
@@ -1127,8 +1149,8 @@ export function startProxy(rotator: AccountRotator, port: number): void {
 		res.end(JSON.stringify({ error: "Not found" }));
 	});
 
-	server.listen(port, "0.0.0.0", () => {
-		log(`Listening on 0.0.0.0:${port}`, rotator);
+	server.listen(port, bindHost, () => {
+		log(`Listening on ${bindHost}:${port}`, rotator);
 		log(`Dashboard: http://localhost:${port}/dashboard`, rotator);
 		log(`Hosted login: http://localhost:${port}/login`, rotator);
 	});

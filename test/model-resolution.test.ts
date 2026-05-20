@@ -56,8 +56,22 @@ describe("model resolution", () => {
 		assert.ok(MODEL_PRICING["gpt-oss-120b-medium"]);
 	});
 
+	it("has updated pricing for Gemini 3.5 Flash", () => {
+		const p = MODEL_PRICING["gemini-3.5-flash"];
+		assert.ok(p);
+		assert.equal(p.inputPer1M, 1.50);
+		assert.equal(p.outputPer1M, 9.00);
+		assert.equal(p.cachingPer1M, 0.15);
+		assert.equal(p.cachingStoragePer1MPerHour, 1.00);
+	});
+
 	it("keeps quota model keys unique", () => {
 		const keys = Object.values(QUOTA_MODEL_KEYS).map((entry) => entry.key);
 		assert.equal(new Set(keys).size, keys.length);
+	});
+
+	it("orders quota model keys: claude, gemini-3.1-pro, gemini-3.5-flash", () => {
+		const orderedKeys = Object.keys(QUOTA_MODEL_KEYS);
+		assert.deepEqual(orderedKeys, ["claude", "gemini-3.1-pro", "gemini-3.5-flash"]);
 	});
 });

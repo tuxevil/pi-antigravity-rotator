@@ -1460,7 +1460,6 @@ function renderQuotaBars(account) {
     }
     return '<div class="quota-row">' +
       '<span class="quota-model">' + escapeHtml(q.displayName) + '</span>' +
-      '<span class="quota-timer ' + escapeHtml(timerClass) + '">' + escapeHtml(timerDisplayLabel(q.timerType)) + '</span>' +
       '<div class="quota-bar-bg"><div class="quota-bar-fill" style="width:' + q.percentRemaining + '%;background:' + color + '"></div></div>' +
       '<span class="quota-pct" style="color:' + color + '">' + q.percentRemaining + '%</span>' +
       '<span class="quota-reset">' + (resetLabel || '--') + '</span>' +
@@ -1593,16 +1592,23 @@ function renderAccounts(data) {
       var totalCooldown = maxCooldownUntil - (a.lastUsed || now);
       cooldownPercent = Math.max(0, Math.min(100, (cooldownRemaining / Math.max(totalCooldown, 1)) * 100));
     }
-
     var modelBadges = (a.activeForModels || []).map(function(m) {
-      return '<span class="badge badge-model">' + escapeHtml(m.split('-').slice(0, 2).join('-')) + '</span>';
+      if (m.startsWith('claude')) {
+        return '<span class="badge badge-model">CLAUDE</span>';
+      }
+      if (m === 'gemini-3.1-pro') {
+        return '<span class="badge badge-model">PRO</span>';
+      }
+      if (m === 'gemini-3.5-flash') {
+        return '<span class="badge badge-model">FLASH</span>';
+      }
+      return '';
     }).join('');
 
     return '<div class="account-card ' + escapeHtml(a.status) + '" data-account-email="' + escapeHtml(a.email) + '">' +
       '<div class="card-header">' +
         '<div class="card-label">' + escapeHtml(maskText(a.label)) + '</div>' +
         '<div class="card-badges">' +
-          (a.proDetected ? '<span class="badge badge-pro">PRO</span>' : '<span class="badge badge-free">FREE</span>') +
           '<span class="badge badge-' + escapeHtml(a.status) + (isActive ? ' pulse' : '') + '">' + escapeHtml(a.status) + '</span>' +
           modelBadges +
         '</div>' +
@@ -1761,7 +1767,6 @@ function renderListView() {
     '<th onclick="setListSort(&apos;quota&apos;)" class="' + (LIST_SORT === 'quota' ? 'sort-active' : '') + '">Avg Quota' + arrowFor('quota') + '</th>' +
     '<th onclick="setListSort(&apos;tokens&apos;)" class="' + (LIST_SORT === 'tokens' ? 'sort-active' : '') + '">Tokens (in/out)' + arrowFor('tokens') + '</th>' +
     '<th>Last Used</th>' +
-    '<th>Type</th>' +
   '</tr></thead><tbody>';
 
   rows.forEach(function(a) {
@@ -1780,9 +1785,6 @@ function renderListView() {
     var totalTokens = ta.input + ta.output;
 
     var lastUsed = a.lastUsed ? formatTime(a.lastUsed) : '--';
-    var tierBadge = a.proDetected
-      ? '<span class="badge badge-pro" style="font-size:9px">PRO</span>'
-      : '<span class="badge badge-free" style="font-size:9px">FREE</span>';
 
     var quotaCell = avgQuota === null
       ? '<span style="color:var(--text-dim)">--</span>'
@@ -1806,7 +1808,6 @@ function renderListView() {
       '<td>' + quotaCell + '</td>' +
       '<td>' + tokensCell + '</td>' +
       '<td style="font-family:JetBrains Mono,monospace;font-size:11px;color:var(--text-dim)">' + lastUsed + '</td>' +
-      '<td>' + tierBadge + '</td>' +
     '</tr>';
   });
 

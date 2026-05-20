@@ -74,20 +74,20 @@ export interface ModelQuota {
 
 // Model key mapping for the quota API
 export const QUOTA_MODEL_KEYS: Record<string, { key: string; altKeys: string[]; display: string }> = {
+	claude: {
+		key: "claude-opus-4-6-thinking",
+		altKeys: ["claude-opus-4-5-thinking", "claude-opus-4-5", "claude-sonnet-4-6-thinking", "claude-sonnet-4-6", "claude-sonnet-4-5-thinking", "claude-sonnet-4-5", "gpt-oss-120b-medium", "gpt-oss-120b"],
+		display: "Claude",
+	},
 	"gemini-3.1-pro": {
 		key: "gemini-3.1-pro",
 		altKeys: ["gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3-pro-high", "gemini-3-pro-low"],
-		display: "G3Pro",
+		display: "G3.1Pro",
 	},
 	"gemini-3.5-flash": {
 		key: "gemini-3.5-flash",
 		altKeys: ["gemini-3.5-flash-low", "gemini-3.5-flash-medium", "gemini-3.5-flash-high", "gemini-3-flash-agent", "gemini-3-flash"],
 		display: "G3.5Flash",
-	},
-	claude: {
-		key: "claude-opus-4-6-thinking",
-		altKeys: ["claude-opus-4-5-thinking", "claude-opus-4-5", "claude-sonnet-4-6-thinking", "claude-sonnet-4-6", "claude-sonnet-4-5-thinking", "claude-sonnet-4-5", "gpt-oss-120b-medium", "gpt-oss-120b"],
-		display: "Claude",
 	},
 };
 
@@ -350,17 +350,25 @@ export interface TokenUsageData {
 }
 
 // Pricing per 1M tokens (USD) — what these would cost on paid APIs
-export const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> = {
-	"claude-opus-4-6-thinking": { inputPer1M: 5.00,  outputPer1M: 25.00 },
-	"claude-sonnet-4-6":        { inputPer1M: 3.00,  outputPer1M: 15.00 },
-	"gemini-3.1-pro":           { inputPer1M: 2.00,  outputPer1M: 12.00 },
-	"gemini-3.1-pro-low":       { inputPer1M: 2.00,  outputPer1M: 12.00 },
-	"gemini-3.1-pro-high":      { inputPer1M: 2.00,  outputPer1M: 12.00 },
-	"gemini-3-flash":           { inputPer1M: 0.50,  outputPer1M: 3.00 },
-	"gemini-3.5-flash":         { inputPer1M: 0.50,  outputPer1M: 3.00 },
-	"gemini-3.5-flash-low":     { inputPer1M: 0.50,  outputPer1M: 3.00 },
-	"gemini-3.5-flash-high":    { inputPer1M: 0.50,  outputPer1M: 3.00 },
-	"gpt-oss-120b-medium":      { inputPer1M: 2.00,  outputPer1M: 10.00 },
+export const MODEL_PRICING: Record<
+	string,
+	{
+		inputPer1M: number;
+		outputPer1M: number;
+		cachingPer1M?: number;
+		cachingStoragePer1MPerHour?: number;
+	}
+> = {
+	"claude-opus-4-6-thinking": { inputPer1M: 5.00, outputPer1M: 25.00 },
+	"claude-sonnet-4-6": { inputPer1M: 3.00, outputPer1M: 15.00 },
+	"gemini-3.1-pro": { inputPer1M: 2.00, outputPer1M: 12.00 },
+	"gemini-3.1-pro-low": { inputPer1M: 2.00, outputPer1M: 12.00 },
+	"gemini-3.1-pro-high": { inputPer1M: 2.00, outputPer1M: 12.00 },
+	"gemini-3-flash": { inputPer1M: 0.50, outputPer1M: 3.00 },
+	"gemini-3.5-flash": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
+	"gemini-3.5-flash-low": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
+	"gemini-3.5-flash-high": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
+	"gpt-oss-120b-medium": { inputPer1M: 2.00, outputPer1M: 10.00 },
 };
 
 // Antigravity OAuth constants (same as pi-mono)

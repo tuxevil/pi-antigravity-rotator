@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- **Codex Agent Integration Support**: Out-of-the-box support for connecting agentic frameworks like Codex (executing in VS Code or CLI) by routing OpenAI Responses API payloads and enabling native reasoning streaming, function-calling translation, and strict contract validation.
+- **OpenAI Responses API Compatibility**: Full compatibility with the OpenAI Responses endpoint family (`POST /v1/responses`, `GET /v1/responses/<id>`, `DELETE /v1/responses/<id>`, `POST /v1/responses/<id>/cancel`, and `GET /v1/responses/<id>/input_items`). Includes full support for structured inputs, in-memory conversation/responses storage, and native tool-calling/reasoning visibility, tailored for advanced agentic frameworks.
 - **Hybrid Routing Policy**: Added optional `routingPolicy: "hybrid"` with weighted selection across timer priority, quota, tier, health, local token bucket state, and distance.
 - **Routing Inspector**: Added a dashboard modal that explains the currently selected route, candidate scores, and why each account was excluded for a model.
 - **Rate Limit Parser Module**: Extracted robust retry parsing into `src/rate-limit-parser.ts` with support for `Retry-After`, `x-ratelimit-reset`, `quotaResetDelay`, `quotaResetTimeStamp`, `retryDelay`, and duration strings.

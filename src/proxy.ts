@@ -36,7 +36,18 @@ import { trackFeature, reportFlagEvent, FLAG_PATTERNS, type FlagPattern } from "
 import type { FlagEventData } from "./telemetry.js";
 import { startVersionChecker, performSelfUpdate } from "./version-check.js";
 import { startNotificationPoller } from "./notification-poller.js";
-import { handleAnthropicMessages, handleGeminiGenerateContent, serveGeminiModels, handleOpenAIChatCompletions, serveOpenAIModels } from "./compat.js";
+import {
+	handleAnthropicMessages,
+	handleGeminiGenerateContent,
+	handleOpenAIChatCompletions,
+	handleOpenAIResponsesCancel,
+	handleOpenAIResponsesCreate,
+	handleOpenAIResponsesDelete,
+	handleOpenAIResponsesInputItems,
+	handleOpenAIResponsesRetrieve,
+	serveGeminiModels,
+	serveOpenAIModels,
+} from "./compat.js";
 import { applyConfigDefaults } from "./account-store.js";
 import { classifyRateLimitReason, parseRetryAfterMs } from "./rate-limit-parser.js";
 
@@ -1106,16 +1117,35 @@ export function startProxy(rotator: AccountRotator, port: number, bindHost = "0.
 		}
 
 		if (method === "POST" && pathname === "/v1/chat/completions") {
-			handleOpenAIChatCompletions(req, res, rotator).catch((err) => {
-				log(`OpenAI compat error: ${err}`, rotator, "error");
-				if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
-				res.end(JSON.stringify({ error: { message: "Internal OpenAI compat error", type: "server_error" } }));
-			});
-			return;
-		}
+				handleOpenAIChatCompletions(req, res, rotator).catch((err) => {
+					log(`OpenAI compat error: ${err}`, rotator, "error");
+					if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+					res.end(JSON.stringify({ error: { message: "Internal OpenAI compat error", type: "server_error" } }));
+				});
+				return;
+			}
 
-		// Anthropic-compatible adapter route (additive; does not affect native v1internal route)
-		if (method === "POST" && pathname === "/v1/messages") {
+			if (method === "POST" && pathname === "/v1/responses") {
+				handleOpenAIResponsesCreate(req, res, rotator).catch((err) => {
+					log(`OpenAI responses compat error: ${err}`, rotator, "error");
+					if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+					res.end(JSON.stringify({ error: { message: "Internal OpenAI responses compat error", type: "server_error" } }));
+				});
+				return;
+			}
+
+			const responseMatch = pathname.match(/^\/v1\/responses\/([^/]+)(?:\/(cancel|input_items))?$/);
+			if (responseMatch) {
+				const responseId = decodeURIComponent(responseMatch[1]);
+				const action = responseMatch[2] || "";
+				if (method === "GET" && !action) return handleOpenAIResponsesRetrieve(req, res, responseId);
+				if (method === "DELETE" && !action) return handleOpenAIResponsesDelete(req, res, responseId);
+				if (method === "POST" && action === "cancel") return handleOpenAIResponsesCancel(req, res, responseId);
+				if (method === "GET" && action === "input_items") return handleOpenAIResponsesInputItems(req, res, responseId);
+			}
+
+			// Anthropic-compatible adapter route (additive; does not affect native v1internal route)
+			if (method === "POST" && pathname === "/v1/messages") {
 			handleAnthropicMessages(req, res, rotator).catch((err) => {
 				log(`Anthropic compat error: ${err}`, rotator, "error");
 				if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });

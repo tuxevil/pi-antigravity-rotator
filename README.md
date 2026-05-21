@@ -37,6 +37,7 @@ If this tool has helped you optimize your API usage and save costs, consider sup
 
 ## Features
 
+- **Compatibility Adapters** -- Includes standard OpenAI-compatible `/v1/chat/completions` and Anthropic-compatible `/v1/messages` APIs. Features comprehensive **OpenAI Responses API compatibility** (`/v1/responses`), enabling seamless integration with advanced agentic systems like Codex.
 - **Per-model routing** -- Each model (Gemini Pro, Flash, Claude) routes to its own active account independently. Multiple agents using different models won't interfere with each other.
 - **Real-time quota monitoring** -- Polls Google's quota API every 5 minutes to track remaining usage per model per account
 - **Per-model timer tracking** -- Timer classification (`fresh`/`7d`/`5h`) is evaluated per model using each model's actual `resetTime` from the quota API, not a per-account estimate
@@ -379,6 +380,11 @@ Login now fails if Google does not return a project ID. No shared fallback.
 | `POST` | `/api/self-update` | Trigger npm self-update to latest version (admin-only) |
 | `POST` | `/v1internal:streamGenerateContent` | Native Antigravity proxy endpoint (used by pi) |
 | `GET` | `/v1/models` | OpenAI-compatible model list |
+| `POST` | `/v1/responses` | OpenAI Responses-compatible create endpoint |
+| `GET` | `/v1/responses/<id>` | Retrieve stored Responses result |
+| `DELETE` | `/v1/responses/<id>` | Delete stored Responses result |
+| `POST` | `/v1/responses/<id>/cancel` | Cancel an in-progress stored Responses result |
+| `GET` | `/v1/responses/<id>/input_items` | List stored input items for a Responses result |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible non-streaming chat adapter |
 | `POST` | `/v1/messages` | Anthropic-compatible non-streaming messages adapter |
 
@@ -400,6 +406,18 @@ curl http://localhost:51200/v1/chat/completions \
   }'
 ```
 
+**OpenAI Responses-compatible example:**
+
+```bash
+curl http://localhost:51200/v1/responses \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gemini-3-flash",
+    "input": [{"role": "user", "content": [{"type": "input_text", "text": "Say pong"}]}],
+    "stream": false
+  }'
+```
+
 **Anthropic-compatible example:**
 
 ```bash
@@ -417,13 +435,56 @@ curl http://localhost:51200/v1/messages \
 Current adapter scope:
 
 - Text chat/messages.
+- **Responses API compatibility**: Supports `POST /v1/responses` plus basic in-memory retrieve/delete/cancel/input-items endpoints for Codex-style agents.
 - **Model Role Support**: Fully supports the `"model"` role in chat message histories (e.g., from Pi or Hermes agents), validating and routing it identically to the `"assistant"` role.
 - **Request Normalization**: Automatically normalizes loose inputs (non-array messages), legacy prompt/input fields (e.g. `prompt` strings/arrays or `input` structures), and raw native Antigravity requests (`request.contents`) into standard OpenAI/Anthropic format.
 - **Native Reasoning visibility**: Models with thinking capabilities (Gemini 3 Pro, Gemini 3.5 Flash, Claude Sonnet 4.6 Thinking) automatically expose their interleaved thinking blocks in real-time as OpenAI `reasoning_content` or Anthropic `thinking_delta` chunks.
 - Streaming mode is supported as compatibility SSE. The adapter buffers the upstream Antigravity stream, then emits one OpenAI/Anthropic-compatible final delta. Native token-by-token pass-through is not implemented yet.
 - Image input is supported when sent as base64 data URL (`OpenAI image_url.url = data:image/...;base64,...`) or Anthropic base64 source (`type=image`, `source.type=base64`).
 - **Tool/function calling is fully supported** (OpenAI `tools`/`tool_choice` format and Anthropic `tool_use`/`tool_result` via standard translation to Gemini `functionDeclarations`).
+- Responses-compatible tool support is currently limited to `type: "function"` tools. Built-in tools like `web_search`, `file_search`, `computer`, or `code_interpreter` are rejected explicitly.
 
+
+## Connecting Codex / VS Code Agents
+
+`pi-antigravity-rotator` can act as the multi-account rotation backend for agentic frameworks, including **Codex** executing in VS Code or in the terminal.
+
+Since Codex uses the standard **OpenAI Responses API**, it can seamlessly route its developer-agent workflows through the rotator.
+
+### Configuration for Codex
+
+To connect Codex to your local rotator:
+
+1. **Configure the API Base URL**:
+   In Codex settings (e.g. in your `.codex` config or VS Code configuration), set the OpenAI API base URL to point to your rotator's compatibility adapter:
+   ```json
+   "codex.openai.apiBase": "http://localhost:51200/v1"
+   ```
+   *(Or set the environment variable `OPENAI_BASE_URL=http://localhost:51200/v1` in the workspace shell).*
+
+2. **Set the API Key / Admin Token**:
+   If you have set a `PI_ROTATOR_ADMIN_TOKEN` for your rotator, configure that token as the API key. Otherwise, any non-empty placeholder string (e.g., `sk-antigravity`) works:
+   ```json
+   "codex.openai.apiKey": "your-rotator-admin-token-here"
+   ```
+   *(Or set the environment variable `OPENAI_API_KEY=...` in the shell).*
+
+3. **Select a Supported Model**:
+   Configure Codex to target one of the following models supported by the rotator (which will be mapped to the best available Google Antigravity account/model under the hood):
+   - `gemini-3.5-flash` or `gemini-3.5-flash-high` / `gemini-3.5-flash-low` (Recommended for fast general reasoning)
+   - `gemini-3-pro` or `gemini-pro-agent` (For deep reasoning)
+   - `claude-sonnet-4-6` or `claude-3-5-sonnet` (Alternative routing fallback)
+
+   Example Codex configuration entry:
+   ```json
+   "codex.model": "gemini-3.5-flash-high"
+   ```
+
+### Features Enabled for Codex Agents
+
+- **Native Reasoning Visibility**: If using models with thinking enabled (e.g., `gemini-3.5-flash-high`), interleaved reasoning/thinking blocks are streamed back in real-time as OpenAI `reasoning_content` chunks. This lets Codex inspect the model's inner thoughts before it acts.
+- **Function / Tool Routing**: Function calls emitted by Codex are fully translated to Gemini `functionCalls` and returned back to Codex safely, enabling full agentic capabilities.
+- **Strict Validation**: The rotator strictly validates the Responses input contract and rejects unsupported tools (e.g., `web_search`) proactively to ensure Codex doesn't hit unexpected runtime exceptions.
 
 ## Development Checks
 

@@ -2,15 +2,48 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	anthropicToAntigravityBody,
+	normalizeOpenAIResponsesRequest,
 	normalizeAnthropicMessagesRequest,
 	normalizeOpenAIChatCompletionRequest,
 	openAIToAntigravityBody,
 	parseAntigravitySse,
+	resetResponsesStoreForTests,
 	validateAnthropicMessagesRequest,
 	validateOpenAIChatCompletionRequest,
+	validateOpenAIResponsesRequest,
 } from "../src/compat.js";
 
 describe("compat adapters", () => {
+	it("normalizes OpenAI Responses prompt into input", () => {
+		const normalized = normalizeOpenAIResponsesRequest({
+			model: "gemini-3.5-flash",
+			prompt: "ping",
+		}) as { input: unknown };
+		assert.equal(normalized.input, "ping");
+	});
+
+	it("validates OpenAI Responses contract", () => {
+		const result = validateOpenAIResponsesRequest({
+			model: "gemini-3-flash",
+			input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
+			instructions: "be terse",
+			max_output_tokens: 64,
+			reasoning: { effort: "medium" },
+			tools: [{ type: "function", function: { name: "lookup" } }],
+		});
+		assert.equal(result.ok, true);
+	});
+
+	it("rejects unsupported Responses built-in tools", () => {
+		const result = validateOpenAIResponsesRequest({
+			model: "gemini-3-flash",
+			input: "hello",
+			tools: [{ type: "web_search" }],
+		});
+		assert.equal(result.ok, false);
+		if (!result.ok) assert.match(result.errors.join("; "), /only function tools are supported/);
+	});
+
 	it("validates OpenAI chat completion contract", () => {
 		const result = validateOpenAIChatCompletionRequest({
 			model: "gemini-3-flash",
@@ -202,5 +235,29 @@ describe("compat adapters", () => {
 		});
 		const reqStr = JSON.stringify(body.request);
 		assert.match(reqStr, /"contents":\[{"role":"user","parts":\[{"text":"hello"}\]},{"role":"model","parts":\[{"text":"hi there"}\]}\]/);
+	});
+
+	it("converts Responses function_call input items into assistant tool call history", () => {
+		resetResponsesStoreForTests();
+		const normalized = normalizeOpenAIResponsesRequest({
+			model: "claude-sonnet-4-6",
+			input: [
+				{ type: "function_call", call_id: "call_123", name: "lookup", arguments: { q: "pi" } },
+				{ type: "function_call_output", call_id: "call_123", output: { result: "3.14" } },
+			],
+		});
+		const result = validateOpenAIResponsesRequest(normalized);
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			const body = openAIToAntigravityBody({
+				model: result.value.model,
+				messages: [
+					{ role: "assistant", content: null, tool_calls: [{ id: "call_123", type: "function", function: { name: "lookup", arguments: "{\"q\":\"pi\"}" } }] },
+					{ role: "tool", content: "{\"result\":\"3.14\"}", tool_call_id: "call_123", name: "lookup" },
+				],
+			});
+			assert.match(JSON.stringify(body.request), /"functionCall"/);
+			assert.match(JSON.stringify(body.request), /"functionResponse"/);
+		}
 	});
 });

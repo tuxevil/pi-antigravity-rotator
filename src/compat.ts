@@ -69,6 +69,24 @@ export interface OpenAIChatCompletionRequest {
 	[key: string]: unknown;
 }
 
+export interface OpenAIResponsesRequest {
+	model: string;
+	input?: unknown;
+	instructions?: string | Array<{ type: string; text?: string;[key: string]: unknown }> | null;
+	stream?: boolean;
+	temperature?: number;
+	max_output_tokens?: number;
+	tools?: Array<Record<string, unknown>>;
+	tool_choice?: unknown;
+	reasoning?: { effort?: string | null;[key: string]: unknown } | null;
+	metadata?: Record<string, string>;
+	store?: boolean;
+	previous_response_id?: string | null;
+	conversation?: unknown;
+	parallel_tool_calls?: boolean;
+	[key: string]: unknown;
+}
+
 export interface AnthropicMessagesRequest {
 	model: string;
 	messages: ChatMessage[];
@@ -86,6 +104,39 @@ export interface CompatCompletion {
 	outputTokens: number;
 	responseId?: string;
 	toolCalls?: OpenAIToolCall[];
+}
+
+interface ResponseOutputText {
+	type: "output_text";
+	text: string;
+	annotations: unknown[];
+}
+
+interface ResponseMessageOutputItem {
+	id: string;
+	type: "message";
+	status: "completed";
+	role: "assistant";
+	content: ResponseOutputText[];
+}
+
+interface ResponseFunctionCallOutputItem {
+	id: string;
+	type: "function_call";
+	call_id: string;
+	name: string;
+	arguments: string;
+	status: "completed";
+}
+
+type ResponseOutputItem = ResponseMessageOutputItem | ResponseFunctionCallOutputItem;
+
+interface StoredResponseEntry {
+	response: Record<string, unknown>;
+	inputItems: Array<Record<string, unknown>>;
+	conversationMessages: ChatMessage[];
+	callIdToName: Map<string, string>;
+	expiresAt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +227,39 @@ function isNonEmptyString(value: unknown): value is string {
  */
 const thoughtSignatureCache = new Map<string, string>();
 const THOUGHT_SIGNATURE_CACHE_MAX = 500;
+const RESPONSES_STORE_TTL_MS = 6 * 60 * 60 * 1000;
+const RESPONSES_STORE_MAX = 500;
+const responsesStore = new Map<string, StoredResponseEntry>();
+
+function makeCompatId(prefix: string): string {
+	return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function pruneResponsesStore(now = Date.now()): void {
+	for (const [id, entry] of responsesStore) {
+		if (entry.expiresAt <= now) responsesStore.delete(id);
+	}
+	while (responsesStore.size > RESPONSES_STORE_MAX) {
+		const oldest = responsesStore.keys().next();
+		if (oldest.done) break;
+		responsesStore.delete(oldest.value);
+	}
+}
+
+function getStoredResponse(id: string): StoredResponseEntry | null {
+	pruneResponsesStore();
+	return responsesStore.get(id) || null;
+}
+
+function setStoredResponse(id: string, entry: StoredResponseEntry): void {
+	pruneResponsesStore();
+	responsesStore.set(id, entry);
+	pruneResponsesStore();
+}
+
+export function resetResponsesStoreForTests(): void {
+	responsesStore.clear();
+}
 
 function cacheThoughtSignature(callId: string, signature: string): void {
 	if (thoughtSignatureCache.size >= THOUGHT_SIGNATURE_CACHE_MAX) {
@@ -486,6 +570,103 @@ function normalizeContentBlocks(content: unknown): ChatMessage["content"] {
 	return blocks.length > 0 ? blocks : "";
 }
 
+function normalizeInstructionsContent(content: OpenAIResponsesRequest["instructions"]): ChatMessage["content"] {
+	if (typeof content === "string" || content === null || content === undefined) return content ?? "";
+	return normalizeContentBlocks(content);
+}
+
+function contentToResponseInputBlocks(content: ChatMessage["content"], role: string): Array<Record<string, unknown>> {
+	if (typeof content === "string") {
+		if (!content) return [];
+		return [{ type: role === "assistant" || role === "model" ? "output_text" : "input_text", text: content }];
+	}
+	if (!Array.isArray(content)) return [];
+	return cleanCacheControl(content).flatMap((part) => {
+		if (!isRecord(part)) return [];
+		if (typeof part.text === "string") {
+			return [{ type: role === "assistant" || role === "model" ? "output_text" : "input_text", text: part.text }];
+		}
+		if (part.type === "image_url" && isRecord(part.image_url) && typeof part.image_url.url === "string") {
+			return [{ type: "input_image", image_url: part.image_url.url }];
+		}
+		return [part];
+	});
+}
+
+type ParsedResponsesInput = {
+	inputItems: Array<Record<string, unknown>>;
+	messages: ChatMessage[];
+};
+
+function parseResponsesInput(input: unknown, callIdToName: Map<string, string> = new Map()): ParsedResponsesInput {
+	if (typeof input === "string") {
+		return {
+			inputItems: [{ id: makeCompatId("in"), type: "message", role: "user", content: [{ type: "input_text", text: input }] }],
+			messages: [{ role: "user", content: input }],
+		};
+	}
+	if (!Array.isArray(input)) return { inputItems: [], messages: [] };
+
+	const inputItems: Array<Record<string, unknown>> = [];
+	const messages: ChatMessage[] = [];
+
+	for (const rawItem of input) {
+		if (typeof rawItem === "string") {
+			inputItems.push({ id: makeCompatId("in"), type: "message", role: "user", content: [{ type: "input_text", text: rawItem }] });
+			messages.push({ role: "user", content: rawItem });
+			continue;
+		}
+		if (!isRecord(rawItem)) continue;
+
+		if (rawItem.type === "function_call_output" && typeof rawItem.call_id === "string") {
+			const outputText = typeof rawItem.output === "string" ? rawItem.output : JSON.stringify(rawItem.output ?? "");
+			const toolName = typeof rawItem.name === "string" ? rawItem.name : (callIdToName.get(rawItem.call_id) || "unknown");
+			inputItems.push({
+				id: makeCompatId("in"),
+				type: "function_call_output",
+				call_id: rawItem.call_id,
+				output: outputText,
+			});
+			messages.push({ role: "tool", content: outputText, name: toolName, tool_call_id: rawItem.call_id });
+			continue;
+		}
+
+		if (rawItem.type === "function_call" && typeof rawItem.name === "string") {
+			const callId = typeof rawItem.call_id === "string" ? rawItem.call_id : makeCompatId("call");
+			const args = typeof rawItem.arguments === "string" ? rawItem.arguments : JSON.stringify(rawItem.arguments ?? {});
+			inputItems.push({
+				id: makeCompatId("in"),
+				type: "function_call",
+				call_id: callId,
+				name: rawItem.name,
+				arguments: args,
+			});
+			messages.push({
+				role: "assistant",
+				content: null,
+				tool_calls: [{ id: callId, type: "function", function: { name: rawItem.name, arguments: args } }],
+			});
+			continue;
+		}
+
+		const isMessage = rawItem.type === "message" || typeof rawItem.role === "string" || "content" in rawItem;
+		if (!isMessage) continue;
+		const rawRole = typeof rawItem.role === "string" ? rawItem.role : "user";
+		const role = rawRole === "developer" ? "system" : rawRole;
+		if (!["system", "user", "assistant", "model", "tool"].includes(role)) continue;
+		const content = "content" in rawItem ? normalizeContentBlocks(rawItem.content) : extractTextFromUnknownContent(rawItem);
+		inputItems.push({
+			id: makeCompatId("in"),
+			type: "message",
+			role: rawRole,
+			content: contentToResponseInputBlocks(content, role),
+		});
+		messages.push({ role: role as ChatMessage["role"], content });
+	}
+
+	return { inputItems, messages };
+}
+
 function messagesFromResponsesInput(input: unknown): ChatMessage[] | null {
 	if (typeof input === "string") return [{ role: "user", content: input }];
 	if (!Array.isArray(input)) return null;
@@ -545,6 +726,55 @@ export function normalizeOpenAIChatCompletionRequest(value: unknown): unknown {
 	return messages ? { ...value, messages } : value;
 }
 
+export function normalizeOpenAIResponsesRequest(value: unknown): unknown {
+	if (!isRecord(value)) return value;
+
+	// Normalize and filter tools array.
+	// Codex / VS Code Responses API sends tools in two layouts:
+	//   1. Standard:   { type: "function", function: { name, description, parameters } }
+	//   2. Flat (v2):  { type: "function", name, description, parameters }  ← Codex uses this
+	// We normalize flat entries to standard layout, drop non-function types, and drop
+	// any function entries still missing a name after normalization.
+	let normalized: Record<string, unknown> = { ...value };
+	if (Array.isArray(value.tools)) {
+		const before = value.tools.length;
+		const filtered: unknown[] = [];
+		for (const t of value.tools) {
+			if (!isRecord(t) || typeof t.type !== "string") continue;
+			if (t.type !== "function") continue;
+
+			// Flat format: name at root level → lift into .function wrapper
+			if (isNonEmptyString(t.name) && !isRecord(t.function)) {
+				filtered.push({
+					type: "function",
+					function: {
+						name: t.name,
+						...(typeof t.description === "string" ? { description: t.description } : {}),
+						...(isRecord(t.parameters) ? { parameters: t.parameters } : {}),
+					},
+				});
+				continue;
+			}
+
+			// Standard format: must have .function.name
+			if (isRecord(t.function) && isNonEmptyString(t.function.name)) {
+				filtered.push(t);
+			}
+			// else: drop (function entry without a usable name)
+		}
+		const dropped = before - filtered.length;
+		if (dropped > 0) {
+			compatLogger.warn(`Filtered ${dropped} unsupported/unnamed tool(s) from Responses request (kept ${filtered.length} function tools)`);
+		}
+		normalized = { ...normalized, tools: filtered.length > 0 ? filtered : undefined };
+	}
+
+	if ("input" in normalized) return normalized;
+	if ("messages" in normalized) return { ...normalized, input: normalized.messages };
+	if ("prompt" in normalized) return { ...normalized, input: normalized.prompt };
+	return normalized;
+}
+
 export function normalizeAnthropicMessagesRequest(value: unknown): unknown {
 	if (!isRecord(value) || Array.isArray(value.messages)) return value;
 	const messages = "messages" in value
@@ -553,6 +783,22 @@ export function normalizeAnthropicMessagesRequest(value: unknown): unknown {
 		? messagesFromResponsesInput(value.input)
 		: messagesFromAntigravityRequest(value);
 	return messages ? { ...value, messages } : value;
+}
+
+function validateResponsesTools(value: unknown): string[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) return ["body.tools must be an array when provided"];
+	const errors: string[] = [];
+	for (const tool of value) {
+		if (!isRecord(tool)) {
+			errors.push("each tool must be an object");
+			continue;
+		}
+		if (tool.type !== "function") {
+			errors.push(`only function tools are supported (got: ${tool.type})`);
+		}
+	}
+	return errors;
 }
 
 export function validateOpenAIChatCompletionRequest(value: unknown): { ok: true; value: OpenAIChatCompletionRequest } | { ok: false; errors: string[] } {
@@ -569,6 +815,33 @@ export function validateOpenAIChatCompletionRequest(value: unknown): { ok: true;
 	return errors.length > 0 ? { ok: false, errors } : { ok: true, value: value as unknown as OpenAIChatCompletionRequest };
 }
 
+export function validateOpenAIResponsesRequest(value: unknown): { ok: true; value: OpenAIResponsesRequest } | { ok: false; errors: string[] } {
+	if (!isRecord(value)) return { ok: false, errors: ["body must be a JSON object"] };
+	const errors: string[] = [];
+	if (!isNonEmptyString(value.model)) errors.push("body.model must be a non-empty string");
+	if (value.stream !== undefined && typeof value.stream !== "boolean") errors.push("body.stream must be boolean when provided");
+	if (value.temperature !== undefined && typeof value.temperature !== "number") errors.push("body.temperature must be number when provided");
+	if (value.max_output_tokens !== undefined && typeof value.max_output_tokens !== "number") errors.push("body.max_output_tokens must be number when provided");
+	if (value.store !== undefined && typeof value.store !== "boolean") errors.push("body.store must be boolean when provided");
+	if (value.previous_response_id !== undefined && value.previous_response_id !== null && !isNonEmptyString(value.previous_response_id)) {
+		errors.push("body.previous_response_id must be a non-empty string or null");
+	}
+	if (value.conversation !== undefined && value.conversation !== null) {
+		errors.push("body.conversation is not supported; use previous_response_id instead");
+	}
+	if (value.metadata !== undefined && !isRecord(value.metadata)) errors.push("body.metadata must be an object when provided");
+	if (value.reasoning !== undefined && value.reasoning !== null && !isRecord(value.reasoning)) {
+		errors.push("body.reasoning must be an object when provided");
+	} else if (isRecord(value.reasoning) && value.reasoning.effort !== undefined && value.reasoning.effort !== null && typeof value.reasoning.effort !== "string") {
+		errors.push("body.reasoning.effort must be a string when provided");
+	}
+	if (value.instructions !== undefined && value.instructions !== null && typeof value.instructions !== "string" && !Array.isArray(value.instructions)) {
+		errors.push("body.instructions must be a string or content array when provided");
+	}
+	errors.push(...validateResponsesTools(value.tools));
+	return errors.length > 0 ? { ok: false, errors } : { ok: true, value: value as unknown as OpenAIResponsesRequest };
+}
+
 export function validateAnthropicMessagesRequest(value: unknown): { ok: true; value: AnthropicMessagesRequest } | { ok: false; errors: string[] } {
 	if (!isRecord(value)) return { ok: false, errors: ["body must be a JSON object"] };
 	const errors: string[] = [];
@@ -582,6 +855,154 @@ export function validateAnthropicMessagesRequest(value: unknown): { ok: true; va
 }
 
 type GeminiContent = { role: "user" | "model"; parts: unknown[] };
+
+type ResponsesConversionResult = {
+	chatRequest: OpenAIChatCompletionRequest;
+	inputItems: Array<Record<string, unknown>>;
+	conversationMessages: ChatMessage[];
+	previousResponseId: string | null;
+};
+
+function convertResponsesToChatRequest(input: OpenAIResponsesRequest): ResponsesConversionResult {
+	const previousResponseId = input.previous_response_id ?? null;
+	const previous = previousResponseId ? getStoredResponse(previousResponseId) : null;
+	if (previousResponseId && !previous) {
+		throw new Error(`previous_response_id not found: ${previousResponseId}`);
+	}
+
+	const parsed = parseResponsesInput(input.input, previous?.callIdToName);
+	const conversationMessages = [
+		...(previous?.conversationMessages ?? []),
+		...parsed.messages,
+	];
+	const chatMessages = [
+		...(input.instructions ? [{ role: "system" as const, content: normalizeInstructionsContent(input.instructions) }] : []),
+		...conversationMessages,
+	];
+
+	return {
+		chatRequest: {
+			model: input.model,
+			messages: chatMessages,
+			stream: input.stream,
+			temperature: input.temperature,
+			max_tokens: input.max_output_tokens,
+			tools: input.tools as OpenAITool[] | undefined,
+			tool_choice: input.tool_choice,
+			reasoning_effort: typeof input.reasoning?.effort === "string" ? input.reasoning.effort : undefined,
+			parallel_tool_calls: input.parallel_tool_calls,
+		},
+		inputItems: parsed.inputItems,
+		conversationMessages,
+		previousResponseId,
+	};
+}
+
+function responseUsageFromCompletion(completion: CompatCompletion): Record<string, unknown> {
+	return {
+		input_tokens: completion.inputTokens,
+		input_tokens_details: { cached_tokens: 0 },
+		output_tokens: completion.outputTokens,
+		output_tokens_details: { reasoning_tokens: 0 },
+		total_tokens: completion.inputTokens + completion.outputTokens,
+	};
+}
+
+function buildResponsesOutput(completion: CompatCompletion): { output: ResponseOutputItem[]; outputText: string; callIdToName: Map<string, string> } {
+	const output: ResponseOutputItem[] = [];
+	const callIdToName = new Map<string, string>();
+	// Emit reasoning item first (before message text) when thinking content is present
+	if (completion.thinkingText) {
+		output.push({
+			id: makeCompatId("rs"),
+			type: "reasoning",
+			status: "completed",
+			summary: [{ type: "summary_text", text: completion.thinkingText }],
+		} as unknown as ResponseOutputItem);
+	}
+	if (completion.text) {
+		output.push({
+			id: makeCompatId("msg"),
+			type: "message",
+			status: "completed",
+			role: "assistant",
+			content: [{ type: "output_text", text: completion.text, annotations: [] }],
+		});
+	}
+	for (const toolCall of completion.toolCalls ?? []) {
+		callIdToName.set(toolCall.id, toolCall.function.name);
+		output.push({
+			id: makeCompatId("fc"),
+			type: "function_call",
+			call_id: toolCall.id,
+			name: toolCall.function.name,
+			arguments: toolCall.function.arguments,
+			status: "completed",
+		});
+	}
+	return { output, outputText: completion.text, callIdToName };
+}
+
+function buildAssistantMessageFromCompletion(completion: CompatCompletion): ChatMessage {
+	return completion.toolCalls && completion.toolCalls.length > 0
+		? { role: "assistant", content: completion.text || null, tool_calls: completion.toolCalls }
+		: { role: "assistant", content: completion.text };
+}
+
+function buildResponsesResponse(
+	request: OpenAIResponsesRequest,
+	responseId: string,
+	createdAt: number,
+	completion: CompatCompletion,
+	status: "in_progress" | "completed" | "cancelled",
+	previousResponseId: string | null,
+): Record<string, unknown> {
+	const { output, outputText } = buildResponsesOutput(completion);
+	return {
+		id: responseId,
+		object: "response",
+		created_at: createdAt,
+		status,
+		error: null,
+		incomplete_details: null,
+		instructions: request.instructions ?? null,
+		max_output_tokens: request.max_output_tokens ?? null,
+		model: request.model,
+		output,
+		output_text: outputText,
+		parallel_tool_calls: request.parallel_tool_calls ?? true,
+		previous_response_id: previousResponseId,
+		reasoning: { effort: request.reasoning?.effort ?? null },
+		store: request.store !== false,
+		temperature: request.temperature ?? null,
+		text: { format: { type: "text" } },
+		tool_choice: request.tool_choice ?? "auto",
+		tools: Array.isArray(request.tools) ? request.tools : [],
+		top_p: null,
+		truncation: "disabled",
+		usage: responseUsageFromCompletion(completion),
+		metadata: isRecord(request.metadata) ? request.metadata : {},
+	};
+}
+
+function saveResponsesEntry(
+	response: Record<string, unknown>,
+	inputItems: Array<Record<string, unknown>>,
+	conversationMessages: ChatMessage[],
+	completion: CompatCompletion,
+): void {
+	const responseId = typeof response.id === "string" ? response.id : null;
+	if (!responseId) return;
+	const { callIdToName } = buildResponsesOutput(completion);
+	const mergedConversation = [...conversationMessages, buildAssistantMessageFromCompletion(completion)];
+	setStoredResponse(responseId, {
+		response,
+		inputItems,
+		conversationMessages: mergedConversation,
+		callIdToName,
+		expiresAt: Date.now() + RESPONSES_STORE_TTL_MS,
+	});
+}
 
 export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): RequestBody {
 	// Separate system messages from conversation turns
@@ -927,6 +1348,10 @@ function writeJson(res: ServerResponse, status: number, payload: unknown, header
 	res.end(JSON.stringify(payload));
 }
 
+function writeResponsesEvent(res: ServerResponse, payload: Record<string, unknown>): void {
+	res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
 function summarizeCompatRequest(body: RequestBody): string {
 	const request = isRecord(body.request) ? body.request : {};
 	const contents = Array.isArray(request.contents) ? request.contents : [];
@@ -1148,6 +1573,249 @@ async function streamCompatSse(
 	return { text, inputTokens, outputTokens, responseId, toolCalls: undefined };
 }
 
+async function streamResponsesSse(
+	body: unknown,
+	req: IncomingMessage,
+	res: ServerResponse,
+	request: OpenAIResponsesRequest,
+	responseId: string,
+	previousResponseId: string | null,
+	createdAt: number,
+): Promise<CompatCompletion> {
+	const nodeStream = Readable.fromWeb(body as import("node:stream/web").ReadableStream);
+	let text = "";
+	let thinkingText = "";
+	let inputTokens = 0;
+	let outputTokens = 0;
+	const toolCalls: OpenAIToolCall[] = [];
+	let toolCallIndex = 0;
+	let nextOutputIndex = 0;
+	let messageOutputIndex = -1;
+	let messageItemId = "";
+	let reasoningOutputIndex = -1;
+	let reasoningItemId = "";
+	let reasoningDone = false;
+	let reqClosed = false;
+	req.once("close", () => { reqClosed = true; });
+
+	res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
+	const emptyCompletion: CompatCompletion = { text: "", thinkingText: undefined, inputTokens: 0, outputTokens: 0, toolCalls: [] };
+	writeResponsesEvent(res, { type: "response.created", response: buildResponsesResponse(request, responseId, createdAt, emptyCompletion, "in_progress", previousResponseId) });
+	writeResponsesEvent(res, { type: "response.in_progress", response: buildResponsesResponse(request, responseId, createdAt, emptyCompletion, "in_progress", previousResponseId) });
+
+	let tailBuffer = "";
+	try {
+		for await (const chunk of nodeStream) {
+			if (reqClosed) {
+				nodeStream.destroy();
+				break;
+			}
+			tailBuffer += chunk.toString();
+			let newlineIdx;
+			while ((newlineIdx = tailBuffer.indexOf("\n")) >= 0) {
+				const line = tailBuffer.slice(0, newlineIdx).trim();
+				tailBuffer = tailBuffer.slice(newlineIdx + 1);
+				if (!line.startsWith("data:")) continue;
+				const payload = line.slice(5).trim();
+				if (!payload || payload === "[DONE]") continue;
+				try {
+					const parsed = JSON.parse(payload) as Record<string, unknown>;
+					const response = isRecord(parsed.response) ? parsed.response : parsed;
+					const candidates = Array.isArray(response.candidates) ? response.candidates : [];
+					for (const candidate of candidates) {
+						if (!isRecord(candidate) || !isRecord(candidate.content) || !Array.isArray(candidate.content.parts)) continue;
+						for (const part of candidate.content.parts) {
+							if (!isRecord(part)) continue;
+							compatLogger.warn(`[RSN-PART] thought=${String(part.thought)} textLen=${typeof part.text === 'string' ? part.text.length : 'n/a'} keys=${Object.keys(part).join(',')}`);
+							if (typeof part.text === "string" && part.text) {
+								if (part.thought === true) {
+									compatLogger.debug(`[RSN] turn thought chunk len=${part.text.length} reasoningDone=${reasoningDone} idx=${reasoningOutputIndex}`);
+									// Stream reasoning content via Responses API reasoning events.
+									// First thought chunk: open the reasoning output item.
+									if (reasoningOutputIndex === -1) {
+										reasoningOutputIndex = nextOutputIndex++;
+										reasoningItemId = makeCompatId("rs");
+										writeResponsesEvent(res, {
+											type: "response.output_item.added",
+											output_index: reasoningOutputIndex,
+											item: { id: reasoningItemId, type: "reasoning", status: "in_progress", summary: [] },
+										});
+									}
+									writeResponsesEvent(res, {
+										type: "response.reasoning_summary_text.delta",
+										item_id: reasoningItemId,
+										output_index: reasoningOutputIndex,
+										summary_index: 0,
+										delta: part.text,
+									});
+									thinkingText += part.text;
+									continue;
+								}
+								// Non-thought text arriving: close reasoning item immediately so Codex
+								// sees a completed reasoning block before any content/tool items.
+								if (reasoningOutputIndex !== -1 && !reasoningDone) {
+									reasoningDone = true;
+									writeResponsesEvent(res, { type: "response.reasoning_summary_text.done", item_id: reasoningItemId, output_index: reasoningOutputIndex, summary_index: 0, text: thinkingText });
+									writeResponsesEvent(res, { type: "response.output_item.done", output_index: reasoningOutputIndex, item: { id: reasoningItemId, type: "reasoning", status: "completed", summary: [{ type: "summary_text", text: thinkingText }] } });
+								}
+								if (messageOutputIndex === -1) {
+									messageOutputIndex = nextOutputIndex++;
+									messageItemId = makeCompatId("msg");
+									writeResponsesEvent(res, {
+										type: "response.output_item.added",
+										output_index: messageOutputIndex,
+										item: {
+											id: messageItemId,
+											type: "message",
+											status: "completed",
+											role: "assistant",
+											content: [{ type: "output_text", text: "", annotations: [] }],
+										},
+									});
+								}
+								text += part.text;
+								writeResponsesEvent(res, {
+									type: "response.output_text.delta",
+									item_id: messageItemId,
+									output_index: messageOutputIndex,
+									content_index: 0,
+									delta: part.text,
+								});
+							} else if (isRecord(part.functionCall)) {
+								// functionCall arriving: close reasoning item immediately if still open
+								compatLogger.debug(`[RSN] functionCall arrived reasoningDone=${reasoningDone} idx=${reasoningOutputIndex}`);
+								if (reasoningOutputIndex !== -1 && !reasoningDone) {
+									reasoningDone = true;
+									writeResponsesEvent(res, { type: "response.reasoning_summary_text.done", item_id: reasoningItemId, output_index: reasoningOutputIndex, summary_index: 0, text: thinkingText });
+									writeResponsesEvent(res, { type: "response.output_item.done", output_index: reasoningOutputIndex, item: { id: reasoningItemId, type: "reasoning", status: "completed", summary: [{ type: "summary_text", text: thinkingText }] } });
+								}
+								const fc = part.functionCall;
+								const name = typeof fc.name === "string" ? fc.name : "unknown";
+								const args = fc.args !== undefined ? JSON.stringify(fc.args) : "{}";
+								const callId = `call_${Date.now().toString(36)}_${toolCallIndex++}`;
+								if (typeof part.thoughtSignature === "string" && part.thoughtSignature) {
+									cacheThoughtSignature(callId, part.thoughtSignature);
+								}
+								toolCalls.push({ id: callId, type: "function", function: { name, arguments: args } });
+								const item = {
+									id: makeCompatId("fc"),
+									type: "function_call",
+									call_id: callId,
+									name,
+									arguments: args,
+									status: "completed",
+								};
+								const outputIndex = nextOutputIndex++;
+								writeResponsesEvent(res, { type: "response.output_item.added", output_index: outputIndex, item });
+								writeResponsesEvent(res, { type: "response.function_call_arguments.delta", item_id: item.id, output_index: outputIndex, delta: args });
+								writeResponsesEvent(res, { type: "response.function_call_arguments.done", item_id: item.id, output_index: outputIndex, arguments: args });
+								writeResponsesEvent(res, { type: "response.output_item.done", output_index: outputIndex, item });
+							}
+						}
+					}
+					const usage = isRecord(response.usageMetadata) ? response.usageMetadata : isRecord(response.usage) ? response.usage : null;
+					if (usage) {
+						if (typeof usage.promptTokenCount === "number") inputTokens = usage.promptTokenCount;
+						if (typeof usage.candidatesTokenCount === "number") outputTokens = usage.candidatesTokenCount;
+						if (typeof usage.input_tokens === "number") inputTokens = usage.input_tokens;
+						if (typeof usage.output_tokens === "number") outputTokens = usage.output_tokens;
+					}
+				} catch {
+					// Ignore malformed JSON chunks
+				}
+			}
+		}
+	} catch (err) {
+		compatLogger.warn(`Responses stream read error: ${err}`);
+	}
+
+	const completion: CompatCompletion = {
+		text,
+		thinkingText: thinkingText || undefined,
+		inputTokens,
+		outputTokens,
+		toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+	};
+	if (!reqClosed && !res.writableEnded) {
+		// Close reasoning item if it was never closed mid-stream
+		if (reasoningOutputIndex !== -1 && !reasoningDone) {
+			writeResponsesEvent(res, {
+				type: "response.reasoning_summary_text.done",
+				item_id: reasoningItemId,
+				output_index: reasoningOutputIndex,
+				summary_index: 0,
+				text: thinkingText,
+			});
+			writeResponsesEvent(res, {
+				type: "response.output_item.done",
+				output_index: reasoningOutputIndex,
+				item: {
+					id: reasoningItemId,
+					type: "reasoning",
+					status: "completed",
+					summary: [{ type: "summary_text", text: thinkingText }],
+				},
+			});
+		}
+		if (messageOutputIndex !== -1) {
+			writeResponsesEvent(res, {
+				type: "response.output_text.done",
+				item_id: messageItemId,
+				output_index: messageOutputIndex,
+				content_index: 0,
+				text,
+			});
+			writeResponsesEvent(res, {
+				type: "response.output_item.done",
+				output_index: messageOutputIndex,
+				item: {
+					id: messageItemId,
+					type: "message",
+					status: "completed",
+					role: "assistant",
+					content: [{ type: "output_text", text, annotations: [] }],
+				},
+			});
+		}
+		writeResponsesEvent(res, {
+			type: "response.completed",
+			response: buildResponsesResponse(request, responseId, createdAt, completion, "completed", previousResponseId),
+		});
+		res.end();
+	}
+	return completion;
+}
+
+async function completeResponsesViaRotator(
+	req: IncomingMessage,
+	res: ServerResponse,
+	rotator: AccountRotator,
+	request: OpenAIResponsesRequest,
+	body: RequestBody,
+	responseId: string,
+	previousResponseId: string | null,
+): Promise<{ completion: CompatCompletion; status: number; errorText?: string; streamed: boolean }> {
+	const createdAt = Math.floor(Date.now() / 1000);
+	const outcome = await withRotation(rotator, body.model, flattenHeaders(req.headers), body,
+		async (response) => {
+			const completion = await streamResponsesSse(response.body, req, res, request, responseId, previousResponseId, createdAt);
+			if (completion.inputTokens > 0 || completion.outputTokens > 0) {
+				rotator.recordTokenUsage(body.displayModel || body.model, completion.inputTokens, completion.outputTokens);
+			}
+			return completion;
+		},
+	);
+	if (!outcome.ok) {
+		return {
+			completion: { text: "", inputTokens: 0, outputTokens: 0 },
+			status: outcome.status,
+			errorText: outcome.retryAfterMs ? `${outcome.errorText}; retryAfterMs=${outcome.retryAfterMs}` : outcome.errorText,
+			streamed: false,
+		};
+	}
+	return { completion: outcome.result, status: 200, streamed: true };
+}
+
 async function completeViaRotator(
 	req: IncomingMessage,
 	res: ServerResponse,
@@ -1336,6 +2004,94 @@ export async function handleOpenAIChatCompletions(req: IncomingMessage, res: Ser
 			total_tokens: result.completion.inputTokens + result.completion.outputTokens,
 		},
 	});
+}
+
+export async function handleOpenAIResponsesCreate(req: IncomingMessage, res: ServerResponse, rotator: AccountRotator): Promise<void> {
+	let parsed: unknown;
+	try {
+		parsed = await readJsonBody(req);
+	} catch (err) {
+		if (err instanceof PayloadTooLargeError) return writeJson(res, 413, { error: { message: "Payload too large", type: "invalid_request_error" } });
+		return writeJson(res, 400, { error: { message: "Invalid JSON body", type: "invalid_request_error" } });
+	}
+
+	const normalized = normalizeOpenAIResponsesRequest(parsed);
+	const validation = validateOpenAIResponsesRequest(normalized);
+	if (!validation.ok) return writeJson(res, 400, { error: { message: validation.errors.join("; "), type: "invalid_request_error" } });
+	compatLogger.debug(`[RESP] model=${validation.value.model} stream=${validation.value.stream} tools=${Array.isArray(validation.value.tools) ? validation.value.tools.length : 0}`);
+
+	let converted: ResponsesConversionResult;
+	try {
+		converted = convertResponsesToChatRequest(validation.value);
+	} catch (err) {
+		return writeJson(res, 400, { error: { message: err instanceof Error ? err.message : String(err), type: "invalid_request_error" } });
+	}
+
+	const responseId = makeCompatId("resp");
+	const createdAt = Math.floor(Date.now() / 1000);
+	const requestBody = openAIToAntigravityBody(converted.chatRequest);
+	requestBody.requestId = responseId;
+
+	if (validation.value.store !== false) {
+		setStoredResponse(responseId, {
+			response: buildResponsesResponse(validation.value, responseId, createdAt, { text: "", inputTokens: 0, outputTokens: 0, toolCalls: [] }, "in_progress", converted.previousResponseId),
+			inputItems: converted.inputItems,
+			conversationMessages: converted.conversationMessages,
+			callIdToName: new Map(),
+			expiresAt: Date.now() + RESPONSES_STORE_TTL_MS,
+		});
+	}
+
+	if (validation.value.stream) {
+		const result = await completeResponsesViaRotator(req, res, rotator, validation.value, requestBody, responseId, converted.previousResponseId);
+		if (result.status !== 200) {
+			responsesStore.delete(responseId);
+			if (!res.headersSent) return writeJson(res, result.status, { error: { message: result.errorText || "Upstream error", type: "upstream_error" } });
+			return;
+		}
+		if (validation.value.store !== false) {
+			const responseObject = buildResponsesResponse(validation.value, responseId, createdAt, result.completion, "completed", converted.previousResponseId);
+			saveResponsesEntry(responseObject, converted.inputItems, converted.conversationMessages, result.completion);
+		}
+		return;
+	}
+
+	const result = await completeViaRotator(req, res, rotator, requestBody, "none");
+	if (result.status !== 200) {
+		responsesStore.delete(responseId);
+		return writeJson(res, result.status, { error: { message: result.errorText || "Upstream error", type: "upstream_error" } });
+	}
+
+	const responseObject = buildResponsesResponse(validation.value, responseId, createdAt, result.completion, "completed", converted.previousResponseId);
+	if (validation.value.store !== false) {
+		saveResponsesEntry(responseObject, converted.inputItems, converted.conversationMessages, result.completion);
+	} else {
+		responsesStore.delete(responseId);
+	}
+	writeJson(res, 200, responseObject);
+}
+
+export function handleOpenAIResponsesRetrieve(_req: IncomingMessage, res: ServerResponse, responseId: string): void {
+	const entry = getStoredResponse(responseId);
+	if (!entry) return writeJson(res, 404, { error: { message: `Response not found: ${responseId}`, type: "invalid_request_error" } });
+	writeJson(res, 200, entry.response);
+}
+
+export function handleOpenAIResponsesDelete(_req: IncomingMessage, res: ServerResponse, responseId: string): void {
+	writeJson(res, 200, { id: responseId, object: "response.deleted", deleted: responsesStore.delete(responseId) });
+}
+
+export function handleOpenAIResponsesCancel(_req: IncomingMessage, res: ServerResponse, responseId: string): void {
+	const entry = getStoredResponse(responseId);
+	if (!entry) return writeJson(res, 404, { error: { message: `Response not found: ${responseId}`, type: "invalid_request_error" } });
+	if (entry.response.status === "in_progress") entry.response.status = "cancelled";
+	writeJson(res, 200, entry.response);
+}
+
+export function handleOpenAIResponsesInputItems(_req: IncomingMessage, res: ServerResponse, responseId: string): void {
+	const entry = getStoredResponse(responseId);
+	if (!entry) return writeJson(res, 404, { error: { message: `Response not found: ${responseId}`, type: "invalid_request_error" } });
+	writeJson(res, 200, { object: "list", data: entry.inputItems, has_more: false, first_id: entry.inputItems[0]?.id ?? null, last_id: entry.inputItems.at(-1)?.id ?? null });
 }
 
 export async function handleAnthropicMessages(req: IncomingMessage, res: ServerResponse, rotator: AccountRotator): Promise<void> {

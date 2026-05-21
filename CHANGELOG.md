@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-05-21
+
+### Added
+- **Discord Server Integration**: Added direct links and a styled interactive badge to the official project Discord server for community coordination.
+- **Account Quota Donations UI**: Integrated a detailed step-by-step guide directly inside the dashboard's "Support the Creator" modal on how to safely donate a secondary Google account quota, along with a one-click guide link to the README.
+- **README Guide on Quota Donations**: Added comprehensive instructions in the README on how to extract and securely share secondary/throwaway account credentials, including clear steps on how to revoke access at any time from Google settings.
+
 ## [2.1.0] - 2026-05-21
 
 ### Added

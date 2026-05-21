@@ -2056,7 +2056,8 @@ var TOKEN_MODEL_COLORS = {
   'gemini-3.1-pro-high': '#3b82f6',      // Azul
   'gemini-3.1-pro-low': '#38bdf8',       // Celeste
   'gemini-3-flash': '#4ade80',           // Verde
-  'gemini-3.5-flash-low': '#a3e635',     // Lime
+  'gemini-3.5-flash-low': '#a3e635',     // Lime (legacy alias)
+  'gemini-3.5-flash-medium': '#a3e635',  // Lime
   'gemini-3.5-flash-high': '#84cc16',    // Darker Lime
   'gemini-3.5-flash': '#84cc16',
   'gemini-3.1-pro': '#fb923c',           // Fallback genérico
@@ -2084,6 +2085,7 @@ var MODEL_PRICING_CLIENT = {
   'gemini-3-flash':           { input: 0.50,  output: 3.00  },
   'gemini-3.5-flash':         { input: 0.50,  output: 3.00  },
   'gemini-3.5-flash-low':     { input: 0.50,  output: 3.00  },
+  'gemini-3.5-flash-medium':  { input: 0.50,  output: 3.00  },
   'gemini-3.5-flash-high':    { input: 0.50,  output: 3.00  },
   'gpt-oss-120b-medium':      { input: 2.00,  output: 10.00 },
 };

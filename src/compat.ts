@@ -157,6 +157,7 @@ const MODEL_SPECS: Record<string, ModelSpec> = {
 	"gemini-3.1-pro-low":        { maxOutputTokens: 65535, thinkingBudget: 1001,  isThinking: true },
 	"gemini-3.1-pro-preview":    { maxOutputTokens: 65535, thinkingBudget: 10001, isThinking: true },
 	"gemini-3.5-flash":          { maxOutputTokens: 65536, thinkingBudget: 10000, isThinking: true },
+	"gemini-3.5-flash-medium":   { maxOutputTokens: 65536, thinkingBudget: 4000,  isThinking: true },
 	"gemini-3.5-flash-low":      { maxOutputTokens: 65536, thinkingBudget: 4000,  isThinking: true },
 	"gemini-3.5-flash-high":     { maxOutputTokens: 65536, thinkingBudget: 10000, isThinking: true },
 	"gemini-3-flash":            { maxOutputTokens: 65536, thinkingBudget: 4000,  isThinking: true },
@@ -1095,7 +1096,14 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 			// Include tool_call_id so Gemini can pass it as tool_use_id to Claude
 			const toolCallId = msg.tool_call_id;
 			let responseData: unknown;
-			try { responseData = JSON.parse(responseText); } catch { responseData = { output: responseText }; }
+			try {
+				const parsed = JSON.parse(responseText);
+				// Cloud Code proto requires functionResponse.response to be an object, not an array.
+				// Wrap arrays (and other non-object primitives) so the field is always a plain object.
+				responseData = (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed))
+					? parsed
+					: { output: parsed };
+			} catch { responseData = { output: responseText }; }
 			// Include id only for Claude — Gemini native models reject the id field in functionResponse
 			contents.push({ role: "user", parts: [{ functionResponse: { ...(isClaude && toolCallId ? { id: toolCallId } : {}), name: fnName, response: responseData } }] });
 		} else {
@@ -1188,7 +1196,7 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 
 	let mappedModel = input.model;
 	if (mappedModel === "gemini-3.1-pro-high") mappedModel = "gemini-pro-agent";
-	if (mappedModel === "gemini-3.5-flash-high" || mappedModel === "gemini-3.5-flash") mappedModel = "gemini-3-flash-agent";
+	if (mappedModel === "gemini-3.5-flash-high" || mappedModel === "gemini-3.5-flash" || mappedModel === "gemini-3.5-flash-medium") mappedModel = "gemini-3-flash-agent";
 	if (mappedModel === "gpt-oss-120b") mappedModel = "gpt-oss-120b-medium";
 
 	return {
@@ -1626,10 +1634,8 @@ async function streamResponsesSse(
 						if (!isRecord(candidate) || !isRecord(candidate.content) || !Array.isArray(candidate.content.parts)) continue;
 						for (const part of candidate.content.parts) {
 							if (!isRecord(part)) continue;
-							compatLogger.warn(`[RSN-PART] thought=${String(part.thought)} textLen=${typeof part.text === 'string' ? part.text.length : 'n/a'} keys=${Object.keys(part).join(',')}`);
 							if (typeof part.text === "string" && part.text) {
 								if (part.thought === true) {
-									compatLogger.debug(`[RSN] turn thought chunk len=${part.text.length} reasoningDone=${reasoningDone} idx=${reasoningOutputIndex}`);
 									// Stream reasoning content via Responses API reasoning events.
 									// First thought chunk: open the reasoning output item.
 									if (reasoningOutputIndex === -1) {
@@ -1683,7 +1689,6 @@ async function streamResponsesSse(
 								});
 							} else if (isRecord(part.functionCall)) {
 								// functionCall arriving: close reasoning item immediately if still open
-								compatLogger.debug(`[RSN] functionCall arrived reasoningDone=${reasoningDone} idx=${reasoningOutputIndex}`);
 								if (reasoningOutputIndex !== -1 && !reasoningDone) {
 									reasoningDone = true;
 									writeResponsesEvent(res, { type: "response.reasoning_summary_text.done", item_id: reasoningItemId, output_index: reasoningOutputIndex, summary_index: 0, text: thinkingText });
@@ -1859,7 +1864,7 @@ async function completeViaRotator(
 
 
 const MODEL_CATALOG = [
-	{ id: "gemini-3.5-flash-low", family: "gemini-3.5-flash", ctx: 1048576, quotaPool: "gemini-3.5-flash", multimodal: true, tools: true },
+	{ id: "gemini-3.5-flash-medium", family: "gemini-3.5-flash", ctx: 1048576, quotaPool: "gemini-3.5-flash", multimodal: true, tools: true },
 	{ id: "gemini-3.5-flash-high", family: "gemini-3.5-flash", ctx: 1048576, quotaPool: "gemini-3.5-flash", multimodal: true, tools: true },
 	{ id: "gemini-3-flash", family: "gemini-3.5-flash", ctx: 1048576, quotaPool: "gemini-3.5-flash", multimodal: true, tools: true },
 	{ id: "gemini-3.1-pro-low", family: "gemini-3.1-pro", ctx: 1048576, quotaPool: "gemini-3.1-pro", multimodal: true, tools: true },
@@ -2018,7 +2023,6 @@ export async function handleOpenAIResponsesCreate(req: IncomingMessage, res: Ser
 	const normalized = normalizeOpenAIResponsesRequest(parsed);
 	const validation = validateOpenAIResponsesRequest(normalized);
 	if (!validation.ok) return writeJson(res, 400, { error: { message: validation.errors.join("; "), type: "invalid_request_error" } });
-	compatLogger.debug(`[RESP] model=${validation.value.model} stream=${validation.value.stream} tools=${Array.isArray(validation.value.tools) ? validation.value.tools.length : 0}`);
 
 	let converted: ResponsesConversionResult;
 	try {

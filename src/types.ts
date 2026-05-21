@@ -159,9 +159,9 @@ export function resolveDisplayModelKey(requestModel: string): string {
 		if (lower.includes("-high")) return "gemini-3.1-pro-high";
 		return "gemini-3.1-pro"; // unspecified variant
 	}
-	// Gemini 3.5 Flash — distinguish low vs high
+	// Gemini 3.5 Flash — distinguish medium vs high
 	if (lower.includes("gemini") && lower.includes("3.5") && lower.includes("flash")) {
-		if (lower.includes("-low") || lower.includes("-medium")) return "gemini-3.5-flash-low";
+		if (lower.includes("-low") || lower.includes("-medium")) return "gemini-3.5-flash-medium";
 		if (lower.includes("-high")) return "gemini-3.5-flash-high";
 		return "gemini-3.5-flash"; // unspecified variant
 	}
@@ -440,6 +440,7 @@ export const MODEL_PRICING: Record<
 	"gemini-3-flash": { inputPer1M: 0.50, outputPer1M: 3.00 },
 	"gemini-3.5-flash": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
 	"gemini-3.5-flash-low": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
+	"gemini-3.5-flash-medium": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
 	"gemini-3.5-flash-high": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
 	"gpt-oss-120b-medium": { inputPer1M: 2.00, outputPer1M: 10.00 },
 };

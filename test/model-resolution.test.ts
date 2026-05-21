@@ -42,7 +42,8 @@ describe("model resolution", () => {
 		assert.equal(resolveDisplayModelKey("claude-sonnet-4-6"), "claude-sonnet-4-6");
 		assert.equal(resolveDisplayModelKey("claude-opus-4-6-thinking"), "claude-opus-4-6-thinking");
 		assert.equal(resolveDisplayModelKey("gemini-3-flash-agent"), "gemini-3.5-flash-high");
-		assert.equal(resolveDisplayModelKey("gemini-3.5-flash-medium"), "gemini-3.5-flash-low");
+		assert.equal(resolveDisplayModelKey("gemini-3.5-flash-medium"), "gemini-3.5-flash-medium");
+		assert.equal(resolveDisplayModelKey("gemini-3.5-flash-low"), "gemini-3.5-flash-medium");
 		assert.equal(resolveDisplayModelKey("gpt-oss-120b-medium"), "gpt-oss-120b-medium");
 	});
 

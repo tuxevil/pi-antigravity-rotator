@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-05-21
+
 ### Added
 - **Codex Agent Integration Support**: Out-of-the-box support for connecting agentic frameworks like Codex (executing in VS Code or CLI) by routing OpenAI Responses API payloads and enabling native reasoning streaming, function-calling translation, and strict contract validation.
 - **OpenAI Responses API Compatibility**: Full compatibility with the OpenAI Responses endpoint family (`POST /v1/responses`, `GET /v1/responses/<id>`, `DELETE /v1/responses/<id>`, `POST /v1/responses/<id>/cancel`, and `GET /v1/responses/<id>/input_items`). Includes full support for structured inputs, in-memory conversation/responses storage, and native tool-calling/reasoning visibility, tailored for advanced agentic frameworks.

@@ -29,6 +29,8 @@ export interface AccountConfig {
 	type?: AccountType;
 	tier?: AccountTier;
 	familyManager?: boolean;
+	codexRefreshToken?: string;
+	codexAccountId?: string;
 }
 
 export interface Config {
@@ -113,6 +115,11 @@ export const QUOTA_MODEL_KEYS: Record<string, { key: string; altKeys: string[]; 
 		altKeys: ["gemini-3.5-flash-low", "gemini-3.5-flash-medium", "gemini-3.5-flash-high", "gemini-3-flash-agent", "gemini-3-flash"],
 		display: "G3.5Flash",
 	},
+	"gpt-5.5": { key: "gpt-5.5", altKeys: [], display: "GPT5.5" },
+	"gpt-5.4": { key: "gpt-5.4", altKeys: [], display: "GPT5.4" },
+	"gpt-5.4-mini": { key: "gpt-5.4-mini", altKeys: [], display: "GPT5.4m" },
+	"gpt-5.3-codex": { key: "gpt-5.3-codex", altKeys: [], display: "GPT5.3c" },
+	"gpt-5.2": { key: "gpt-5.2", altKeys: [], display: "GPT5.2" },
 };
 
 // Map request model names to quota model keys
@@ -121,6 +128,11 @@ export function resolveQuotaModelKey(requestModel: string): string | null {
 	// Explicit mappings to avoid substring collisions
 	if (lower.includes("gemini-3-flash-agent")) return "gemini-3.5-flash";
 	if (lower.includes("gpt-oss")) return "claude-opus-4-6-thinking";
+	if (lower.includes("gpt-5.5")) return "gpt-5.5";
+	if (lower.includes("gpt-5.4-mini")) return "gpt-5.4-mini";
+	if (lower.includes("gpt-5.4")) return "gpt-5.4";
+	if (lower.includes("gpt-5.3-codex")) return "gpt-5.3-codex";
+	if (lower.includes("gpt-5.2")) return "gpt-5.2";
 
 	for (const [, config] of Object.entries(QUOTA_MODEL_KEYS)) {
 		if (lower.includes(config.key) || config.altKeys.some((alt) => lower.includes(alt))) {
@@ -146,6 +158,11 @@ export function resolveDisplayModelKey(requestModel: string): string {
 	// Explicit agent and gpt-oss overrides
 	if (lower.includes("gemini-3-flash-agent")) return "gemini-3.5-flash-high";
 	if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b-medium";
+	if (lower.includes("gpt-5.5")) return "gpt-5.5";
+	if (lower.includes("gpt-5.4-mini")) return "gpt-5.4-mini";
+	if (lower.includes("gpt-5.4")) return "gpt-5.4";
+	if (lower.includes("gpt-5.3-codex")) return "gpt-5.3-codex";
+	if (lower.includes("gpt-5.2")) return "gpt-5.2";
 
 	// Claude — distinguish sonnet vs opus
 	if (lower.includes("claude")) {
@@ -176,6 +193,8 @@ export interface AccountRuntime {
 	config: AccountConfig;
 	accessToken: string | null;
 	tokenExpires: number;
+	codexAccessToken?: string | null;
+	codexTokenExpires?: number;
 	// Rotation tracking (per-model via rotator)
 	requestsSinceRotation: number;
 	totalRequests: number;
@@ -443,6 +462,11 @@ export const MODEL_PRICING: Record<
 	"gemini-3.5-flash-medium": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
 	"gemini-3.5-flash-high": { inputPer1M: 1.50, outputPer1M: 9.00, cachingPer1M: 0.15, cachingStoragePer1MPerHour: 1.00 },
 	"gpt-oss-120b-medium": { inputPer1M: 2.00, outputPer1M: 10.00 },
+	"gpt-5.5": { inputPer1M: 5.00, outputPer1M: 30.00, cachingPer1M: 0.50 },
+	"gpt-5.4": { inputPer1M: 2.50, outputPer1M: 15.00, cachingPer1M: 0.25 },
+	"gpt-5.4-mini": { inputPer1M: 0.75, outputPer1M: 4.50, cachingPer1M: 0.075 },
+	"gpt-5.3-codex": { inputPer1M: 1.75, outputPer1M: 14.00, cachingPer1M: 0.175 },
+	"gpt-5.2": { inputPer1M: 1.75, outputPer1M: 14.00, cachingPer1M: 0.175 },
 };
 
 // Antigravity OAuth constants (same as pi-mono)

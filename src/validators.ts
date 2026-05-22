@@ -43,6 +43,8 @@ export function validateAccountConfig(value: unknown, path = "account"): Validat
 		errors.push(`${path}.tier must be "ultra", "pro", "plus", "free", or "unknown"`);
 	}
 	if (value.familyManager !== undefined && typeof value.familyManager !== "boolean") errors.push(`${path}.familyManager must be a boolean`);
+	if (value.codexRefreshToken !== undefined && typeof value.codexRefreshToken !== "string") errors.push(`${path}.codexRefreshToken must be a string`);
+	if (value.codexAccountId !== undefined && typeof value.codexAccountId !== "string") errors.push(`${path}.codexAccountId must be a string`);
 
 	return errors.length > 0 ? fail(errors) : ok(value as unknown as AccountConfig);
 }

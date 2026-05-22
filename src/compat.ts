@@ -4,7 +4,7 @@ import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
 import { logger } from "./logger.js";
 import type { AccountRotator } from "./rotator.js";
 import { resolveQuotaModelKey } from "./types.js";
-import { withRotation, flattenHeaders, type RequestBody } from "./proxy.js";
+import { withRotation, flattenHeaders, extractTokenUsage, type RequestBody } from "./proxy.js";
 
 
 const compatLogger = logger.child("compat");
@@ -1872,6 +1872,11 @@ const MODEL_CATALOG = [
 	{ id: "claude-sonnet-4-6", family: "claude", ctx: 500000, quotaPool: "claude-opus-4-6-thinking", multimodal: true, tools: true },
 	{ id: "claude-opus-4-6-thinking", family: "claude", ctx: 500000, quotaPool: "claude-opus-4-6-thinking", multimodal: true, tools: true },
 	{ id: "gpt-oss-120b-medium", family: "gpt-oss", ctx: 131072, quotaPool: "claude-opus-4-6-thinking", multimodal: false, tools: true },
+	{ id: "gpt-5.5", family: "gpt-5.5", ctx: 200000, quotaPool: "gpt-5.5", multimodal: false, tools: true },
+	{ id: "gpt-5.4", family: "gpt-5.4", ctx: 200000, quotaPool: "gpt-5.4", multimodal: false, tools: true },
+	{ id: "gpt-5.4-mini", family: "gpt-5.4-mini", ctx: 200000, quotaPool: "gpt-5.4-mini", multimodal: false, tools: true },
+	{ id: "gpt-5.3-codex", family: "gpt-5.3-codex", ctx: 200000, quotaPool: "gpt-5.3-codex", multimodal: false, tools: true },
+	{ id: "gpt-5.2", family: "gpt-5.2", ctx: 200000, quotaPool: "gpt-5.2", multimodal: false, tools: true },
 ] as const;
 
 export function serveOpenAIModels(res: ServerResponse): void {
@@ -1973,6 +1978,74 @@ export async function handleOpenAIChatCompletions(req: IncomingMessage, res: Ser
 	if (!validation.ok) return writeJson(res, 400, { error: { message: validation.errors.join("; "), type: "invalid_request_error" } });
 
 	const started = Date.now();
+
+	if (validation.value.model.startsWith("gpt-5.")) {
+		const responsesRequest = convertChatCompletionToResponsesRequest(validation.value);
+		const requestBody: RequestBody = {
+			project: "",
+			model: validation.value.model,
+			request: responsesRequest,
+			requestId: `chatcmpl-${started.toString(36)}`,
+		};
+
+		const headers = flattenHeaders(req.headers);
+		const outcome = await withRotation(rotator, validation.value.model, headers, requestBody, async (response) => {
+			if (validation.value.stream) {
+				return await streamCodexResponsesToChatCompletions(response.body, req, res, validation.value.model);
+			} else {
+				const raw = await response.text();
+				const parsedResponse = JSON.parse(raw);
+				let content = "";
+				if (parsedResponse.output && Array.isArray(parsedResponse.output)) {
+					for (const out of parsedResponse.output) {
+						if (out.content && Array.isArray(out.content)) {
+							for (const part of out.content) {
+								if (part.text) content += part.text;
+							}
+						}
+					}
+				}
+				const inputTokens = parsedResponse.usage?.input_tokens || parsedResponse.usage?.prompt_tokens || 0;
+				const outputTokens = parsedResponse.usage?.output_tokens || parsedResponse.usage?.completion_tokens || 0;
+
+				res.writeHead(response.status, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({
+					id: `chatcmpl-${started.toString(36)}`,
+					object: "chat.completion",
+					created: Math.floor(started / 1000),
+					model: validation.value.model,
+					choices: [{
+						index: 0,
+						message: {
+							role: "assistant",
+							content,
+						},
+						finish_reason: "stop",
+					}],
+					usage: {
+						prompt_tokens: inputTokens,
+						completion_tokens: outputTokens,
+						total_tokens: inputTokens + outputTokens,
+					},
+				}));
+
+				return { text: content, inputTokens, outputTokens };
+			}
+		});
+
+		if (!outcome.ok) {
+			compatLogger.warn(`OpenAI compat upstream failed status=${outcome.status} model=${validation.value.model}`);
+			if (!res.headersSent) {
+				writeJson(res, outcome.status, { error: { message: outcome.errorText || "Upstream error", type: "upstream_error" } });
+			}
+		} else {
+			if (outcome.result.inputTokens > 0 || outcome.result.outputTokens > 0) {
+				rotator.recordTokenUsage(validation.value.model, outcome.result.inputTokens, outcome.result.outputTokens);
+			}
+		}
+		return;
+	}
+
 	const streamMode = validation.value.stream ? "openai" : "none";
 	const result = await completeViaRotator(req, res, rotator, openAIToAntigravityBody(validation.value), streamMode);
 	if (result.status !== 200) {
@@ -2024,6 +2097,73 @@ export async function handleOpenAIResponsesCreate(req: IncomingMessage, res: Ser
 	const validation = validateOpenAIResponsesRequest(normalized);
 	if (!validation.ok) return writeJson(res, 400, { error: { message: validation.errors.join("; "), type: "invalid_request_error" } });
 
+	const responseId = makeCompatId("resp");
+	const createdAt = Math.floor(Date.now() / 1000);
+
+	if (validation.value.model.startsWith("gpt-5.")) {
+		const requestBody: RequestBody = {
+			project: "",
+			model: validation.value.model,
+			request: parsed,
+			requestId: responseId,
+		};
+
+		const headers = flattenHeaders(req.headers);
+		const outcome = await withRotation(rotator, validation.value.model, headers, requestBody, async (response) => {
+			if (validation.value.stream) {
+				res.writeHead(response.status, {
+					"Content-Type": "text/event-stream",
+					"Cache-Control": "no-cache",
+					"Connection": "keep-alive",
+					"X-Accel-Buffering": "no",
+				});
+				const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+				let streamedText = "";
+				for await (const chunk of nodeStream) {
+					res.write(chunk);
+					streamedText += chunk.toString();
+				}
+				res.end();
+
+				const tokenUsage = extractTokenUsage(streamedText);
+				return {
+					text: "streamed",
+					inputTokens: tokenUsage?.inputTokens || 0,
+					outputTokens: tokenUsage?.outputTokens || 0,
+				};
+			} else {
+				const raw = await response.text();
+				res.writeHead(response.status, { "Content-Type": "application/json" });
+				res.end(raw);
+
+				const parsedResponse = JSON.parse(raw);
+				const inputTokens = parsedResponse.usage?.input_tokens || parsedResponse.usage?.prompt_tokens || 0;
+				const outputTokens = parsedResponse.usage?.output_tokens || parsedResponse.usage?.completion_tokens || 0;
+				return {
+					text: raw,
+					inputTokens,
+					outputTokens,
+				};
+			}
+		});
+
+		if (!outcome.ok) {
+			if (!res.headersSent) {
+				writeJson(res, outcome.status, {
+					error: {
+						message: outcome.errorText || "Upstream error",
+						type: "upstream_error",
+					},
+				});
+			}
+		} else {
+			if (outcome.result.inputTokens > 0 || outcome.result.outputTokens > 0) {
+				rotator.recordTokenUsage(validation.value.model, outcome.result.inputTokens, outcome.result.outputTokens);
+			}
+		}
+		return;
+	}
+
 	let converted: ResponsesConversionResult;
 	try {
 		converted = convertResponsesToChatRequest(validation.value);
@@ -2031,8 +2171,6 @@ export async function handleOpenAIResponsesCreate(req: IncomingMessage, res: Ser
 		return writeJson(res, 400, { error: { message: err instanceof Error ? err.message : String(err), type: "invalid_request_error" } });
 	}
 
-	const responseId = makeCompatId("resp");
-	const createdAt = Math.floor(Date.now() / 1000);
 	const requestBody = openAIToAntigravityBody(converted.chatRequest);
 	requestBody.requestId = responseId;
 
@@ -2140,4 +2278,131 @@ export async function handleAnthropicMessages(req: IncomingMessage, res: ServerR
 			output_tokens: result.completion.outputTokens,
 		},
 	});
+}
+
+function convertChatCompletionToResponsesRequest(val: OpenAIChatCompletionRequest): OpenAIResponsesRequest {
+	const input = (val.messages || []).map((m: any) => {
+		let text = "";
+		if (typeof m.content === "string") {
+			text = m.content;
+		} else if (Array.isArray(m.content)) {
+			text = m.content.map((c: any) => c.text || "").join("");
+		}
+		return {
+			role: m.role || "user",
+			content: [
+				{
+					type: "text",
+					text,
+				}
+			]
+		};
+	});
+
+	return {
+		model: val.model,
+		input,
+		stream: !!val.stream,
+		store: false,
+	};
+}
+
+async function streamCodexResponsesToChatCompletions(
+	body: unknown,
+	req: IncomingMessage,
+	res: ServerResponse,
+	model: string,
+): Promise<CompatCompletion> {
+	const nodeStream = Readable.fromWeb(body as import("node:stream/web").ReadableStream);
+	let text = "";
+	let thinkingText = "";
+	let inputTokens = 0;
+	let outputTokens = 0;
+	let reqClosed = false;
+	req.once("close", () => { reqClosed = true; });
+
+	res.writeHead(200, {
+		"Content-Type": "text/event-stream",
+		"Cache-Control": "no-cache",
+		"Connection": "keep-alive",
+		"X-Accel-Buffering": "no",
+	});
+
+	const chatcmplId = `chatcmpl-${Date.now().toString(36)}`;
+	const created = Math.floor(Date.now() / 1000);
+
+	let tailBuffer = "";
+	try {
+		for await (const chunk of nodeStream) {
+			if (reqClosed) {
+				nodeStream.destroy();
+				break;
+			}
+			tailBuffer += chunk.toString();
+			let newlineIdx;
+			while ((newlineIdx = tailBuffer.indexOf("\n")) >= 0) {
+				const line = tailBuffer.slice(0, newlineIdx).trim();
+				tailBuffer = tailBuffer.slice(newlineIdx + 1);
+				if (!line.startsWith("data:")) continue;
+				const payload = line.slice(5).trim();
+				if (!payload || payload === "[DONE]") continue;
+
+				try {
+					const parsed = JSON.parse(payload) as Record<string, any>;
+					if (parsed.type === "response.text.delta" && typeof parsed.delta === "string") {
+						const chunkText = parsed.delta;
+						text += chunkText;
+						res.write(`data: ${JSON.stringify({
+							id: chatcmplId,
+							object: "chat.completion.chunk",
+							created,
+							model,
+							choices: [{
+								index: 0,
+								delta: { content: chunkText },
+								finish_reason: null,
+							}],
+						})}\n\n`);
+					} else if ((parsed.type === "response.reasoning_text.delta" || parsed.type === "response.reasoning_summary_text.delta") && typeof parsed.delta === "string") {
+						const reasoningChunk = parsed.delta;
+						thinkingText += reasoningChunk;
+						res.write(`data: ${JSON.stringify({
+							id: chatcmplId,
+							object: "chat.completion.chunk",
+							created,
+							model,
+							choices: [{
+								index: 0,
+								delta: { reasoning_content: reasoningChunk },
+								finish_reason: null,
+							}],
+						})}\n\n`);
+					} else if (parsed.type === "response.done" && parsed.response?.usage) {
+						inputTokens = parsed.response.usage.input_tokens || parsed.response.usage.prompt_tokens || 0;
+						outputTokens = parsed.response.usage.output_tokens || parsed.response.usage.completion_tokens || 0;
+					}
+				} catch {
+					// Silent JSON parse fail on partial chunks
+				}
+			}
+		}
+	} finally {
+		if (!reqClosed) {
+			res.write(`data: ${JSON.stringify({
+				id: chatcmplId,
+				object: "chat.completion.chunk",
+				created,
+				model,
+				choices: [{
+					index: 0,
+					delta: {},
+					finish_reason: "stop",
+				}],
+			})}\n\n`);
+			res.write("data: [DONE]\n\n");
+			res.end();
+		}
+	}
+
+	return { text, thinkingText: thinkingText || undefined, inputTokens, outputTokens };
 }

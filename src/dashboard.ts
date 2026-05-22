@@ -1717,6 +1717,9 @@ function renderAccounts(data) {
       if (m === 'gemini-3.5-flash') {
         return '<span class="badge badge-model">FLASH</span>';
       }
+      if (m.startsWith('gpt-5.')) {
+        return '<span class="badge badge-model" style="background:rgba(16, 163, 127, 0.15);color:#10a37f">CODEX</span>';
+      }
       return '';
     }).join('');
     var tierLabel = a.tier ? String(a.tier).toUpperCase() : 'UNKNOWN';
@@ -2101,6 +2104,11 @@ var TOKEN_MODEL_COLORS = {
   'gemini-3.5-flash': '#84cc16',
   'gemini-3.1-pro': '#fb923c',           // Fallback genérico
   'gpt-oss-120b-medium': '#a855f7',      // Purpura
+  'gpt-5.5': '#10a37f',                  // Green/Teal Codex
+  'gpt-5.4': '#10a37f',
+  'gpt-5.4-mini': '#10a37f',
+  'gpt-5.3-codex': '#10a37f',
+  'gpt-5.2': '#10a37f',
   '__other__': '#6b7280'
 };
 
@@ -2127,6 +2135,11 @@ var MODEL_PRICING_CLIENT = {
   'gemini-3.5-flash-medium':  { input: 0.50,  output: 3.00  },
   'gemini-3.5-flash-high':    { input: 0.50,  output: 3.00  },
   'gpt-oss-120b-medium':      { input: 2.00,  output: 10.00 },
+  'gpt-5.5':                  { input: 5.00,  output: 30.00 },
+  'gpt-5.4':                  { input: 2.50,  output: 15.00 },
+  'gpt-5.4-mini':             { input: 0.75,  output: 4.50  },
+  'gpt-5.3-codex':            { input: 1.75,  output: 14.00 },
+  'gpt-5.2':                  { input: 1.75,  output: 14.00 },
 };
 
 function calcSavingsFromBuckets(buckets) {

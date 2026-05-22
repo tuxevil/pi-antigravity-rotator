@@ -71,8 +71,8 @@ describe("model resolution", () => {
 		assert.equal(new Set(keys).size, keys.length);
 	});
 
-	it("orders quota model keys: claude, gemini-3.1-pro, gemini-3.5-flash", () => {
+	it("orders quota model keys: claude, gemini-3.1-pro, gemini-3.5-flash, gpt-5.x", () => {
 		const orderedKeys = Object.keys(QUOTA_MODEL_KEYS);
-		assert.deepEqual(orderedKeys, ["claude", "gemini-3.1-pro", "gemini-3.5-flash"]);
+		assert.deepEqual(orderedKeys, ["claude", "gemini-3.1-pro", "gemini-3.5-flash", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"]);
 	});
 });

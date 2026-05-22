@@ -87,6 +87,8 @@ export class AccountRotator {
 			config,
 			accessToken: null,
 			tokenExpires: 0,
+			codexAccessToken: null,
+			codexTokenExpires: 0,
 			requestsSinceRotation: 0,
 			totalRequests: 0,
 			cooldownsByModel: {},
@@ -331,7 +333,7 @@ export class AccountRotator {
 	}
 
 	private async pollAllQuotas(): Promise<void> {
-		const available = this.accounts.filter((a) => !a.disabled && !a.flagged);
+		const available = this.accounts.filter((a) => !a.disabled && !a.flagged && a.config.refreshToken);
 		for (const account of available) {
 			try {
 				await this.ensureValidToken(account);
@@ -911,7 +913,11 @@ export class AccountRotator {
 			}
 			this.startRequest(current, modelKey ?? undefined);
 			try {
-				await this.ensureValidToken(current);
+				if (modelKey && modelKey.startsWith("gpt-5.")) {
+					await this.ensureValidCodexToken(current);
+				} else {
+					await this.ensureValidToken(current);
+				}
 				if (modelKey) this.countModelAssignment(modelKey);
 				return current;
 			} catch (err) {
@@ -951,7 +957,11 @@ export class AccountRotator {
 			this.saveState();
 			this.startRequest(best, modelKey);
 			try {
-				await this.ensureValidToken(best);
+				if (modelKey.startsWith("gpt-5.")) {
+					await this.ensureValidCodexToken(best);
+				} else {
+					await this.ensureValidToken(best);
+				}
 				return best;
 			} catch (err) {
 				this.refundTokenBucket(best, Date.now());
@@ -1600,16 +1610,64 @@ export class AccountRotator {
 		}
 	}
 
+	async ensureValidCodexToken(account: AccountRuntime): Promise<void> {
+		const now = Date.now();
+		if (account.codexAccessToken && account.codexTokenExpires && account.codexTokenExpires > now) {
+			return;
+		}
+
+		if (!account.config.codexRefreshToken) {
+			throw new Error(`OpenAI Codex credentials are not configured for account ${account.config.email}`);
+		}
+
+		this.log(`Refreshing Codex token for ${account.config.label || account.config.email}...`);
+		try {
+			const { refreshCodexToken } = await import("./codex-oauth.js");
+			const data = await refreshCodexToken(account.config.codexRefreshToken);
+
+			account.codexAccessToken = data.accessToken;
+			account.codexTokenExpires = data.expiresAt - 5 * 60 * 1000;
+			account.consecutiveErrors = 0;
+
+			// Save the rotated refresh token back to accounts.json
+			if (data.refreshToken && data.refreshToken !== account.config.codexRefreshToken) {
+				account.config.codexRefreshToken = data.refreshToken;
+				const { saveAccountsConfig, loadOrCreateAccountsConfig } = await import("./account-store.js");
+				const config = loadOrCreateAccountsConfig();
+				const existing = config.accounts.find((a) => a.email.toLowerCase() === account.config.email.toLowerCase());
+				if (existing) {
+					existing.codexRefreshToken = data.refreshToken;
+					saveAccountsConfig(config);
+				}
+			}
+			this.log(`Codex token refreshed for ${account.config.label || account.config.email}`);
+		} catch (err) {
+			const msg = `Codex token refresh error: ${err instanceof Error ? err.message : String(err)}`;
+			this.markError(account, msg);
+			throw new Error(msg);
+		}
+	}
+
 	private isAvailable(account: AccountRuntime, now: number): boolean {
 		if (account.disabled) return false;
 		if (account.flagged) return false;
+		if (!account.config.refreshToken) return false; // Default models are Google-based
 		const defaultCooldown = account.cooldownsByModel["__default__"] ?? 0;
 		if (defaultCooldown > now) return false;
 		return true;
 	}
 
 	private isAvailableForModel(account: AccountRuntime, modelKey: string, now: number): boolean {
-		if (!this.isAvailable(account, now)) return false;
+		if (account.disabled) return false;
+		if (account.flagged) return false;
+
+		// Check credentials for model type
+		if (modelKey.startsWith("gpt-5.")) {
+			if (!account.config.codexRefreshToken) return false;
+		} else {
+			if (!account.config.refreshToken) return false;
+		}
+
 		const modelCooldown = account.cooldownsByModel[modelKey] ?? 0;
 		if (modelCooldown > now) return false;
 		if ((account.inFlightByModel[modelKey] ?? 0) >= (this.config.maxConcurrentRequestsPerAccount ?? 1)) return false;
@@ -1912,6 +1970,8 @@ export class AccountRotator {
 			existing.consecutiveErrors = 0;
 			existing.accessToken = null;
 			existing.tokenExpires = 0;
+			existing.codexAccessToken = null;
+			existing.codexTokenExpires = 0;
 			this.config.accounts[existingIndex] = existing.config;
 			this.log(`${accountConfig.email}: account updated via hosted login`);
 		} else {
@@ -1919,6 +1979,8 @@ export class AccountRotator {
 				config: { ...accountConfig, tier: accountConfig.tier || "unknown" },
 				accessToken: null,
 				tokenExpires: 0,
+				codexAccessToken: null,
+				codexTokenExpires: 0,
 				requestsSinceRotation: 0,
 				totalRequests: 0,
 				cooldownsByModel: {},

@@ -131,17 +131,26 @@ export function ensurePiModelsConfig(): void {
 
 	const providers = (models.providers || {}) as Record<string, Record<string, unknown>>;
 	const antigravity = providers["google-antigravity"] || {};
+	const codex = providers["openai-codex"] || {};
 
-	if (antigravity.baseUrl === "http://localhost:51200") {
-		return;
+	let changed = false;
+	if (antigravity.baseUrl !== "http://localhost:51200") {
+		antigravity.baseUrl = "http://localhost:51200";
+		providers["google-antigravity"] = antigravity;
+		changed = true;
 	}
 
-	antigravity.baseUrl = "http://localhost:51200";
-	providers["google-antigravity"] = antigravity;
-	models.providers = providers;
+	if (codex.baseUrl !== "http://localhost:51200") {
+		codex.baseUrl = "http://localhost:51200";
+		providers["openai-codex"] = codex;
+		changed = true;
+	}
 
-	writeJsonFileAtomic(PI_MODELS_FILE, models);
-	console.log(`  Updated ${PI_MODELS_FILE}`);
+	if (changed) {
+		models.providers = providers;
+		writeJsonFileAtomic(PI_MODELS_FILE, models);
+		console.log(`  Updated ${PI_MODELS_FILE}`);
+	}
 }
 
 export function ensurePiAuthConfig(): void {
@@ -157,18 +166,32 @@ export function ensurePiAuthConfig(): void {
 	}
 
 	const existing = auth["google-antigravity"] as Record<string, unknown> | undefined;
-	if (existing?.type === "oauth" && existing?.refresh === "proxy-managed") {
-		return;
+	const existingCodex = auth["openai-codex"] as Record<string, unknown> | undefined;
+
+	let changed = false;
+	if (existing?.type !== "oauth" || existing?.refresh !== "proxy-managed") {
+		auth["google-antigravity"] = {
+			type: "oauth",
+			refresh: "proxy-managed",
+			access: "proxy-managed",
+			expires: 32503680000000,
+			projectId: "proxy-managed",
+		};
+		changed = true;
 	}
 
-	auth["google-antigravity"] = {
-		type: "oauth",
-		refresh: "proxy-managed",
-		access: "proxy-managed",
-		expires: 32503680000000,
-		projectId: "proxy-managed",
-	};
+	if (existingCodex?.type !== "oauth" || existingCodex?.refresh !== "proxy-managed") {
+		auth["openai-codex"] = {
+			type: "oauth",
+			refresh: "proxy-managed",
+			access: "proxy-managed",
+			expires: 32503680000000,
+		};
+		changed = true;
+	}
 
-	writeJsonFileAtomic(PI_AUTH_FILE, auth);
-	console.log(`  Updated ${PI_AUTH_FILE}`);
+	if (changed) {
+		writeJsonFileAtomic(PI_AUTH_FILE, auth);
+		console.log(`  Updated ${PI_AUTH_FILE}`);
+	}
 }

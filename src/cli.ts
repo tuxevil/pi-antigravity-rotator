@@ -26,6 +26,11 @@ switch (command) {
 		runLogin();
 		break;
 	}
+	case "codex-login": {
+		const { runCodexLogin } = await import("./codex-login.js");
+		runCodexLogin();
+		break;
+	}
 	case "status": {
 		try {
 			const port = 51200;
@@ -49,10 +54,11 @@ switch (command) {
 		console.log("Pi Antigravity Rotator");
 		console.log();
 		console.log("Usage:");
-		console.log("  pi-antigravity-rotator start     Start the proxy (default)");
-		console.log("  pi-antigravity-rotator login     Add a new Google account");
-		console.log("  pi-antigravity-rotator status    Show account status (JSON)");
-		console.log("  pi-antigravity-rotator doctor    Validate config and local state");
+		console.log("  pi-antigravity-rotator start        Start the proxy (default)");
+		console.log("  pi-antigravity-rotator login        Add a new Google account");
+		console.log("  pi-antigravity-rotator codex-login  Add/link an OpenAI Codex account");
+		console.log("  pi-antigravity-rotator status       Show account status (JSON)");
+		console.log("  pi-antigravity-rotator doctor       Validate config and local state");
 		console.log();
 		console.log("Options:");
 		console.log("  --config-dir <path>    Config directory (default: ~/.pi-antigravity-rotator/)");

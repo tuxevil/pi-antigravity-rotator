@@ -115,7 +115,7 @@ function isFetchTransportError(err: unknown): boolean {
 }
 
 /** Extract token usage from SSE stream or JSON response body */
-function extractTokenUsage(buffer: string): { inputTokens: number; outputTokens: number } | null {
+export function extractTokenUsage(buffer: string): { inputTokens: number; outputTokens: number } | null {
 	try {
 		// Look for usageMetadata/usage anywhere in the buffer via regex
 		// Handles both SSE `data: {...}` and raw JSON chunks
@@ -248,6 +248,42 @@ export async function forwardRequest(
 	body: RequestBody,
 	originalHeaders: Record<string, string>,
 ): Promise<ForwardedResponse> {
+	const isCodex = body.model.startsWith("gpt-5.");
+
+	if (isCodex) {
+		const requestBody = JSON.stringify(body.request);
+		const forwardHeaders: Record<string, string> = {
+			...originalHeaders,
+			"Content-Type": "application/json",
+			Accept: "text/event-stream",
+		};
+		for (const key of Object.keys(forwardHeaders)) {
+			const lowerKey = key.toLowerCase();
+			if (
+				lowerKey === "authorization" ||
+				lowerKey === "user-agent" ||
+				lowerKey === "x-goog-api-client" ||
+				lowerKey === "client-metadata"
+			) {
+				delete forwardHeaders[key];
+			}
+		}
+		forwardHeaders["Authorization"] = `Bearer ${account.codexAccessToken}`;
+		forwardHeaders["OpenAI-Beta"] = "responses=experimental";
+		delete forwardHeaders["host"];
+		delete forwardHeaders["connection"];
+		delete forwardHeaders["transfer-encoding"];
+		delete forwardHeaders["content-length"];
+
+		const url = "https://chatgpt.com/backend-api/codex/responses";
+		const response = await fetch(url, {
+			method: "POST",
+			headers: forwardHeaders,
+			body: requestBody,
+		});
+		return { response, endpoint: "https://chatgpt.com" };
+	}
+
 	// Swap credentials
 	body.project = account.config.projectId;
 

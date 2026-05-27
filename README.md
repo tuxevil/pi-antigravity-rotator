@@ -467,6 +467,13 @@ Current adapter scope:
 - Responses-compatible tool support is currently limited to `type: "function"` tools. Built-in tools like `web_search`, `file_search`, `computer`, or `code_interpreter` are rejected explicitly.
 
 
+## Contributors
+
+Thanks to these amazing people who have contributed to the project:
+
+- **[@javargasm](https://github.com/javargasm)** (Jeisson Alexander Vargas Marroquin) — Anthropic tool-use compatibility layer (`tool_use`/`tool_result` content block conversion), JSON schema round-trip fixes, and compat test suite expansion. ([PR #3](https://github.com/tuxevil/pi-antigravity-rotator/pull/3), [PR #7](https://github.com/tuxevil/pi-antigravity-rotator/pull/7))
+
+
 ## Connecting Codex / VS Code Agents
 
 `pi-antigravity-rotator` can act as the multi-account rotation backend for agentic frameworks, including **Codex** executing in VS Code or in the terminal.

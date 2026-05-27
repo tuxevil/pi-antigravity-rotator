@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-05-27
+
+### Fixed
+- **Anthropic Tool Use Content Blocks**: Anthropic `tool_use` and `tool_result` content blocks in message history are now correctly converted to Gemini `functionCall` / `functionResponse` parts when proxying through the Anthropic-compatible `/v1/messages` adapter, preventing `400 INVALID_ARGUMENT` errors on multi-turn tool conversations. (PR [#7](https://github.com/tuxevil/pi-antigravity-rotator/pull/7) by [@javargasm](https://github.com/javargasm))
+- **Anthropic Tool Forwarding**: `tools` and `tool_choice` from Anthropic `/v1/messages` requests are now properly forwarded to the Gemini upstream, enabling full Anthropic-native tool calling through the rotator.
+- **Anthropic Tool Response Streaming**: Streaming and non-streaming Anthropic responses now correctly emit `tool_use` content blocks and set `stop_reason: "tool_use"` when function calls are present.
+- **JSON Schema `anyOf`/`oneOf`/`allOf` Collapse**: The Claude schema sanitizer now collapses composite schema keywords (`anyOf`, `oneOf`, `allOf`) to their first variant before forwarding to Gemini, preventing schema corruption during the Gemini proto round-trip.
+
+### Added
+- **Anthropic Tool Conversion Tests**: Added dedicated test cases for Anthropic tool conversions and JSON schema type collapsing in the compat test suite. ([@javargasm](https://github.com/javargasm))
+
 ## [2.1.2] - 2026-05-25
 
 ### Added

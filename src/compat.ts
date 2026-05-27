@@ -724,11 +724,19 @@ function parseResponsesInput(input: unknown, callIdToName: Map<string, string> =
 				name: rawItem.name,
 				arguments: args,
 			});
-			messages.push({
-				role: "assistant",
-				content: null,
-				tool_calls: [{ id: callId, type: "function", function: { name: rawItem.name, arguments: args } }],
-			});
+			// Merge consecutive function_call items into a single assistant message
+			// so Claude sees one assistant turn with multiple tool_calls rather than
+			// separate assistant turns (which would each require their own tool_result).
+			const lastMsg = messages[messages.length - 1];
+			if (lastMsg && lastMsg.role === "assistant" && Array.isArray(lastMsg.tool_calls)) {
+				lastMsg.tool_calls.push({ id: callId, type: "function", function: { name: rawItem.name, arguments: args } });
+			} else {
+				messages.push({
+					role: "assistant",
+					content: null,
+					tool_calls: [{ id: callId, type: "function", function: { name: rawItem.name, arguments: args } }],
+				});
+			}
 			continue;
 		}
 
@@ -1171,7 +1179,34 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 					isFirstInMessage = false;
 				}
 			}
-			if (parts.length > 0) contents.push({ role: "model", parts });
+			if (parts.length > 0) {
+				// For Claude: handle two scenarios that break tool_use/tool_result ordering.
+				// 1. Text-only model turn after a functionCall model turn: Codex sends
+				//    assistant text and function_calls as separate items. The text-only turn
+				//    would split functionCall from functionResponse — skip it entirely.
+				// 2. Model turn with functionCalls: strip any text parts since Google's
+				//    v1internal translator may split mixed parts into separate Claude messages.
+				if (isClaude) {
+					const lastContent = contents[contents.length - 1];
+					const prevHasFunctionCall = lastContent && lastContent.role === "model" && lastContent.parts.some((p: any) => p.functionCall);
+					const hasFunctionCall = parts.some((p: any) => p.functionCall);
+					if (prevHasFunctionCall && !hasFunctionCall) {
+						// Skip text-only model turn after functionCall turn
+					} else if (hasFunctionCall) {
+						// Strip text parts, keep only functionCall parts
+						const fcOnly = parts.filter((p: any) => p.functionCall);
+						if (prevHasFunctionCall) {
+							lastContent.parts.push(...fcOnly);
+						} else {
+							contents.push({ role: "model", parts: fcOnly });
+						}
+					} else {
+						contents.push({ role: "model", parts });
+					}
+				} else {
+					contents.push({ role: "model", parts });
+				}
+			}
 		} else if (msg.role === "tool") {
 			const responseText = typeof msg.content === "string" ? msg.content : extractText(msg.content);
 			const fnName = msg.name || "unknown";
@@ -1187,7 +1222,16 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 					: { output: parsed };
 			} catch { responseData = { output: responseText }; }
 			// Include id only for Claude — Gemini native models reject the id field in functionResponse
-			contents.push({ role: "user", parts: [{ functionResponse: { ...(isClaude && toolCallId ? { id: toolCallId } : {}), name: fnName, response: responseData } }] });
+			const fnResponsePart = { functionResponse: { ...(isClaude && toolCallId ? { id: toolCallId } : {}), name: fnName, response: responseData } };
+			// Merge consecutive tool results into a single user turn.
+			// Claude (via Vertex) requires ALL tool_result blocks in one message
+			// directly after the assistant message with tool_use blocks.
+			const lastContent = contents[contents.length - 1];
+			if (lastContent && lastContent.role === "user" && Array.isArray(lastContent.parts) && lastContent.parts.length > 0 && isRecord(lastContent.parts[0] as any) && (lastContent.parts[0] as any).functionResponse !== undefined) {
+				lastContent.parts.push(fnResponsePart);
+			} else {
+				contents.push({ role: "user", parts: [fnResponsePart] });
+			}
 		} else {
 			// user message
 			const msgParts = extractParts(msg.content);

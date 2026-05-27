@@ -513,7 +513,7 @@ To connect Codex to your local rotator:
 ### Features Enabled for Codex Agents
 
 - **Native Reasoning Visibility**: If using models with thinking enabled (e.g., `gemini-3.5-flash-high`), interleaved reasoning/thinking blocks are streamed back in real-time as OpenAI `reasoning_content` chunks. This lets Codex inspect the model's inner thoughts before it acts.
-- **Function / Tool Routing**: Function calls emitted by Codex are fully translated to Gemini `functionCalls` and returned back to Codex safely, enabling full agentic capabilities.
+- **Function / Tool Routing**: Function calls emitted by Codex are fully translated to Gemini `functionCalls` and returned back to Codex safely, enabling full agentic capabilities. Multi-turn tool conversations work correctly for all models including Claude (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`) — parallel tool calls are batched into a single turn and tool results are properly grouped to satisfy Claude's strict `tool_use`/`tool_result` ordering requirements.
 - **Strict Validation**: The rotator strictly validates the Responses input contract and rejects unsupported tools (e.g., `web_search`) proactively to ensure Codex doesn't hit unexpected runtime exceptions.
 
 ## Development Checks

@@ -2,7 +2,14 @@
 
 ## [Unreleased]
 
-## [2.1.4] - 2026-05-27
+## [2.1.5] - 2026-05-27
+
+### Fixed
+- **Claude tool_use/tool_result ordering via Responses API**: Resolved a persistent `400 INVALID_ARGUMENT` (`messages.1: tool_use ids were found without tool_result blocks immediately after`) error when using Claude models (e.g. `claude-sonnet-4-6`) through the OpenAI Responses API (used by Codex and similar agents). Three structural issues were corrected in the Gemini content turn builder:
+  - **Parallel function_call merging**: Codex sends parallel tool calls as separate `function_call` input items. Each was creating its own assistant turn, but Claude requires all `tool_use` blocks in a single assistant message. Consecutive `function_call` items are now merged into one assistant message with multiple `tool_calls`.
+  - **Text/tool_call separation**: Codex sends the assistant's narration text (`"Let me explore..."`) and its `function_call` items as separate input items. The narration was creating a `model` Gemini turn between the `functionCall` turn and the `functionResponse` turn, breaking Claude's strict ordering. Text-only model turns that follow a `functionCall` model turn are now suppressed.
+  - **Consecutive tool result merging**: Multiple `functionResponse` parts are now merged into a single `user` Gemini turn, ensuring all `tool_result` blocks appear in one message directly after the `tool_use` assistant message.
+
 
 ### Improved
 - **Less Lossy Schema Collapsing for Claude**: The `sanitizeClaudeViaGeminiSchema` function now handles complex `anyOf`/`oneOf`/`allOf` schemas with significantly less information loss:

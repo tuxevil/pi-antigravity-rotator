@@ -200,4 +200,22 @@ describe("admin token generation and persistence", () => {
 			setPersistedAdminToken(null);
 		}
 	});
+
+	it("OAuth callback authorization mirrors the rest of the admin surface", () => {
+		// No token: callback is open (legacy behaviour).
+		setPersistedAdminToken(null);
+		assert.equal(isAdminAuthorized(req("/auth/antigravity/callback")), true);
+
+		// With a token: callback requires the header.
+		setPersistedAdminToken("secret-callback");
+		assert.equal(isAdminAuthorized(req("/auth/antigravity/callback")), false);
+		assert.equal(
+			isAdminAuthorized(req("/auth/antigravity/callback", { "x-rotator-admin-token": "secret-callback" })),
+			true,
+		);
+		assert.equal(
+			isAdminAuthorized(req("/auth/antigravity/callback", { authorization: "Bearer secret-callback" })),
+			true,
+		);
+	});
 });

@@ -1143,6 +1143,7 @@ export function startProxy(rotator: AccountRotator, port: number, bindHost = "0.
 		}
 
 		if (method === "GET" && pathname === "/auth/antigravity/callback") {
+			if (!requireAdmin(req, res)) return;
 			handleHostedCallback(req, res, rotator).catch((err) => {
 				log(`Hosted callback error: ${err}`, rotator, "error");
 				if (!res.headersSent) {

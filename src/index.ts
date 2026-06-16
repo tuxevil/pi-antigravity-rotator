@@ -11,7 +11,7 @@ import { loadConfigFromDisk } from "./account-store.js";
 import { ensureAdminToken, getConfiguredAdminToken, setPersistedAdminToken } from "./admin-auth.js";
 import { warnIfUsingFallbackOAuthCreds } from "./oauth.js";
 import { warnIfInsecureTelemetryEndpoint } from "./telemetry.js";
-import { setModelSpecsOverride } from "./compat.js";
+import { setModelSpecsOverride, loadResponsesStore, flushResponsesStoreSync } from "./compat.js";
 import { writeTextFileAtomic } from "./storage.js";
 
 function loadConfig(): Config {
@@ -134,6 +134,7 @@ export function main(): void {
 	warnIfUsingFallbackOAuthCreds();
 	warnIfInsecureTelemetryEndpoint();
 	setModelSpecsOverride(config.modelSpecs ?? null);
+	void loadResponsesStore();
 
 	const rotator = new AccountRotator(config);
 
@@ -164,6 +165,7 @@ export function main(): void {
 	// ── Graceful shutdown ──
 	const shutdown = async (): Promise<void> => {
 		console.log("\nShutting down...");
+		flushResponsesStoreSync();
 		await telemetry.shutdown();
 		rotator.stopQuotaPolling();
 		process.exit(0);

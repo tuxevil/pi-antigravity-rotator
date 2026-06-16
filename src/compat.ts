@@ -5,6 +5,7 @@ import { logger, redactSensitive } from "./logger.js";
 import type { AccountRotator } from "./rotator.js";
 import { resolveQuotaModelKey } from "./types.js";
 import { withRotation, flattenHeaders, type RequestBody } from "./proxy.js";
+import { ResponsesStore, type StoredResponseEntry } from "./responses-store.js";
 
 
 const compatLogger = logger.child("compat");
@@ -141,13 +142,7 @@ interface ResponseFunctionCallOutputItem {
 
 type ResponseOutputItem = ResponseMessageOutputItem | ResponseFunctionCallOutputItem;
 
-interface StoredResponseEntry {
-	response: Record<string, unknown>;
-	inputItems: Array<Record<string, unknown>>;
-	conversationMessages: ChatMessage[];
-	callIdToName: Map<string, string>;
-	expiresAt: number;
-}
+// StoredResponseEntry now lives in responses-store.ts (persistent on disk)
 
 // ---------------------------------------------------------------------------
 // Model-specific specs — mirrors Antigravity-Manager model_specs.json
@@ -255,38 +250,34 @@ function isNonEmptyString(value: unknown): value is string {
  */
 const thoughtSignatureCache = new Map<string, string>();
 const THOUGHT_SIGNATURE_CACHE_MAX = 500;
-const RESPONSES_STORE_TTL_MS = 6 * 60 * 60 * 1000;
-const RESPONSES_STORE_MAX = 500;
-const responsesStore = new Map<string, StoredResponseEntry>();
+const responsesStore = new ResponsesStore();
 
 function makeCompatId(prefix: string): string {
 	return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function pruneResponsesStore(now = Date.now()): void {
-	for (const [id, entry] of responsesStore) {
-		if (entry.expiresAt <= now) responsesStore.delete(id);
-	}
-	while (responsesStore.size > RESPONSES_STORE_MAX) {
-		const oldest = responsesStore.keys().next();
-		if (oldest.done) break;
-		responsesStore.delete(oldest.value);
-	}
-}
-
 function getStoredResponse(id: string): StoredResponseEntry | null {
-	pruneResponsesStore();
-	return responsesStore.get(id) || null;
+	return responsesStore.get(id);
 }
 
 function setStoredResponse(id: string, entry: StoredResponseEntry): void {
-	pruneResponsesStore();
 	responsesStore.set(id, entry);
-	pruneResponsesStore();
 }
 
 export function resetResponsesStoreForTests(): void {
 	responsesStore.clear();
+}
+
+export async function loadResponsesStore(): Promise<void> {
+	await responsesStore.load();
+}
+
+export async function flushResponsesStore(): Promise<void> {
+	await responsesStore.flush();
+}
+
+export function flushResponsesStoreSync(): void {
+	responsesStore.flushSync();
 }
 
 function cacheThoughtSignature(callId: string, signature: string): void {
@@ -988,9 +979,15 @@ function convertResponsesToChatRequest(input: OpenAIResponsesRequest): Responses
 		throw new Error(`previous_response_id not found: ${previousResponseId}`);
 	}
 
-	const parsed = parseResponsesInput(input.input, previous?.callIdToName);
+	// Re-hydrate the persisted Maps/Arrays back into the runtime types.
+	const previousCallIdToName = previous ? new Map(Object.entries(previous.callIdToName)) : new Map<string, string>();
+	const previousConversationMessages: ChatMessage[] = previous
+		? (previous.conversationMessages as unknown as ChatMessage[])
+		: [];
+
+	const parsed = parseResponsesInput(input.input, previousCallIdToName);
 	const conversationMessages = [
-		...(previous?.conversationMessages ?? []),
+		...previousConversationMessages,
 		...parsed.messages,
 	];
 	const chatMessages = [
@@ -1113,12 +1110,13 @@ function saveResponsesEntry(
 	if (!responseId) return;
 	const { callIdToName } = buildResponsesOutput(completion);
 	const mergedConversation = [...conversationMessages, buildAssistantMessageFromCompletion(completion)];
+	const expiresAt = Date.now() + 6 * 60 * 60 * 1000;
 	setStoredResponse(responseId, {
 		response,
 		inputItems,
-		conversationMessages: mergedConversation,
-		callIdToName,
-		expiresAt: Date.now() + RESPONSES_STORE_TTL_MS,
+		conversationMessages: mergedConversation as unknown as Array<Record<string, unknown>>,
+		callIdToName: Object.fromEntries(callIdToName),
+		expiresAt,
 	});
 }
 
@@ -2321,12 +2319,13 @@ export async function handleOpenAIResponsesCreate(req: IncomingMessage, res: Ser
 	requestBody.requestId = responseId;
 
 	if (validation.value.store !== false) {
+		const expiresAt = Date.now() + 6 * 60 * 60 * 1000;
 		setStoredResponse(responseId, {
 			response: buildResponsesResponse(validation.value, responseId, createdAt, { text: "", inputTokens: 0, outputTokens: 0, toolCalls: [] }, "in_progress", converted.previousResponseId),
 			inputItems: converted.inputItems,
-			conversationMessages: converted.conversationMessages,
-			callIdToName: new Map(),
-			expiresAt: Date.now() + RESPONSES_STORE_TTL_MS,
+			conversationMessages: converted.conversationMessages as unknown as Array<Record<string, unknown>>,
+			callIdToName: {},
+			expiresAt,
 		});
 	}
 

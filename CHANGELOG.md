@@ -5,6 +5,8 @@
 ## [2.2.0] - 2026-06-16
 
 ### Security
+
+### Security
 - **Admin token autogeneration**: On first run with no `PI_ROTATOR_ADMIN_TOKEN` env var, a cryptographically secure token is generated, persisted to `.admin-token` (mode 0600), and printed once to the operator. Dashboard and `/api/*` routes are now protected by default on fresh installs. Override the generated token by setting `PI_ROTATOR_ADMIN_TOKEN` in the env. `.admin-token` added to `.gitignore`.
 - **Querystring secret redaction**: `redactSensitive()` now also redacts `access_token`, `token`, `api_key`, `apikey`, `key`, `refresh_token` when they appear in querystring (`?key=val&...`) or URL fragment.
 - **OAuth fallback warning**: New `warnIfUsingFallbackOAuthCreds()` detects when `ANTIGRAVITY_CLIENT_ID` and/or `ANTIGRAVITY_CLIENT_SECRET` are missing and emits a one-time warning that the rotator is using the public Antigravity IDE client.
@@ -27,6 +29,11 @@
 - **Removed `src/antigravity-prompt.ts`**: 80-line `ANTIGRAVITY_IDENTITY_PROMPT` export with 0 references in the repo.
 - **Consolidated agent docs**: `CLAUDE.md` now points to `AGENTS.md` as the single source of truth. The duplicated BEADS INTEGRATION block is gone.
 - **Moved scripts to `scripts/`**: 10 one-off utility scripts (`mitm.js`, `mock_google.js`, `query_models.{js,ts}`, `test-compat.ts`, `test-direct.js`, `test_generate.js`, `test_loop.js`, `test-http.cjs`, `test-openai.cjs`) moved from the repo root. `query_models.ts` and `test-compat.ts` updated to use `../src/...` relative imports after the move.
+
+## [2.2.1] - 2026-06-16
+
+### Fixed
+- **SSE usage extraction cross-event matching**: The old `extractTokenUsage()` ran a regex on the last 32KB of the upstream body, which could match across SSE event boundaries and return incorrect `(input, output)` pairs. Replaced with `SseEventAccumulator` + `extractUsageFromSseEvent()` that buffer complete SSE events (split on `\n\n`), parse each `data:` payload as JSON, and recursively search for `usageMetadata` (Gemini) or `usage` (OpenAI/Anthropic). Regex remains as a last-resort fallback for malformed JSON. Real-time streaming is preserved — the `res.write(chunk)` in `onData` is unchanged. Resolves ROADMAP §2.
 
 ## [2.1.6] - 2026-06-12
 

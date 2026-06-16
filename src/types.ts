@@ -73,6 +73,45 @@ export interface Config {
 	// Override per-model specs used by the compat layer. Keys are model id substrings
 	// matched case-insensitively. When set, replaces the bundled defaults entirely.
 	modelSpecs?: Record<string, ModelSpecConfig>;
+	// Override model-id aliases used to translate the operator-facing name
+	// (e.g. "gemini-3.5-flash-high") to the upstream Antigravity name
+	// (e.g. "gemini-3-flash-agent"). When set, replaces the bundled defaults.
+	modelAliases?: Record<string, string>;
+}
+
+// ── Default model-id aliases ─────────────────────────────────────────
+// Translates operator-facing model names to Antigravity upstream names.
+// When the provider adds a new model, this is the only place that needs
+// updating. Operators can override via Config.modelAliases in accounts.json.
+const DEFAULT_MODEL_ALIASES: Record<string, string> = {
+	"gemini-3.1-pro-high": "gemini-pro-agent",
+	"gemini-3.5-flash": "gemini-3-flash-agent",
+	"gemini-3.5-flash-high": "gemini-3-flash-agent",
+	"gemini-3.5-flash-medium": "gemini-3-flash-agent",
+	"gpt-oss-120b": "gpt-oss-120b-medium",
+};
+let modelAliasesOverride: Record<string, string> | null = null;
+
+export function setModelAliasesOverride(aliases: Record<string, string> | null): void {
+	modelAliasesOverride = aliases && Object.keys(aliases).length > 0 ? aliases : null;
+}
+
+function getActiveModelAliases(): Record<string, string> {
+	return modelAliasesOverride ?? DEFAULT_MODEL_ALIASES;
+}
+
+/**
+ * Translate a model name to its upstream equivalent. Exact-match lookup
+ * (case-insensitive). Returns the original model if no alias is configured.
+ */
+export function applyModelAlias(model: string): string {
+	const aliases = getActiveModelAliases();
+	if (model in aliases) return aliases[model];
+	const lower = model.toLowerCase();
+	for (const [from, to] of Object.entries(aliases)) {
+		if (from.toLowerCase() === lower) return to;
+	}
+	return model;
 }
 
 // Quota API response from Google

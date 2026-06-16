@@ -119,6 +119,21 @@ export function validateConfig(value: unknown): ValidationResult<Config> {
 			}
 		}
 	}
+	if (value.modelAliases !== undefined) {
+		if (!isRecord(value.modelAliases)) {
+			errors.push("config.modelAliases must be an object when provided");
+		} else {
+			for (const [from, to] of Object.entries(value.modelAliases)) {
+				if (typeof from !== "string" || from.length === 0) {
+					errors.push("config.modelAliases keys must be non-empty strings");
+					break;
+				}
+				if (typeof to !== "string" || to.length === 0) {
+					errors.push(`config.modelAliases.${from} must be a non-empty string`);
+				}
+			}
+		}
+	}
 
 	return errors.length > 0 ? fail(errors) : ok(value as unknown as Config);
 }

@@ -12,6 +12,7 @@ import { ensureAdminToken, getConfiguredAdminToken, setPersistedAdminToken } fro
 import { warnIfUsingFallbackOAuthCreds } from "./oauth.js";
 import { warnIfInsecureTelemetryEndpoint } from "./telemetry.js";
 import { setModelSpecsOverride, loadResponsesStore, flushResponsesStoreSync } from "./compat.js";
+import { setModelAliasesOverride } from "./types.js";
 import { writeTextFileAtomic } from "./storage.js";
 
 function loadConfig(): Config {
@@ -134,6 +135,7 @@ export function main(): void {
 	warnIfUsingFallbackOAuthCreds();
 	warnIfInsecureTelemetryEndpoint();
 	setModelSpecsOverride(config.modelSpecs ?? null);
+	setModelAliasesOverride(config.modelAliases ?? null);
 	void loadResponsesStore();
 
 	const rotator = new AccountRotator(config);

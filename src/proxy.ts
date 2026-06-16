@@ -7,6 +7,7 @@ import {
 	REQUEST_CLIENT_METADATA,
 	REQUEST_GOOG_API_CLIENT,
 	REQUEST_USER_AGENT,
+	applyModelAlias,
 	resolveQuotaModelKey,
 	resolveDisplayModelKey,
 } from "./types.js";
@@ -436,12 +437,9 @@ export async function forwardRequest(
 	// Swap credentials
 	body.project = account.config.projectId;
 
-	// Map internal display/compat names to Google upstream names
-	let targetModel = body.model;
-	if (targetModel === "gemini-3.1-pro-high") targetModel = "gemini-pro-agent";
-	if (targetModel === "gemini-3.5-flash-high" || targetModel === "gemini-3.5-flash" || targetModel === "gemini-3.5-flash-medium") targetModel = "gemini-3-flash-agent";
-	if (targetModel === "gpt-oss-120b") targetModel = "gpt-oss-120b-medium";
-	body.model = targetModel;
+	// Map internal display/compat names to Google upstream names (single source
+	// of truth: src/types.ts:applyModelAlias)
+	body.model = applyModelAlias(body.model);
 
 	const { displayModel, ...bodyToForward } = body;
 	const requestBody = JSON.stringify(bodyToForward);

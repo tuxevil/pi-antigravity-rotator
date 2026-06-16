@@ -3,7 +3,7 @@ import { Readable } from "node:stream";
 import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
 import { logger, redactSensitive } from "./logger.js";
 import type { AccountRotator } from "./rotator.js";
-import { resolveQuotaModelKey } from "./types.js";
+import { applyModelAlias, resolveQuotaModelKey } from "./types.js";
 import { withRotation, flattenHeaders, type RequestBody } from "./proxy.js";
 import { ResponsesStore, type StoredResponseEntry } from "./responses-store.js";
 
@@ -1345,10 +1345,7 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	if (geminiTools.length > 0) request.tools = geminiTools;
 	if (geminiToolConfig) request.toolConfig = geminiToolConfig;
 
-	let mappedModel = input.model;
-	if (mappedModel === "gemini-3.1-pro-high") mappedModel = "gemini-pro-agent";
-	if (mappedModel === "gemini-3.5-flash-high" || mappedModel === "gemini-3.5-flash" || mappedModel === "gemini-3.5-flash-medium") mappedModel = "gemini-3-flash-agent";
-	if (mappedModel === "gpt-oss-120b") mappedModel = "gpt-oss-120b-medium";
+	let mappedModel = applyModelAlias(input.model);
 
 	return {
 		project: "compat-placeholder",

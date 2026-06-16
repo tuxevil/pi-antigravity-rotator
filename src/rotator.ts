@@ -79,6 +79,13 @@ export class AccountRotator {
 	private modelBreakers: Record<string, number> = {};
 	private provider429Events: Array<{ ts: number; projectId: string; modelKey: string; account: string }> = [];
 	private routingDiagnostics: Record<string, RoutingModelDiagnostics> = {};
+	// Debounced state writer: batches multiple saveState() calls within a 1s window
+	// to a single disk write. Hot paths (markError, recordRequest, etc.) call
+	// scheduleStateSave() instead of saveState() to avoid blocking the event loop.
+	private stateSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	private static readonly STATE_SAVE_DEBOUNCE_MS = 1_000;
+	private stateSaveInflight = false;
+	private stateSavePending = false;
 
 	constructor(private config: Config) {
 		this.config = applyConfigDefaults(config);
@@ -312,6 +319,58 @@ export class AccountRotator {
 		} catch (err) {
 			this.log(`Failed to save state: ${err}`, "error");
 		}
+	}
+
+	/**
+	 * Schedule a debounced state save. Multiple calls within STATE_SAVE_DEBOUNCE_MS
+	 * are coalesced into a single saveState() invocation. Hot paths (recordRequest,
+	 * markError, etc.) should use this instead of saveState() to avoid blocking
+	 * the event loop on every request.
+	 *
+	 * If a write is already in-flight when the timer fires, the next write is
+	 * scheduled for after it completes.
+	 */
+	scheduleStateSave(): void {
+		if (this.stateSaveTimer) return;
+		this.stateSaveTimer = setTimeout(() => {
+			this.stateSaveTimer = null;
+			void this.runScheduledStateSave();
+		}, AccountRotator.STATE_SAVE_DEBOUNCE_MS);
+		if (this.stateSaveTimer.unref) this.stateSaveTimer.unref();
+	}
+
+	private async runScheduledStateSave(): Promise<void> {
+		if (this.stateSaveInflight) {
+			// A write is already running. Re-schedule ourselves to run after it.
+			this.stateSavePending = true;
+			return;
+		}
+		this.stateSaveInflight = true;
+		try {
+			this.saveState();
+		} finally {
+			this.stateSaveInflight = false;
+			if (this.stateSavePending) {
+				this.stateSavePending = false;
+				this.scheduleStateSave();
+			}
+		}
+	}
+
+	/**
+	 * Force-flush any pending state writes. Called by SIGTERM/SIGINT handlers
+	 * in index.ts to minimise data loss on shutdown.
+	 */
+	flushPendingStateSaveSync(): void {
+		if (this.stateSaveTimer) {
+			clearTimeout(this.stateSaveTimer);
+			this.stateSaveTimer = null;
+		}
+		if (this.stateSaveInflight || this.stateSavePending) {
+			// Best effort — the in-flight write may not have hit disk yet.
+			// We do a final sync write to capture the most recent state.
+		}
+		this.saveState();
 	}
 
 	// =========================================================================
@@ -1137,7 +1196,7 @@ export class AccountRotator {
 			this.shouldUseRequestCountRotation(account, modelKey) &&
 			state.requestsOnActiveAccount >= this.config.requestsPerRotation;
 
-		this.saveState();
+		this.scheduleStateSave();
 		if (shouldRotate) {
 			this.log(
 				`${account.config.label || account.config.email} [${modelKey}]: hit rotation threshold (${state.requestsOnActiveAccount}/${this.config.requestsPerRotation})`,
@@ -1419,7 +1478,7 @@ export class AccountRotator {
 			`${account.config.label || account.config.email} [${modelKey}]: EXHAUSTED, cooldown ${Math.ceil(cooldownMs / 1000)}s${errorDetail}`,
 			"warn",
 		);
-		this.saveState();
+		this.scheduleStateSave();
 	}
 
 	recordProvider429(account: AccountRuntime, model: string | undefined, cooldownMs: number): void {
@@ -1493,7 +1552,7 @@ export class AccountRotator {
 				account.disabled = true;
 				this.log(`${account.config.email}: DISABLED after ${account.consecutiveErrors} consecutive errors`, "error");
 			}
-		this.saveState();
+		this.scheduleStateSave();
 	}
 
 	enableAccount(email: string): boolean {
@@ -1709,7 +1768,7 @@ export class AccountRotator {
 					"warn",
 				);
 			}
-		this.saveState();
+		this.scheduleStateSave();
 	}
 
 	startRequest(account: AccountRuntime, modelKey?: string): void {

@@ -166,6 +166,7 @@ export function main(): void {
 	const shutdown = async (): Promise<void> => {
 		console.log("\nShutting down...");
 		flushResponsesStoreSync();
+		rotator.flushPendingStateSaveSync();
 		await telemetry.shutdown();
 		rotator.stopQuotaPolling();
 		process.exit(0);

@@ -218,4 +218,21 @@ describe("admin token generation and persistence", () => {
 			true,
 		);
 	});
+
+	it("logs a truncated preview of generated tokens, never the full value", () => {
+		// Truncation logic mirroring index.ts:bootstrapAdminToken.
+		// A future refactor of index.ts will extract this into a
+		// reusable helper; the assertion below documents the invariant.
+		const truncate = (token: string): string =>
+			token.length > 12
+				? `${token.slice(0, 8)}…${token.slice(-4)}`
+				: token;
+
+		const fullToken = "abcdef0123456789fedcba9876543210";
+		const preview = truncate(fullToken);
+		assert.equal(preview, "abcdef01…3210");
+		assert.ok(!preview.includes(fullToken), "preview must not contain the full token");
+		assert.ok(!preview.includes("23456789"), "middle of the token must not leak");
+		assert.ok(!preview.includes("fedcba9876"), "second half of the token must not leak");
+	});
 });

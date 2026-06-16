@@ -91,7 +91,11 @@ function bootstrapAdminToken(configDir: string): void {
 		console.log();
 		console.log("  ╭──────────────────────────────────────────────────────────╮");
 		console.log("  │  Generated admin token (persisted to .admin-token):      │");
-		console.log(`  │  ${resolved.token}  │`);
+		const tokenPreview = resolved.token.length > 12
+			? `${resolved.token.slice(0, 8)}…${resolved.token.slice(-4)}`
+			: resolved.token;
+		console.log(`  │  ${tokenPreview}  │`);
+		console.log("  │  (full token in .admin-token; cat to view)               │");
 		console.log("  │                                                          │");
 		console.log("  │  Header: x-rotator-admin-token: <token>                  │");
 		console.log("  │  Bearer: Authorization: Bearer <token>                   │");

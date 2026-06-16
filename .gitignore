@@ -20,3 +20,4 @@ ROADMAP.md
 .dolt/
 *.db
 .beads-credential-key
+models.json

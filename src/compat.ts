@@ -1150,10 +1150,23 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	for (let i = 0; i < conversationMessages.length; i++) {
 		const msg = conversationMessages[i];
 		if (msg.role === "assistant" || msg.role === "model") {
-			// Strip dangling tool calls if they are not followed by any tool results (e.g. if the user canceled)
-			const nextMsg = conversationMessages[i + 1];
-			const hasToolResults = nextMsg && nextMsg.role === "tool";
-			const msgToolCalls = hasToolResults ? msg.tool_calls : undefined;
+			// Strip dangling tool calls that do not have corresponding tool results (e.g. if some or all tool calls were cancelled/failed)
+			let msgToolCalls = msg.tool_calls;
+			if (Array.isArray(msgToolCalls) && msgToolCalls.length > 0) {
+				const completedToolCallIds = new Set<string>();
+				let j = i + 1;
+				while (j < conversationMessages.length && conversationMessages[j].role === "tool") {
+					const toolCallId = conversationMessages[j].tool_call_id;
+					if (typeof toolCallId === "string") {
+						completedToolCallIds.add(toolCallId);
+					}
+					j++;
+				}
+				msgToolCalls = msgToolCalls.filter((tc) => tc.id && completedToolCallIds.has(tc.id));
+				if (msgToolCalls.length === 0) {
+					msgToolCalls = undefined;
+				}
+			}
 
 			// Check if this is a thinking model turn with tool calls that have no cached signatures.
 			// If so, we collapse the tool exchange into a neutral user summary instead of

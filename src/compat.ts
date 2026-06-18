@@ -1301,7 +1301,7 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 					lastContent.parts.push(...toolImages);
 				}
 			} else {
-				const parts = [fnResponsePart];
+				const parts: unknown[] = [fnResponsePart];
 				if (toolImages.length > 0) {
 					parts.push(...toolImages);
 				}

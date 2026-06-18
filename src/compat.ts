@@ -1150,19 +1150,24 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	for (let i = 0; i < conversationMessages.length; i++) {
 		const msg = conversationMessages[i];
 		if (msg.role === "assistant" || msg.role === "model") {
+			// Strip dangling tool calls if they are not followed by any tool results (e.g. if the user canceled)
+			const nextMsg = conversationMessages[i + 1];
+			const hasToolResults = nextMsg && nextMsg.role === "tool";
+			const msgToolCalls = hasToolResults ? msg.tool_calls : undefined;
+
 			// Check if this is a thinking model turn with tool calls that have no cached signatures.
 			// If so, we collapse the tool exchange into a neutral user summary instead of
 			// injecting [Tool call: ...] text that the model will learn to mimic.
 			const hasMissingSig =
 				isGeminiThinking &&
-				Array.isArray(msg.tool_calls) &&
-				msg.tool_calls.length > 0 &&
-				!thoughtSignatureCache.has(msg.tool_calls[0].id);
+				Array.isArray(msgToolCalls) &&
+				msgToolCalls.length > 0 &&
+				!thoughtSignatureCache.has(msgToolCalls[0].id);
 
 			if (hasMissingSig) {
 				// Build a summary of what the model did and what results came back.
 				// We collect the paired tool result(s) from the immediately following messages.
-				const toolNames = msg.tool_calls!.map((tc) => tc.function.name).join(", ");
+				const toolNames = msgToolCalls!.map((tc) => tc.function.name).join(", ");
 				const resultParts: string[] = [];
 				while (i + 1 < conversationMessages.length && conversationMessages[i + 1].role === "tool") {
 					i++;
@@ -1182,13 +1187,13 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 				const textContent = typeof msg.content === "string" ? msg.content : extractText(msg.content);
 				if (textContent) parts.push({ text: textContent });
 			}
-			if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+			if (Array.isArray(msgToolCalls) && msgToolCalls.length > 0) {
 				// Use native Gemini functionCall parts. Re-inject thought_signature from
 				// the server-side cache if available. Google only validates signatures on
 				// the *current turn* (after the last real user text message), so missing
 				// signatures on older historical turns are silently ignored.
 				let isFirstInMessage = true;
-				for (const tc of msg.tool_calls) {
+				for (const tc of msgToolCalls) {
 					let args: unknown;
 					try {
 						args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
@@ -1204,6 +1209,9 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 					});
 					isFirstInMessage = false;
 				}
+			}
+			if (parts.length === 0) {
+				parts.push({ text: "..." });
 			}
 			if (parts.length > 0) {
 				// For Claude: handle two scenarios that break tool_use/tool_result ordering.

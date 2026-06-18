@@ -257,6 +257,38 @@ describe("compat adapters", () => {
 		assert.match(reqStr, /"mimeType":"image\/png"/);
 		assert.match(reqStr, /"data":"toolimgbase64"/);
 	});
+ 
+	it("strips dangling tool calls if not followed by tool results", () => {
+		const body = openAIToAntigravityBody({
+			model: "claude-sonnet-4-6",
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: "Please look up pi" }],
+				},
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_abc",
+							type: "function",
+							function: { name: "read_file", arguments: "{}" },
+						},
+					],
+				},
+				{
+					role: "user",
+					content: "Never mind, stop.",
+				},
+			],
+		});
+
+		const reqStr = JSON.stringify(body.request);
+		// Check that the tool calls were stripped and replaced with fallback text
+		assert.match(reqStr, /"role":"model","parts":\[{"text":"\.\.\."}\]/);
+		assert.doesNotMatch(reqStr, /"functionCall"/);
+	});
 
 	it("strips cache_control fields from OpenAI content blocks", () => {
 		const body = openAIToAntigravityBody({

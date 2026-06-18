@@ -214,6 +214,50 @@ describe("compat adapters", () => {
 		assert.match(JSON.stringify(body.request), /"data":"def456"/);
 	});
 
+	it("converts OpenAI tool response images into Antigravity inlineData", () => {
+		const body = openAIToAntigravityBody({
+			model: "claude-sonnet-4-6",
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: "Please look up pi" }],
+				},
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_abc",
+							type: "function",
+							function: { name: "read_file", arguments: "{}" },
+						},
+					],
+				},
+				{
+					role: "tool",
+					tool_call_id: "call_abc",
+					name: "read_file",
+					content: [
+						{ type: "text", text: "Tool output text" },
+						{
+							type: "image_url",
+							image_url: { url: "data:image/png;base64,toolimgbase64" },
+						},
+					],
+				},
+			],
+		});
+
+		const reqStr = JSON.stringify(body.request);
+		assert.match(
+			reqStr,
+			/"functionResponse":\{(?:"[^"]+":"[^"]+",)?"name":"read_file","response":\{"output":"Tool output text"\}/,
+		);
+		assert.match(reqStr, /"inlineData"/);
+		assert.match(reqStr, /"mimeType":"image\/png"/);
+		assert.match(reqStr, /"data":"toolimgbase64"/);
+	});
+
 	it("strips cache_control fields from OpenAI content blocks", () => {
 		const body = openAIToAntigravityBody({
 			model: "gemini-3-flash",

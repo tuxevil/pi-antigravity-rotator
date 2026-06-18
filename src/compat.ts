@@ -1247,6 +1247,20 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 					? parsed
 					: { output: parsed };
 			} catch { responseData = { output: responseText }; }
+			// Extract any images present in the tool result content
+			const toolImages: AntigravityPart[] = [];
+			if (msg.content && Array.isArray(msg.content)) {
+				for (const part of msg.content) {
+					if (part.type === "image_url" && isRecord(part.image_url) && typeof part.image_url.url === "string") {
+						const inlineData = dataUrlToInlineData(part.image_url.url);
+						if (inlineData) toolImages.push(inlineData);
+					} else if (part.type === "image" && isRecord(part.source) && typeof part.source.data === "string") {
+						const mediaType = typeof part.source.media_type === "string" ? part.source.media_type : "image/png";
+						toolImages.push({ inlineData: { mimeType: mediaType, data: part.source.data } });
+					}
+				}
+			}
+
 			// Include id only for Claude — Gemini native models reject the id field in functionResponse
 			const fnResponsePart = { functionResponse: { ...(isClaude && toolCallId ? { id: toolCallId } : {}), name: fnName, response: responseData } };
 			// Merge consecutive tool results into a single user turn.
@@ -1255,8 +1269,15 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 			const lastContent = contents[contents.length - 1];
 			if (lastContent && lastContent.role === "user" && Array.isArray(lastContent.parts) && lastContent.parts.length > 0 && isRecord(lastContent.parts[0] as any) && (lastContent.parts[0] as any).functionResponse !== undefined) {
 				lastContent.parts.push(fnResponsePart);
+				if (toolImages.length > 0) {
+					lastContent.parts.push(...toolImages);
+				}
 			} else {
-				contents.push({ role: "user", parts: [fnResponsePart] });
+				const parts = [fnResponsePart];
+				if (toolImages.length > 0) {
+					parts.push(...toolImages);
+				}
+				contents.push({ role: "user", parts });
 			}
 		} else {
 			// user message

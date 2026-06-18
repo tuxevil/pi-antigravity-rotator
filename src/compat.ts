@@ -1287,9 +1287,16 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 			// Merge consecutive tool results into a single user turn.
 			// Claude (via Vertex) requires ALL tool_result blocks in one message
 			// directly after the assistant message with tool_use blocks.
+			// Crucially, all tool_result (functionResponse) parts must appear before
+			// any other part types (such as inlineData images) in the parts array.
 			const lastContent = contents[contents.length - 1];
 			if (lastContent && lastContent.role === "user" && Array.isArray(lastContent.parts) && lastContent.parts.length > 0 && isRecord(lastContent.parts[0] as any) && (lastContent.parts[0] as any).functionResponse !== undefined) {
-				lastContent.parts.push(fnResponsePart);
+				const firstNonFnIdx = lastContent.parts.findIndex((p: any) => !isRecord(p) || p.functionResponse === undefined);
+				if (firstNonFnIdx === -1) {
+					lastContent.parts.push(fnResponsePart);
+				} else {
+					lastContent.parts.splice(firstNonFnIdx, 0, fnResponsePart);
+				}
 				if (toolImages.length > 0) {
 					lastContent.parts.push(...toolImages);
 				}

@@ -402,6 +402,15 @@ function sanitizeGeminiSchema(schema: unknown): unknown {
 			continue;
 		}
 
+		// Inline union type: `type: ["number","null"]`. Gemini's proto `type`
+		// field is a single enum, not repeating — collapse to the first non-null
+		// type and lift nullability into the proto-supported `nullable` flag.
+		if (key === "type" && Array.isArray(value)) {
+			const nonNull = (value as unknown[]).filter((t) => t !== "null");
+			if ((value as unknown[]).includes("null")) out["nullable"] = true;
+			out["type"] = (nonNull[0] ?? "string");
+			continue;
+		}
 
 		if (key === "properties" && isRecord(value)) {
 			out[key] = Object.fromEntries(
@@ -581,6 +590,17 @@ function sanitizeClaudeViaGeminiSchema(schema: unknown): unknown {
 				// still works, just with a narrower accepted input type.
 				Object.assign(out, cleaned[0]);
 			}
+			continue;
+		}
+
+		// Inline union type: `type: ["number","null"]`. Gemini's proto `type`
+		// field is a single enum, not repeating — an array value triggers a 400
+		// ('Proto field is not repeating'). Collapse to the first non-null type
+		// and lift nullability into the proto-supported `nullable` flag.
+		if (key === "type" && Array.isArray(value)) {
+			const nonNull = (value as unknown[]).filter((t) => t !== "null");
+			if ((value as unknown[]).includes("null")) out["nullable"] = true;
+			out["type"] = (nonNull[0] ?? "string");
 			continue;
 		}
 

@@ -326,5 +326,41 @@ data: [DONE]
 		// Only "kind" is required in ALL variants
 		assert.deepStrictEqual(eventParam.required, ["kind"]);
 	});
+
+	it("collapses inline union type arrays to first non-null type and sets nullable:true", () => {
+		const req: OpenAIChatCompletionRequest = {
+			model: "claude-sonnet-4-6",
+			messages: [{ role: "user", content: "Hi" }],
+			tools: [
+				{
+					type: "function",
+					function: {
+						name: "union_tool",
+						parameters: {
+							type: "object",
+							properties: {
+								id: {
+									type: ["number", "null"]
+								},
+								name: {
+									type: ["string", "number"]
+								}
+							}
+						}
+					}
+				}
+			]
+		};
+
+		const result = openAIToAntigravityBody(req);
+		const request = result.request as any;
+		const idParam = request.tools[0].functionDeclarations[0].parameters.properties.id;
+		assert.strictEqual(idParam.type, "number");
+		assert.strictEqual(idParam.nullable, true);
+
+		const nameParam = request.tools[0].functionDeclarations[0].parameters.properties.name;
+		assert.strictEqual(nameParam.type, "string");
+		assert.strictEqual(nameParam.nullable, undefined);
+	});
 });
 

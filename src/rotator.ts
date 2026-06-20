@@ -46,6 +46,11 @@ function currentUtcDay(now = Date.now()): string {
 	return new Date(now).toISOString().slice(0, 10);
 }
 
+function nextUtcDayStartMs(now = Date.now()): number {
+	const date = new Date(now);
+	return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1);
+}
+
 function projectModelKey(projectId: string, modelKey: string): string {
 	return `${projectId}::${modelKey}`;
 }
@@ -74,6 +79,20 @@ export class AccountRotator {
 	private modelBreakers: Record<string, number> = {};
 	private provider429Events: Array<{ ts: number; projectId: string; modelKey: string; account: string }> = [];
 	private routingDiagnostics: Record<string, RoutingModelDiagnostics> = {};
+	// Debounced state writer: batches multiple saveState() calls within a 1s window
+	// to a single disk write. Hot paths (markError, recordRequest, etc.) call
+	// scheduleStateSave() instead of saveState() to avoid blocking the event loop.
+	private stateSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	private static readonly STATE_SAVE_DEBOUNCE_MS = 1_000;
+	private stateSaveInflight = false;
+	private stateSavePending = false;
+	// Debounced token-usage writer: same pattern as state. Debounce window is
+	// longer (2s) because token-usage writes include the minute/hour/day
+	// consolidation pass and the JSON can be tens of KB.
+	private tokenUsageSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	private static readonly TOKEN_USAGE_SAVE_DEBOUNCE_MS = 2_000;
+	private tokenUsageSaveInflight = false;
+	private tokenUsageSavePending = false;
 
 	constructor(private config: Config) {
 		this.config = applyConfigDefaults(config);
@@ -307,6 +326,58 @@ export class AccountRotator {
 		} catch (err) {
 			this.log(`Failed to save state: ${err}`, "error");
 		}
+	}
+
+	/**
+	 * Schedule a debounced state save. Multiple calls within STATE_SAVE_DEBOUNCE_MS
+	 * are coalesced into a single saveState() invocation. Hot paths (recordRequest,
+	 * markError, etc.) should use this instead of saveState() to avoid blocking
+	 * the event loop on every request.
+	 *
+	 * If a write is already in-flight when the timer fires, the next write is
+	 * scheduled for after it completes.
+	 */
+	scheduleStateSave(): void {
+		if (this.stateSaveTimer) return;
+		this.stateSaveTimer = setTimeout(() => {
+			this.stateSaveTimer = null;
+			void this.runScheduledStateSave();
+		}, AccountRotator.STATE_SAVE_DEBOUNCE_MS);
+		if (this.stateSaveTimer.unref) this.stateSaveTimer.unref();
+	}
+
+	private async runScheduledStateSave(): Promise<void> {
+		if (this.stateSaveInflight) {
+			// A write is already running. Re-schedule ourselves to run after it.
+			this.stateSavePending = true;
+			return;
+		}
+		this.stateSaveInflight = true;
+		try {
+			this.saveState();
+		} finally {
+			this.stateSaveInflight = false;
+			if (this.stateSavePending) {
+				this.stateSavePending = false;
+				this.scheduleStateSave();
+			}
+		}
+	}
+
+	/**
+	 * Force-flush any pending state writes. Called by SIGTERM/SIGINT handlers
+	 * in index.ts to minimise data loss on shutdown.
+	 */
+	flushPendingStateSaveSync(): void {
+		if (this.stateSaveTimer) {
+			clearTimeout(this.stateSaveTimer);
+			this.stateSaveTimer = null;
+		}
+		if (this.stateSaveInflight || this.stateSavePending) {
+			// Best effort — the in-flight write may not have hit disk yet.
+			// We do a final sync write to capture the most recent state.
+		}
+		this.saveState();
 	}
 
 	// =========================================================================
@@ -634,6 +705,36 @@ export class AccountRotator {
 		return this.projectRequests[projectId] ?? 0;
 	}
 
+	private getDailySafetyRejection(account: AccountRuntime, now: number): {
+		reason: "daily-account-stop" | "daily-project-stop";
+		detail: string;
+	} | null {
+		const resetIso = new Date(nextUtcDayStartMs(now)).toISOString();
+		const accountCount = this.getAccountDailyCount(account, now);
+		const accountLimit = this.config.dailyAccountStopRequests ?? 350;
+		if (accountCount >= accountLimit) {
+			return {
+				reason: "daily-account-stop",
+				detail: `daily account budget exhausted (${accountCount}/${accountLimit} upstream attempts; resets at ${resetIso})`,
+			};
+		}
+
+		const projectCount = this.getProjectDailyCount(account.config.projectId, now);
+		const projectLimit = this.config.dailyProjectStopRequests ?? 1200;
+		if (projectCount >= projectLimit) {
+			return {
+				reason: "daily-project-stop",
+				detail: `daily project budget exhausted (${projectCount}/${projectLimit} upstream attempts; resets at ${resetIso})`,
+			};
+		}
+
+		return null;
+	}
+
+	private isDailySafetyStopped(account: AccountRuntime, now: number): boolean {
+		return this.getDailySafetyRejection(account, now) !== null;
+	}
+
 	private getProjectInFlight(modelKey: string, projectId: string): number {
 		return this.accounts
 			.filter((account) => account.config.projectId === projectId)
@@ -662,8 +763,8 @@ export class AccountRotator {
 		if (this.isModelBreakerActive(modelKey, now)) return "model circuit breaker active";
 		if (this.isProjectModelBreakerActive(account.config.projectId, modelKey, now)) return "project circuit breaker active";
 		if (this.getProjectInFlight(modelKey, account.config.projectId) >= (this.config.maxConcurrentRequestsPerProjectModel ?? 1)) return "project concurrency limit reached";
-		if (this.getAccountDailyCount(account, now) >= (this.config.dailyAccountStopRequests ?? 350)) return "daily account budget exhausted";
-		if (this.getProjectDailyCount(account.config.projectId, now) >= (this.config.dailyProjectStopRequests ?? 1200)) return "daily project budget exhausted";
+		const dailySafety = this.getDailySafetyRejection(account, now);
+		if (dailySafety) return dailySafety.detail;
 		return null;
 	}
 
@@ -673,6 +774,7 @@ export class AccountRotator {
 		if (account.disabled) return "disabled";
 		if (account.consecutiveErrors > 0 && !account.disabled) return "error";
 		if (inCooldownModels.length > 0) return "cooldown";
+		if (this.isDailySafetyStopped(account, now)) return "exhausted";
 		if (activeForModels.length > 0) return "active";
 		return "ready";
 	}
@@ -681,8 +783,8 @@ export class AccountRotator {
 		if (reason === "model circuit breaker active") return { reason: "model-breaker", detail: reason };
 		if (reason === "project circuit breaker active") return { reason: "project-breaker", detail: reason };
 		if (reason === "project concurrency limit reached") return { reason: "project-concurrency", detail: reason };
-		if (reason === "daily account budget exhausted") return { reason: "daily-account-stop", detail: reason };
-		if (reason === "daily project budget exhausted") return { reason: "daily-project-stop", detail: reason };
+		if (reason.startsWith("daily account budget exhausted")) return { reason: "daily-account-stop", detail: reason };
+		if (reason.startsWith("daily project budget exhausted")) return { reason: "daily-project-stop", detail: reason };
 		return { reason: "cooldown", detail: reason };
 	}
 
@@ -712,6 +814,47 @@ export class AccountRotator {
 			}
 		}
 		return null;
+	}
+
+	private summarizeRoutingRejections(diagnostics: RoutingAccountDiagnostic[]): string[] {
+		const priority: RoutingRejectionReason[] = [
+			"model-breaker",
+			"project-breaker",
+			"daily-account-stop",
+			"daily-project-stop",
+			"cooldown",
+			"account-concurrency",
+			"project-concurrency",
+			"token-bucket-empty",
+			"fresh-window-blocked",
+			"quota-zero",
+			"flagged",
+			"disabled",
+		];
+		const grouped = new Map<RoutingRejectionReason, Map<string, number>>();
+
+		for (const entry of diagnostics) {
+			if (!entry.rejectedReason) continue;
+			const details = grouped.get(entry.rejectedReason) ?? new Map<string, number>();
+			const detail = entry.rejectedDetail || entry.rejectedReason;
+			details.set(detail, (details.get(detail) ?? 0) + 1);
+			grouped.set(entry.rejectedReason, details);
+		}
+
+		const orderedReasons = [
+			...priority.filter((reason) => grouped.has(reason)),
+			...Array.from(grouped.keys()).filter((reason) => !priority.includes(reason)),
+		];
+		const summaries: string[] = [];
+		for (const reason of orderedReasons) {
+			const details = grouped.get(reason);
+			if (!details) continue;
+			for (const [detail, count] of details.entries()) {
+				summaries.push(`${count} account${count === 1 ? "" : "s"}: ${detail}`);
+			}
+		}
+
+		return summaries;
 	}
 
 	private compareRoutingCandidate(
@@ -828,10 +971,7 @@ export class AccountRotator {
 			? `Best route is ${selectedEmail} using ${policy}.`
 			: "No routable account is available for this model.";
 		if (!selectedEmail) {
-			const reasons = diagnostics
-				.filter((entry) => entry.rejectedReason)
-				.map((entry) => entry.rejectedDetail || entry.rejectedReason)
-				.slice(0, 3);
+			const reasons = this.summarizeRoutingRejections(diagnostics).slice(0, 5);
 			if (reasons.length > 0) reason += ` ${reasons.join("; ")}.`;
 		} else if (policy === "hybrid") {
 			reason = `Best route is ${selectedEmail} using hybrid score ${selectedScore.toFixed(1)}.`;
@@ -987,7 +1127,9 @@ export class AccountRotator {
 				`[${modelKey}] All accounts exhausted. Waiting ${Math.ceil(shortestCooldown / 1000)}s for cooldown`,
 			);
 		} else {
-			this.log(`[${modelKey}] All accounts disabled or unavailable`);
+			const diagnostics = this.buildRoutingDiagnostics(modelKey, now);
+			this.routingDiagnostics[modelKey] = diagnostics;
+			this.log(`[${modelKey}] All accounts disabled or unavailable: ${diagnostics.reason}`, "warn");
 		}
 		return null;
 	}
@@ -1061,7 +1203,7 @@ export class AccountRotator {
 			this.shouldUseRequestCountRotation(account, modelKey) &&
 			state.requestsOnActiveAccount >= this.config.requestsPerRotation;
 
-		this.saveState();
+		this.scheduleStateSave();
 		if (shouldRotate) {
 			this.log(
 				`${account.config.label || account.config.email} [${modelKey}]: hit rotation threshold (${state.requestsOnActiveAccount}/${this.config.requestsPerRotation})`,
@@ -1094,7 +1236,7 @@ export class AccountRotator {
 
 		// Lazy consolidation
 		this.consolidateTokenBuckets(now);
-		this.saveTokenUsage();
+		this.scheduleTokenUsageSave();
 	}
 
 	recordLatency(model: string | undefined, ttfbMs: number, totalMs: number): void {
@@ -1261,6 +1403,50 @@ export class AccountRotator {
 		} catch { /* best effort */ }
 	}
 
+	/**
+	 * Schedule a debounced token-usage save. Same coalescing pattern as
+	 * scheduleStateSave: multiple calls within TOKEN_USAGE_SAVE_DEBOUNCE_MS
+	 * collapse into a single write. recordTokenUsage() calls this instead of
+	 * saveTokenUsage() to avoid blocking the event loop on every request.
+	 */
+	scheduleTokenUsageSave(): void {
+		if (this.tokenUsageSaveTimer) return;
+		this.tokenUsageSaveTimer = setTimeout(() => {
+			this.tokenUsageSaveTimer = null;
+			void this.runScheduledTokenUsageSave();
+		}, AccountRotator.TOKEN_USAGE_SAVE_DEBOUNCE_MS);
+		if (this.tokenUsageSaveTimer.unref) this.tokenUsageSaveTimer.unref();
+	}
+
+	private async runScheduledTokenUsageSave(): Promise<void> {
+		if (this.tokenUsageSaveInflight) {
+			this.tokenUsageSavePending = true;
+			return;
+		}
+		this.tokenUsageSaveInflight = true;
+		try {
+			this.saveTokenUsage();
+		} finally {
+			this.tokenUsageSaveInflight = false;
+			if (this.tokenUsageSavePending) {
+				this.tokenUsageSavePending = false;
+				this.scheduleTokenUsageSave();
+			}
+		}
+	}
+
+	/**
+	 * Force-flush any pending token-usage write. Called by SIGTERM/SIGINT in
+	 * index.ts to minimise data loss on shutdown.
+	 */
+	flushPendingTokenUsageSaveSync(): void {
+		if (this.tokenUsageSaveTimer) {
+			clearTimeout(this.tokenUsageSaveTimer);
+			this.tokenUsageSaveTimer = null;
+		}
+		this.saveTokenUsage();
+	}
+
 	getTokenUsage(): TokenUsageData {
 		// Buckets are hierarchical rollups: minutes → hours → days → months.
 		// A minute period that has already been rolled into an hour bucket must
@@ -1343,7 +1529,7 @@ export class AccountRotator {
 			`${account.config.label || account.config.email} [${modelKey}]: EXHAUSTED, cooldown ${Math.ceil(cooldownMs / 1000)}s${errorDetail}`,
 			"warn",
 		);
-		this.saveState();
+		this.scheduleStateSave();
 	}
 
 	recordProvider429(account: AccountRuntime, model: string | undefined, cooldownMs: number): void {
@@ -1417,7 +1603,7 @@ export class AccountRotator {
 				account.disabled = true;
 				this.log(`${account.config.email}: DISABLED after ${account.consecutiveErrors} consecutive errors`, "error");
 			}
-		this.saveState();
+		this.scheduleStateSave();
 	}
 
 	enableAccount(email: string): boolean {
@@ -1596,7 +1782,7 @@ export class AccountRotator {
 			}
 			const msg = `Token refresh error: ${err instanceof Error ? err.message : String(err)}`;
 			this.markError(account, msg);
-			throw new Error(msg);
+			throw new Error(msg, { cause: err });
 		}
 	}
 
@@ -1633,7 +1819,7 @@ export class AccountRotator {
 					"warn",
 				);
 			}
-		this.saveState();
+		this.scheduleStateSave();
 	}
 
 	startRequest(account: AccountRuntime, modelKey?: string): void {
@@ -1670,10 +1856,12 @@ export class AccountRotator {
 		const retryTimes: number[] = [];
 		if (this.protectivePauseUntil > now) retryTimes.push(this.protectivePauseUntil);
 		const modelKey = model ? (resolveQuotaModelKey(model) ?? "__default__") : "__default__";
+		const dailyResetAt = nextUtcDayStartMs(now);
 		const modelBreaker = this.modelBreakers[modelKey] ?? 0;
 		if (modelBreaker > now) retryTimes.push(modelBreaker);
 		for (const account of this.accounts) {
 			if (account.disabled || account.flagged) continue;
+			if (this.isDailySafetyStopped(account, now)) retryTimes.push(dailyResetAt);
 			const cooldown = Math.max(account.cooldownsByModel[modelKey] ?? 0, account.cooldownsByModel.__default__ ?? 0);
 			if (cooldown > now) retryTimes.push(cooldown);
 			const projectBreaker = this.projectModelBreakers[projectModelKey(account.config.projectId, modelKey)] ?? 0;
@@ -1720,6 +1908,10 @@ export class AccountRotator {
 				activeForModels,
 				requestsSinceRotation: a.requestsSinceRotation,
 				totalRequests: a.totalRequests,
+				dailyRequestCount: this.getAccountDailyCount(a, now),
+				dailyAccountStopRequests: this.config.dailyAccountStopRequests ?? 350,
+				dailyProjectRequestCount: this.getProjectDailyCount(a.config.projectId, now),
+				dailyProjectStopRequests: this.config.dailyProjectStopRequests ?? 1200,
 				cooldownsByModel: a.cooldownsByModel,
 				lastUsed: a.lastUsed,
 				lastError: a.lastError,
@@ -2000,6 +2192,7 @@ export class AccountRotator {
 	private getRoutingHealth(now: number, accounts: AccountStatus[]): StatusResponse["routingHealth"] {
 		const activeCount = accounts.filter((a) => a.status === "active").length;
 		const readyCount = accounts.filter((a) => a.status === "ready").length;
+		const exhaustedCount = accounts.filter((a) => a.status === "exhausted").length;
 		const cooldownCount = accounts.filter((a) => a.status === "cooldown").length;
 		const flaggedCount = accounts.filter((a) => a.status === "flagged").length;
 		const disabledCount = accounts.filter((a) => a.status === "disabled").length;
@@ -2007,9 +2200,10 @@ export class AccountRotator {
 		const busyCount = accounts.filter(
 			(a) => a.status !== "disabled" && a.status !== "flagged" && a.inFlightRequests > 0,
 		).length;
-		const rawAvailableCount = this.accounts.filter((a) => this.isAvailable(a, now)).length;
+		const rawAvailableCount = this.accounts.filter((a) => this.isAvailable(a, now) && !this.isDailySafetyStopped(a, now)).length;
 		const timedAvailableCount = this.accounts.filter((account) => {
 			if (!this.isAvailable(account, now)) return false;
+			if (this.isDailySafetyStopped(account, now)) return false;
 			const hasTimedQuota = account.quota.some((q) => q.percentRemaining !== 0 && q.timerType !== "fresh");
 			return hasTimedQuota || account.allowFreshWindowStartsOverride;
 		}).length;
@@ -2093,6 +2287,22 @@ export class AccountRotator {
 				state: "busy",
 				reason: "All available accounts are currently busy with in-flight requests",
 				nextRetryIn: 0,
+				availableCount,
+				readyCount,
+				activeCount,
+				cooldownCount,
+				busyCount,
+				flaggedCount,
+				disabledCount,
+				errorCount,
+			};
+		}
+
+		if (exhaustedCount > 0) {
+			return {
+				state: "stopped",
+				reason: "All otherwise available accounts are stopped by local daily safety budgets until the next UTC day.",
+				nextRetryIn: Math.max(0, nextUtcDayStartMs(now) - now),
 				availableCount,
 				readyCount,
 				activeCount,

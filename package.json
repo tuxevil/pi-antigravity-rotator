@@ -1,6 +1,6 @@
 {
   "name": "pi-antigravity-rotator",
-  "version": "2.1.5",
+  "version": "2.2.0",
   "description": "Multi-account rotation proxy for Google Antigravity with per-model routing, real-time quota tracking, and infringement detection",
   "license": "MIT",
   "type": "module",
@@ -12,7 +12,9 @@
     "login": "tsx src/cli.ts login",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx/esm --test \"test/**/*.test.ts\"",
-    "check": "npm run typecheck && npm test"
+    "lint": "eslint src test",
+    "coverage": "c8 --reporter=text --reporter=html npm test",
+    "check": "npm run typecheck && npm test && npm run lint"
   },
   "files": [
     "bin/",
@@ -43,7 +45,11 @@
     "tsx": "^4.19.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
+    "c8": "^11.0.0",
+    "eslint": "^10.5.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.61.1"
   }
 }

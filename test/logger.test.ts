@@ -37,6 +37,32 @@ describe("logger", () => {
 		assert.match(output, /REDACTED/);
 	});
 
+	it("redacts access_token in querystring", () => {
+		const cases = [
+			"https://api.example.com?access_token=ya29.abcdef",
+			"https://api.example.com/path?access_token=ya29.abcdef&other=ok",
+			"https://api.example.com?token=secret123",
+			"https://api.example.com?api_key=ABCDEFG&page=2",
+			"https://api.example.com?key=hijacked",
+			"https://api.example.com/callback#access_token=fragmentvalue",
+		];
+		for (const input of cases) {
+			const output = redactSensitive(input);
+			assert.doesNotMatch(output, /ya29\.abcdef/, `failed for: ${input}`);
+			assert.doesNotMatch(output, /secret123/, `failed for: ${input}`);
+			assert.doesNotMatch(output, /ABCDEFG/, `failed for: ${input}`);
+			assert.doesNotMatch(output, /hijacked/, `failed for: ${input}`);
+			assert.doesNotMatch(output, /fragmentvalue/, `failed for: ${input}`);
+			assert.match(output, /REDACTED/, `failed for: ${input}`);
+		}
+	});
+
+	it("preserves non-sensitive querystring parameters", () => {
+		const input = "https://api.example.com?model=gemini&stream=true&temperature=0.7";
+		const output = redactSensitive(input);
+		assert.equal(output, input);
+	});
+
 	it("writes scoped lines with timestamp and redaction", () => {
 		const lines: string[] = [];
 		const logger = new Logger({

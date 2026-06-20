@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import {
 	anthropicToAntigravityBody,
+	logValidationFailure,
 	normalizeOpenAIResponsesRequest,
 	normalizeAnthropicMessagesRequest,
 	normalizeOpenAIChatCompletionRequest,
 	openAIToAntigravityBody,
 	parseAntigravitySse,
 	resetResponsesStoreForTests,
+	setModelSpecsOverride,
 	validateAnthropicMessagesRequest,
 	validateOpenAIChatCompletionRequest,
 	validateOpenAIResponsesRequest,
 } from "../src/compat.js";
+import { logger } from "../src/logger.js";
 
 describe("compat adapters", () => {
 	it("normalizes OpenAI Responses prompt into input", () => {
@@ -211,6 +214,122 @@ describe("compat adapters", () => {
 		assert.match(JSON.stringify(body.request), /"data":"def456"/);
 	});
 
+	it("converts OpenAI tool response images into Antigravity inlineData", () => {
+		const body = openAIToAntigravityBody({
+			model: "claude-sonnet-4-6",
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: "Please look up pi" }],
+				},
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_abc",
+							type: "function",
+							function: { name: "read_file", arguments: "{}" },
+						},
+					],
+				},
+				{
+					role: "tool",
+					tool_call_id: "call_abc",
+					name: "read_file",
+					content: [
+						{ type: "text", text: "Tool output text" },
+						{
+							type: "image_url",
+							image_url: { url: "data:image/png;base64,toolimgbase64" },
+						},
+					],
+				},
+			],
+		});
+
+		const reqStr = JSON.stringify(body.request);
+		assert.match(
+			reqStr,
+			/"functionResponse":\{(?:"[^"]+":"[^"]+",)?"name":"read_file","response":\{"output":"Tool output text"\}/,
+		);
+		assert.match(reqStr, /"inlineData"/);
+		assert.match(reqStr, /"mimeType":"image\/png"/);
+		assert.match(reqStr, /"data":"toolimgbase64"/);
+	});
+ 
+	it("strips dangling tool calls if not followed by tool results", () => {
+		const body = openAIToAntigravityBody({
+			model: "claude-sonnet-4-6",
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: "Please look up pi" }],
+				},
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_abc",
+							type: "function",
+							function: { name: "read_file", arguments: "{}" },
+						},
+					],
+				},
+				{
+					role: "user",
+					content: "Never mind, stop.",
+				},
+			],
+		});
+
+		const reqStr = JSON.stringify(body.request);
+		// Check that the tool calls were stripped and replaced with fallback text
+		assert.match(reqStr, /"role":"model","parts":\[{"text":"\.\.\."}\]/);
+		assert.doesNotMatch(reqStr, /"functionCall"/);
+	});
+
+	it("filters out only incomplete tool calls if some succeeded and others didn't", () => {
+		const body = openAIToAntigravityBody({
+			model: "claude-sonnet-4-6",
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: "Please look up pi" }],
+				},
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_abc",
+							type: "function",
+							function: { name: "read_file", arguments: "{}" },
+						},
+						{
+							id: "call_def",
+							type: "function",
+							function: { name: "write_file", arguments: "{}" },
+						},
+					],
+				},
+				{
+					role: "tool",
+					tool_call_id: "call_abc",
+					name: "read_file",
+					content: "some file content",
+				},
+			],
+		});
+
+		const reqStr = JSON.stringify(body.request);
+		// Should keep "call_abc" (since there is a tool result for it)
+		assert.match(reqStr, /"functionCall":\{"id":"call_abc","name":"read_file"/);
+		// Should filter out "call_def" (since there is no tool result for it)
+		assert.doesNotMatch(reqStr, /"call_def"/);
+	});
+
 	it("strips cache_control fields from OpenAI content blocks", () => {
 		const body = openAIToAntigravityBody({
 			model: "gemini-3-flash",
@@ -316,6 +435,85 @@ describe("compat adapters", () => {
 		// Check that the tool call and response are correctly structured
 		assert.match(reqStr, /"functionCall":\{"id":"tool_call_xyz","name":"lookup","args":\{"q":"pi"\}\}/);
 		assert.match(reqStr, /"functionResponse":\{"id":"tool_call_xyz","name":"lookup","response":\{"value":"3\.14159"\}|\{"content":"3\.14159"\}|\{"text":"3\.14159"\}|3\.14159\}/);
+	});
+});
+
+describe("logValidationFailure", () => {
+	it("truncates large payloads to 200 chars and redacts secrets", () => {
+		const lines: string[] = [];
+		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
+		(logger as unknown as { writer: (line: string) => void }).writer = (line) => lines.push(line);
+		try {
+			const hugePayload = {
+				text: "Bearer abc.def.ghi",
+				access_token: "ya29.VERYLONGSECRET",
+				content: "x".repeat(500),
+			};
+			logValidationFailure("Test scope", hugePayload);
+			assert.equal(lines.length, 1);
+			const line = lines[0];
+			assert.match(line, /Test scope:/);
+			assert.match(line, /\[REDACTED\]/);
+			assert.match(line, /\[\+\d+ chars\]/);
+			assert.ok(line.length < 400, `expected truncated line, got ${line.length} chars`);
+		} finally {
+			(logger as unknown as { writer: (line: string) => void }).writer = originalWriter;
+		}
+	});
+
+	it("does not truncate small payloads", () => {
+		const lines: string[] = [];
+		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
+		(logger as unknown as { writer: (line: string) => void }).writer = (line) => lines.push(line);
+		try {
+			logValidationFailure("Small", { ok: false });
+			assert.equal(lines.length, 1);
+			assert.doesNotMatch(lines[0], /\[\+\d+ chars\]/);
+		} finally {
+			(logger as unknown as { writer: (line: string) => void }).writer = originalWriter;
+		}
+	});
+});
+
+describe("setModelSpecsOverride", () => {
+	afterEach(() => {
+		setModelSpecsOverride(null);
+	});
+
+	it("returns the same defaults for known model ids", () => {
+		const body = openAIToAntigravityBody({
+			model: "gemini-3.1-pro-high",
+			messages: [{ role: "user", content: "hello" }],
+		}) as { request: { generationConfig: { maxOutputTokens?: number; thinkingConfig?: { thinkingBudget?: number } } } };
+		// Without an override, the spec for gemini-3.1-pro-high uses
+		// thinkingBudget=10001 and maxOutputTokens=65535.
+		assert.equal(body.request.generationConfig.thinkingConfig?.thinkingBudget, 10001);
+	});
+
+	it("operator override replaces the bundled spec", () => {
+		setModelSpecsOverride({
+			"gemini-3.1-pro-high": { maxOutputTokens: 12345, thinkingBudget: 999, isThinking: true },
+		});
+		const body = openAIToAntigravityBody({
+			model: "gemini-3.1-pro-high",
+			messages: [{ role: "user", content: "hello" }],
+		}) as { request: { generationConfig: { maxOutputTokens?: number; thinkingConfig?: { thinkingBudget?: number } } } };
+		// thinkingBudget comes straight from the override; maxOutputTokens is capped
+		// at min(tb+8192, spec.maxOutputTokens) = min(9191, 12345) = 9191.
+		assert.equal(body.request.generationConfig.thinkingConfig?.thinkingBudget, 999);
+		assert.equal(body.request.generationConfig.maxOutputTokens, 9191);
+	});
+
+	it("passing null restores bundled defaults", () => {
+		setModelSpecsOverride({
+			"gemini-3.1-pro-high": { maxOutputTokens: 12345, thinkingBudget: 999, isThinking: true },
+		});
+		setModelSpecsOverride(null);
+		const body = openAIToAntigravityBody({
+			model: "gemini-3.1-pro-high",
+			messages: [{ role: "user", content: "hello" }],
+		}) as { request: { generationConfig: { maxOutputTokens?: number; thinkingConfig?: { thinkingBudget?: number } } } };
+		assert.equal(body.request.generationConfig.thinkingConfig?.thinkingBudget, 10001);
 	});
 });
 

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { afterEach, describe, it } from "node:test";
 import { openAIToAntigravityBody } from "../src/compat.js";
-import { forwardRequest, withRotation, type RequestBody } from "../src/proxy.js";
+import {
+	classifyUpstreamResponse,
+	forwardRequest,
+	withRotation,
+	type RequestBody,
+} from "../src/proxy.js";
 import { ANTIGRAVITY_ENDPOINTS, type AccountRuntime } from "../src/types.js";
 import type { AccountRotator } from "../src/rotator.js";
 
@@ -221,5 +226,135 @@ describe("proxy compat integration", () => {
 			await closeServer(daily.server);
 			await closeServer(prod.server);
 		}
+	});
+});
+
+describe("classifyUpstreamResponse", () => {
+	const fakeAccount = { config: { email: "a@b.com" } } as unknown as AccountRuntime;
+	const fakeModelKey = "fake-model";
+
+	function response(status: number, bodyText = ""): Response {
+		return new Response(bodyText, { status, headers: { "content-type": "text/plain" } });
+	}
+
+	it("classifies 429 with RESOURCE_EXHAUSTED as providerResourceExhausted", async () => {
+		const action = await classifyUpstreamResponse(
+			response(429, `{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exceeded"}}`),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini-3.1-pro",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "rate-limited");
+		if (action.kind === "rate-limited") {
+			assert.equal(action.providerResourceExhausted, true);
+			assert.ok(action.cooldownMs > 0);
+			assert.match(action.errorText, /quota exceeded/);
+		}
+	});
+
+	it("classifies plain 429 as rate-limited (not resource-exhausted)", async () => {
+		const action = await classifyUpstreamResponse(
+			response(429, "rate_limit_exceeded"),
+			"https://api.example.com",
+			fakeAccount,
+			"claude-sonnet",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "rate-limited");
+		if (action.kind === "rate-limited") {
+			assert.equal(action.providerResourceExhausted, false);
+		}
+	});
+
+	it("classifies 401 as flagged-401", async () => {
+		const action = await classifyUpstreamResponse(
+			response(401, "unauthorized"),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "flagged-401");
+	});
+
+	it("classifies 403 with flag pattern as flagged-403", async () => {
+		const action = await classifyUpstreamResponse(
+			response(403, "Your account has been suspended for policy violation"),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "flagged-403");
+	});
+
+	it("classifies 403 without flag pattern as forbidden (not flagged)", async () => {
+		const action = await classifyUpstreamResponse(
+			response(403, "permission denied for this resource"),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "forbidden");
+	});
+
+	it("classifies 404 as not-found", async () => {
+		const action = await classifyUpstreamResponse(
+			response(404, "not here"),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "not-found");
+	});
+
+	it("classifies 400 as bad-request", async () => {
+		const action = await classifyUpstreamResponse(
+			response(400, "bad input"),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "bad-request");
+	});
+
+	it("classifies 503 as server-error-503", async () => {
+		const action = await classifyUpstreamResponse(
+			response(503, "service unavailable"),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "server-error-503");
+	});
+
+	it("classifies other 5xx as rotate-on-5xx", async () => {
+		const action = await classifyUpstreamResponse(
+			response(502, "bad gateway"),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "rotate-on-5xx");
+		if (action.kind === "rotate-on-5xx") {
+			assert.equal(action.httpStatus, 502);
+		}
+	});
+
+	it("classifies 2xx as success", async () => {
+		const action = await classifyUpstreamResponse(
+			response(200, "ok"),
+			"https://api.example.com",
+			fakeAccount,
+			"gemini",
+			fakeModelKey,
+		);
+		assert.equal(action.kind, "success");
 	});
 });

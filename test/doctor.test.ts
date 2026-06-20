@@ -2,10 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
-const repoDir = "/root/pi-antigravity-rotator";
+const repoDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("doctor command", () => {
 	it("reports warnings but exits cleanly for valid config without admin token", () => {

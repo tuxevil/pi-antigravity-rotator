@@ -33,7 +33,12 @@ export function redactSensitive(input: unknown): string {
 		.replace(/(authorization["'\s:=]+)(Bearer\s+)?[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]")
 		.replace(/("?(?:refresh_token|refreshToken|access_token|accessToken|client_secret|clientSecret)"?\s*[:=]\s*")[^"]+(")/gi, "$1[REDACTED]$2")
 		.replace(/("?(?:refresh_token|refreshToken|access_token|accessToken|client_secret|clientSecret)"?\s*[:=]\s*)[^\s,&}]+/gi, "$1[REDACTED]")
-		.replace(/1\/\/[A-Za-z0-9._~+/=-]+/g, "1//[REDACTED]");
+		.replace(/1\/\/[A-Za-z0-9._~+/=-]+/g, "1//[REDACTED]")
+		// Redact sensitive keys when they appear as querystring parameters (?key=val&...)
+		// or as path segments. Matches both with and without surrounding quotes/encoding.
+		.replace(/([?&](?:access_token|accessToken|refresh_token|refreshToken|token|api_key|apikey|key)=)[^&\s#]+/gi, "$1[REDACTED]")
+		// Redact when the key is followed by = and a value in a query-like context
+		.replace(/(\?|&)(token|access_token|accessToken|refresh_token|refreshToken|api_key|apikey|key)=([^&\s#]+)/gi, "$1$2=[REDACTED]");
 }
 
 export class Logger {

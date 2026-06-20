@@ -25,7 +25,10 @@ const telemetryLogger = logger.child("telemetry");
 
 // ── Public telemetry endpoint (not a secret — anonymous data only) ───
 // Update this URL to your VPS before publishing to npm.
-const TELEMETRY_ENDPOINT = "http://telemetry.dragont.ec:3800/v1/events";
+// Can be overridden via PI_ROTATOR_TELEMETRY_URL.
+// HTTPS is preferred to avoid leaking the operator's IP in plaintext.
+const DEFAULT_TELEMETRY_ENDPOINT = "https://telemetry.dragont.ec:3800/v1/events";
+const TELEMETRY_ENDPOINT = process.env.PI_ROTATOR_TELEMETRY_URL?.trim() || DEFAULT_TELEMETRY_ENDPOINT;
 
 const HEARTBEAT_INTERVAL_MS = 1 * 60 * 60 * 1000; // 1 hour
 const SEND_TIMEOUT_MS = 5000;
@@ -55,6 +58,33 @@ function getVersion(): string {
 export function isTelemetryEnabled(): boolean {
 	const env = process.env.PI_ROTATOR_TELEMETRY?.toLowerCase();
 	return env !== "off" && env !== "false" && env !== "0";
+}
+
+// ── Insecure-endpoint warning ───────────────────────────────────────
+let warnedAboutInsecureTelemetry = false;
+
+/**
+ * Emit a one-time warning if the telemetry endpoint is plain HTTP, since that
+ * leaks the operator's IP and network metadata to any on-path observer.
+ * The warning can be silenced with PI_ROTATOR_TELEMETRY_INSECURE_OK=1.
+ *
+ * The INSECURE_OK check runs before the once-flag so the operator's explicit
+ * acknowledgement is always honored, even after a previous run warned.
+ */
+export function warnIfInsecureTelemetryEndpoint(
+	endpoint: string = TELEMETRY_ENDPOINT,
+	env: NodeJS.ProcessEnv = process.env,
+): boolean {
+	if (!/^http:\/\//i.test(endpoint)) return false;
+	if (env.PI_ROTATOR_TELEMETRY_INSECURE_OK === "1") return false;
+	if (warnedAboutInsecureTelemetry) return true;
+	warnedAboutInsecureTelemetry = true;
+	telemetryLogger.log(
+		"warn",
+		`Telemetry endpoint uses plain HTTP (${endpoint}). This leaks the operator's IP on every heartbeat. ` +
+		`Set PI_ROTATOR_TELEMETRY_URL to an https:// endpoint, or PI_ROTATOR_TELEMETRY_INSECURE_OK=1 to silence this warning.`,
+	);
+	return true;
 }
 
 // ── Feature tracking (set by other modules) ──────────────────────────

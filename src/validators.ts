@@ -98,6 +98,42 @@ export function validateConfig(value: unknown): ValidationResult<Config> {
 	if (value.tokenBucketInitialTokens !== undefined && !isNonNegativeNumber(value.tokenBucketInitialTokens)) {
 		errors.push("config.tokenBucketInitialTokens must be a non-negative number");
 	}
+	if (value.modelSpecs !== undefined) {
+		if (!isRecord(value.modelSpecs)) {
+			errors.push("config.modelSpecs must be an object when provided");
+		} else {
+			for (const [key, spec] of Object.entries(value.modelSpecs)) {
+				if (!isRecord(spec)) {
+					errors.push(`config.modelSpecs.${key} must be an object`);
+					continue;
+				}
+				if (spec.maxOutputTokens !== undefined && !isPositiveNumber(spec.maxOutputTokens)) {
+					errors.push(`config.modelSpecs.${key}.maxOutputTokens must be a positive number`);
+				}
+				if (spec.thinkingBudget !== undefined && (typeof spec.thinkingBudget !== "number" || !Number.isFinite(spec.thinkingBudget))) {
+					errors.push(`config.modelSpecs.${key}.thinkingBudget must be a number`);
+				}
+				if (spec.isThinking !== undefined && typeof spec.isThinking !== "boolean") {
+					errors.push(`config.modelSpecs.${key}.isThinking must be a boolean`);
+				}
+			}
+		}
+	}
+	if (value.modelAliases !== undefined) {
+		if (!isRecord(value.modelAliases)) {
+			errors.push("config.modelAliases must be an object when provided");
+		} else {
+			for (const [from, to] of Object.entries(value.modelAliases)) {
+				if (typeof from !== "string" || from.length === 0) {
+					errors.push("config.modelAliases keys must be non-empty strings");
+					break;
+				}
+				if (typeof to !== "string" || to.length === 0) {
+					errors.push(`config.modelAliases.${from} must be a non-empty string`);
+				}
+			}
+		}
+	}
 
 	return errors.length > 0 ? fail(errors) : ok(value as unknown as Config);
 }

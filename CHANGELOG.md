@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-16
+
+### Security
+
+### Security
+- **Admin token autogeneration**: On first run with no `PI_ROTATOR_ADMIN_TOKEN` env var, a cryptographically secure token is generated, persisted to `.admin-token` (mode 0600), and printed once to the operator. Dashboard and `/api/*` routes are now protected by default on fresh installs. Override the generated token by setting `PI_ROTATOR_ADMIN_TOKEN` in the env. `.admin-token` added to `.gitignore`.
+- **Querystring secret redaction**: `redactSensitive()` now also redacts `access_token`, `token`, `api_key`, `apikey`, `key`, `refresh_token` when they appear in querystring (`?key=val&...`) or URL fragment.
+- **OAuth fallback warning**: New `warnIfUsingFallbackOAuthCreds()` detects when `ANTIGRAVITY_CLIENT_ID` and/or `ANTIGRAVITY_CLIENT_SECRET` are missing and emits a one-time warning that the rotator is using the public Antigravity IDE client.
+- **Removed open CORS**: `Access-Control-Allow-Origin: *` removed from `/api/status` and `/api/config`. Replaced with `Cache-Control: no-store`. Dashboard still works same-origin.
+- **Truncated/redacted validation logs**: New `logValidationFailure()` truncates payloads to 200 chars and runs them through `redactSensitive` before logging. Applied to OpenAI messages validation and stream error logs in `compat.ts`.
+
+### Added
+- **`Config.modelSpecs`**: Operators can now override the per-model thinking/output spec table used by the compat layer without recompiling. Add a `modelSpecs` field to `accounts.json` and call `setModelSpecsOverride()` at boot (done automatically by `index.ts`).
+- **`warnIfInsecureTelemetryEndpoint()`**: Detects plain `http://` telemetry endpoints and emits a one-time warning. Default endpoint switched to `https://`. Override via `PI_ROTATOR_TELEMETRY_URL`. Silence via `PI_ROTATOR_TELEMETRY_INSECURE_OK=1`.
+- **Persistent `responsesStore`**: The OpenAI Responses API store (used by Codex via `previous_response_id`) is now persisted to `<configDir>/responses.json` with atomic writes and a 1.5s debounce. Restart-safe: in-flight Codex conversations continue across rotator restarts. New `src/responses-store.ts` with `load()`, `flush()`, `flushSync()`. Corrupt files are moved aside to `.corrupt-<ts>.bak` on startup.
+- **Debounced state writes**: Hot paths (`recordRequest`, `markExhausted`, `markError`, `markFlagged`) now call `scheduleStateSave()` instead of `saveState()`, coalescing multiple writes within a 1s window into a single disk write. New `flushPendingStateSaveSync()` in the SIGTERM/SIGINT shutdown handler drains the queue synchronously to minimise data loss.
+- **GitHub Actions CI**: New `.github/workflows/ci.yml` runs `npm ci` + `npm run check` (typecheck + 191 tests) on push and PR to `main`. Node 22 with npm cache. PRs without green checks cannot be merged.
+- **8 e2e proxy tests** (`test/proxy-e2e.test.ts`): Cover the full proxy flow with a local HTTP server as mock Antigravity — 200 happy path, 429 rate-limited (Retry-After and RESOURCE_EXHAUSTED), 401 unauthorized, 403 flagged and non-flagged, 500 server error, endpoint cascade (daily→prod).
+- **7 dashboard tests** (`test/dashboard.test.ts`): Verify utf-8/viewport meta tags, all 12 admin API endpoints are referenced, the `escapeHtml`/`jsString`/`maskText`/`maskEmail` helpers are present and `escapeHtml` correctly escapes the 5 HTML-sensitive characters, no hardcoded OAuth secrets or refresh tokens leak into the HTML.
+
+### Changed
+- **Refactored `proxy.ts`**: Extracted `classifyUpstreamResponse()` that returns a discriminated `UpstreamAction`. Both `withRotation()` and `handleProxyRequest()` dispatch against the helper instead of duplicating the 401/403/404/400/429/5xx branches. ~150 lines of parallel code removed. New `UpstreamAction` type with 9 action kinds.
+
+### Cleanup
+- **Removed `src/antigravity-prompt.ts`**: 80-line `ANTIGRAVITY_IDENTITY_PROMPT` export with 0 references in the repo.
+- **Consolidated agent docs**: `CLAUDE.md` now points to `AGENTS.md` as the single source of truth. The duplicated BEADS INTEGRATION block is gone.
+- **Moved scripts to `scripts/`**: 10 one-off utility scripts (`mitm.js`, `mock_google.js`, `query_models.{js,ts}`, `test-compat.ts`, `test-direct.js`, `test_generate.js`, `test_loop.js`, `test-http.cjs`, `test-openai.cjs`) moved from the repo root. `query_models.ts` and `test-compat.ts` updated to use `../src/...` relative imports after the move.
+
+## [2.2.1] - 2026-06-16
+
+### Fixed
+- **SSE usage extraction cross-event matching**: The old `extractTokenUsage()` ran a regex on the last 32KB of the upstream body, which could match across SSE event boundaries and return incorrect `(input, output)` pairs. Replaced with `SseEventAccumulator` + `extractUsageFromSseEvent()` that buffer complete SSE events (split on `\n\n`), parse each `data:` payload as JSON, and recursively search for `usageMetadata` (Gemini) or `usage` (OpenAI/Anthropic). Regex remains as a last-resort fallback for malformed JSON. Real-time streaming is preserved — the `res.write(chunk)` in `onData` is unchanged. Resolves ROADMAP §2.
+
+## [2.1.6] - 2026-06-12
+
+### Fixed
+- **Streaming tool calls finish reason**: Fixed an issue where `streamCompatSse` emitted `finish_reason: "stop"` instead of `"tool_calls"` when function calls were streamed to the client via OpenAI compatibility layer. This resolves compatibility issues with clients like ZED editor that discard pending tool executions as canceled when receiving "stop".
+
 ## [2.1.5] - 2026-05-27
 
 ### Fixed

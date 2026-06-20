@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { discoverProject } from "../src/oauth.js";
+import { discoverProject, getOAuthClientConfig, warnIfUsingFallbackOAuthCreds } from "../src/oauth.js";
+import { logger } from "../src/logger.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -37,5 +38,73 @@ describe("oauth project discovery", () => {
 			discoverProject("token"),
 			/Could not discover Cloud Code companion project ID from Google/,
 		);
+	});
+});
+
+describe("oauth fallback credentials warning", () => {
+	beforeEach(() => {
+		// Reset the once-per-process flag by capturing the original logger.
+		// We cannot reset the module-level warnedAboutFallback directly,
+		// so the test ensures subsequent calls still return true.
+	});
+
+	it("returns false when both env vars are set", () => {
+		assert.equal(
+			warnIfUsingFallbackOAuthCreds({
+				ANTIGRAVITY_CLIENT_ID: "my-id",
+				ANTIGRAVITY_CLIENT_SECRET: "my-secret",
+			}),
+			false,
+		);
+	});
+
+	it("returns true and logs when env vars are missing", () => {
+		const lines: string[] = [];
+		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
+		(logger as unknown as { writer: (line: string) => void }).writer = (line) => lines.push(line);
+		try {
+			const result = warnIfUsingFallbackOAuthCreds({});
+			assert.equal(result, true);
+			assert.equal(lines.length, 1);
+			assert.match(lines[0], /bundled fallback OAuth client credentials/);
+			assert.match(lines[0], /ANTIGRAVITY_CLIENT_ID/);
+			assert.match(lines[0], /ANTIGRAVITY_CLIENT_SECRET/);
+		} finally {
+			(logger as unknown as { writer: (line: string) => void }).writer = originalWriter;
+		}
+	});
+
+	it("warns only once per process even if called repeatedly", () => {
+		const lines: string[] = [];
+		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
+		(logger as unknown as { writer: (line: string) => void }).writer = (line) => lines.push(line);
+		try {
+			warnIfUsingFallbackOAuthCreds({});
+			const firstCallLines = lines.length;
+			warnIfUsingFallbackOAuthCreds({});
+			warnIfUsingFallbackOAuthCreds({});
+			assert.equal(lines.length, firstCallLines, "warning should not be duplicated");
+			// Still returns true because fallback is in use
+			assert.equal(warnIfUsingFallbackOAuthCreds({}), true);
+		} finally {
+			(logger as unknown as { writer: (line: string) => void }).writer = originalWriter;
+		}
+	});
+
+	it("getOAuthClientConfig still works with env override", () => {
+		const originalId = process.env.ANTIGRAVITY_CLIENT_ID;
+		const originalSecret = process.env.ANTIGRAVITY_CLIENT_SECRET;
+		process.env.ANTIGRAVITY_CLIENT_ID = "env-id";
+		process.env.ANTIGRAVITY_CLIENT_SECRET = "env-secret";
+		try {
+			const cfg = getOAuthClientConfig();
+			assert.equal(cfg.clientId, "env-id");
+			assert.equal(cfg.clientSecret, "env-secret");
+		} finally {
+			if (originalId === undefined) delete process.env.ANTIGRAVITY_CLIENT_ID;
+			else process.env.ANTIGRAVITY_CLIENT_ID = originalId;
+			if (originalSecret === undefined) delete process.env.ANTIGRAVITY_CLIENT_SECRET;
+			else process.env.ANTIGRAVITY_CLIENT_SECRET = originalSecret;
+		}
 	});
 });

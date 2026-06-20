@@ -8,7 +8,11 @@ import { startProxy } from "./proxy.js";
 import { getConfigDir } from "./paths.js";
 import { TelemetryReporter, setActiveReporter } from "./telemetry.js";
 import { loadConfigFromDisk } from "./account-store.js";
-import { getConfiguredAdminToken } from "./admin-auth.js";
+import { ensureAdminToken, getConfiguredAdminToken, setPersistedAdminToken } from "./admin-auth.js";
+import { warnIfUsingFallbackOAuthCreds } from "./oauth.js";
+import { warnIfInsecureTelemetryEndpoint } from "./telemetry.js";
+import { setModelSpecsOverride, loadResponsesStore, flushResponsesStoreSync } from "./compat.js";
+import { setModelAliasesOverride } from "./types.js";
 import { writeTextFileAtomic } from "./storage.js";
 
 function loadConfig(): Config {
@@ -74,6 +78,33 @@ function maybeShowStarNudge(): void {
 	try { writeTextFileAtomic(promptedPath, String(Date.now())); } catch { /* best effort */ }
 }
 
+/**
+ * Resolve the effective admin token at startup. If no PI_ROTATOR_ADMIN_TOKEN
+ * env var is set and no .admin-token file exists, a new token is generated,
+ * persisted to .admin-token, and printed to the operator once. This ensures
+ * admin routes are protected by default on first run.
+ */
+function bootstrapAdminToken(configDir: string): void {
+	const resolved = ensureAdminToken(configDir);
+	setPersistedAdminToken(resolved.token);
+	if (resolved.source === "generated") {
+		console.log();
+		console.log("  ╭──────────────────────────────────────────────────────────╮");
+		console.log("  │  Generated admin token (persisted to .admin-token):      │");
+		const tokenPreview = resolved.token.length > 12
+			? `${resolved.token.slice(0, 8)}…${resolved.token.slice(-4)}`
+			: resolved.token;
+		console.log(`  │  ${tokenPreview}  │`);
+		console.log("  │  (full token in .admin-token; cat to view)               │");
+		console.log("  │                                                          │");
+		console.log("  │  Header: x-rotator-admin-token: <token>                  │");
+		console.log("  │  Bearer: Authorization: Bearer <token>                   │");
+		console.log("  │  URL:    <url>?token=<token>                             │");
+		console.log("  ╰──────────────────────────────────────────────────────────╯");
+		console.log();
+	}
+}
+
 function maybeWarnAboutAdminExposure(config: Config): void {
 	if (getConfiguredAdminToken()) return;
 	console.warn("WARNING: PI_ROTATOR_ADMIN_TOKEN is not configured.");
@@ -103,7 +134,13 @@ export function main(): void {
 	console.log();
 
 	maybeShowStarNudge();
+	bootstrapAdminToken(getConfigDir());
 	maybeWarnAboutAdminExposure(config);
+	warnIfUsingFallbackOAuthCreds();
+	warnIfInsecureTelemetryEndpoint();
+	setModelSpecsOverride(config.modelSpecs ?? null);
+	setModelAliasesOverride(config.modelAliases ?? null);
+	void loadResponsesStore();
 
 	const rotator = new AccountRotator(config);
 
@@ -134,6 +171,9 @@ export function main(): void {
 	// ── Graceful shutdown ──
 	const shutdown = async (): Promise<void> => {
 		console.log("\nShutting down...");
+		flushResponsesStoreSync();
+		rotator.flushPendingStateSaveSync();
+		rotator.flushPendingTokenUsageSaveSync();
 		await telemetry.shutdown();
 		rotator.stopQuotaPolling();
 		process.exit(0);

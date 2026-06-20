@@ -5,8 +5,10 @@ import {
 	isTelemetryEnabled,
 	trackFeature,
 	getFeaturesSnapshot,
+	warnIfInsecureTelemetryEndpoint,
 	FLAG_PATTERNS,
 } from "../src/telemetry.js";
+import { logger } from "../src/logger.js";
 import type { TelemetryPayload, FlagEventData, FlagTelemetryPayload } from "../src/telemetry.js";
 
 describe("telemetry", () => {
@@ -254,3 +256,69 @@ describe("telemetry", () => {
 		});
 	});
 });
+
+describe("warnIfInsecureTelemetryEndpoint", () => {
+	const originalInsecureOk = process.env.PI_ROTATOR_TELEMETRY_INSECURE_OK;
+
+	afterEach(() => {
+		if (originalInsecureOk === undefined) {
+			delete process.env.PI_ROTATOR_TELEMETRY_INSECURE_OK;
+		} else {
+			process.env.PI_ROTATOR_TELEMETRY_INSECURE_OK = originalInsecureOk;
+		}
+	});
+
+	function captureLog(): string[] {
+		const lines: string[] = [];
+		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
+		(logger as unknown as { writer: (line: string) => void }).writer = (line) => lines.push(line);
+		return lines;
+	}
+
+	function restoreLog(originalWriter: (line: string) => void): void {
+		(logger as unknown as { writer: (line: string) => void }).writer = originalWriter;
+	}
+
+	it("returns false for an https:// endpoint without logging", () => {
+		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
+		const lines = captureLog();
+		try {
+			const result = warnIfInsecureTelemetryEndpoint("https://telemetry.example.com/events");
+			assert.equal(result, false);
+			assert.equal(lines.length, 0);
+		} finally {
+			restoreLog(originalWriter);
+		}
+	});
+
+	it("returns true and logs for a plain http:// endpoint", () => {
+		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
+		const lines = captureLog();
+		try {
+			const result = warnIfInsecureTelemetryEndpoint("http://telemetry.example.com/events");
+			assert.equal(result, true);
+			assert.equal(lines.length, 1);
+			assert.match(lines[0], /plain HTTP/);
+			assert.match(lines[0], /PI_ROTATOR_TELEMETRY_URL/);
+		} finally {
+			restoreLog(originalWriter);
+		}
+	});
+
+	it("silences the warning when PI_ROTATOR_TELEMETRY_INSECURE_OK=1", () => {
+		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
+		const lines = captureLog();
+		process.env.PI_ROTATOR_TELEMETRY_INSECURE_OK = "1";
+		try {
+			const result = warnIfInsecureTelemetryEndpoint(
+				"http://telemetry.example.com/events",
+				{ PI_ROTATOR_TELEMETRY_INSECURE_OK: "1" },
+			);
+			assert.equal(result, false);
+			assert.equal(lines.length, 0);
+		} finally {
+			restoreLog(originalWriter);
+		}
+	});
+});
+

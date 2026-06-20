@@ -102,7 +102,37 @@ export function saveAccountsConfig(config: Config): void {
 	writeJsonFileAtomic(ACCOUNTS_FILE, applyConfigDefaults(config));
 }
 
+// Reasonable upper bounds on per-account fields. These are defensive
+// limits to prevent a malicious or buggy caller from growing
+// accounts.json without bound, which would slow every subsequent
+// saveState. The numbers are well above any realistic real value.
+export const MAX_EMAIL_LENGTH = 254; // RFC 5321
+export const MAX_LABEL_LENGTH = 100;
+export const MAX_PROJECT_ID_LENGTH = 100;
+export const MAX_REFRESH_TOKEN_LENGTH = 4096;
+
+function validateAccountConfigLengths(entry: AccountConfig): void {
+	const checks: Array<[string, number]> = [
+		["email", MAX_EMAIL_LENGTH],
+		["label", MAX_LABEL_LENGTH],
+		["projectId", MAX_PROJECT_ID_LENGTH],
+		["refreshToken", MAX_REFRESH_TOKEN_LENGTH],
+	];
+	for (const [field, max] of checks) {
+		const value = entry[field as keyof AccountConfig];
+		if (typeof value === "string" && value.length > max) {
+			throw new Error(
+				`Account ${field} exceeds maximum length ${max} (got ${value.length}). ` +
+				`This usually indicates a malformed input — refusing to write to accounts.json.`,
+			);
+		}
+	}
+}
+
+export { validateAccountConfigLengths };
+
 export function addAccountToConfig(entry: AccountConfig): { isNew: boolean } {
+	validateAccountConfigLengths(entry);
 	const config = loadOrCreateAccountsConfig();
 	const existing = config.accounts.findIndex((a) => a.email === entry.email);
 

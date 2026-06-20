@@ -1,13 +1,24 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
-import { logger } from "./logger.js";
+import { logger, redactSensitive } from "./logger.js";
 import type { AccountRotator } from "./rotator.js";
-import { resolveQuotaModelKey } from "./types.js";
+import { applyModelAlias, resolveQuotaModelKey } from "./types.js";
 import { withRotation, flattenHeaders, type RequestBody } from "./proxy.js";
+import { ResponsesStore, type StoredResponseEntry } from "./responses-store.js";
 
 
 const compatLogger = logger.child("compat");
+
+const VALIDATION_LOG_MAX_CHARS = 200;
+
+export function logValidationFailure(scope: string, payload: unknown): void {
+	const truncated = redactSensitive(JSON.stringify(payload));
+	const clipped = truncated.length > VALIDATION_LOG_MAX_CHARS
+		? `${truncated.slice(0, VALIDATION_LOG_MAX_CHARS)}…[+${truncated.length - VALIDATION_LOG_MAX_CHARS} chars]`
+		: truncated;
+	compatLogger.warn(`${scope}: ${clipped}`);
+}
 
 export interface ChatMessage {
 	role: "system" | "developer" | "user" | "assistant" | "model" | "tool";
@@ -131,23 +142,19 @@ interface ResponseFunctionCallOutputItem {
 
 type ResponseOutputItem = ResponseMessageOutputItem | ResponseFunctionCallOutputItem;
 
-interface StoredResponseEntry {
-	response: Record<string, unknown>;
-	inputItems: Array<Record<string, unknown>>;
-	conversationMessages: ChatMessage[];
-	callIdToName: Map<string, string>;
-	expiresAt: number;
-}
+// StoredResponseEntry now lives in responses-store.ts (persistent on disk)
 
 // ---------------------------------------------------------------------------
 // Model-specific specs — mirrors Antigravity-Manager model_specs.json
+// Operators can override these via the `modelSpecs` field in accounts.json
+// by calling setModelSpecsOverride() at startup.
 // ---------------------------------------------------------------------------
-interface ModelSpec {
+export interface ModelSpec {
 	maxOutputTokens: number;
 	thinkingBudget: number; // -1 = adaptive (model decides), >=0 = fixed
 	isThinking: boolean;
 }
-const MODEL_SPECS: Record<string, ModelSpec> = {
+const DEFAULT_MODEL_SPECS: Record<string, ModelSpec> = {
 	"gemini-pro-agent":          { maxOutputTokens: 65535, thinkingBudget: 10001, isThinking: true },
 	"gemini-3-flash-agent":      { maxOutputTokens: 65536, thinkingBudget: 10000, isThinking: true },
 	"gemini-3-pro-high":         { maxOutputTokens: 65535, thinkingBudget: 10001, isThinking: true },
@@ -169,6 +176,20 @@ const MODEL_SPECS: Record<string, ModelSpec> = {
 	"gpt-oss-120b-medium":       { maxOutputTokens: 32768, thinkingBudget: 8192,  isThinking: true },
 	"gpt-oss-120b":              { maxOutputTokens: 32768, thinkingBudget: 8192,  isThinking: true },
 };
+let modelSpecsOverride: Record<string, ModelSpec> | null = null;
+
+/**
+ * Replace the bundled model spec table with operator-provided overrides.
+ * Pass `null` to restore defaults. Called once at startup from index.ts.
+ */
+export function setModelSpecsOverride(specs: Record<string, ModelSpec> | null): void {
+	modelSpecsOverride = specs && Object.keys(specs).length > 0 ? specs : null;
+}
+
+function getActiveModelSpecs(): Record<string, ModelSpec> {
+	return modelSpecsOverride ?? DEFAULT_MODEL_SPECS;
+}
+
 const GEMINI_MAX_OUTPUT_TOKENS = 65536;
 const CLAUDE_MAX_OUTPUT_TOKENS = 64000;
 const FALLBACK_THINKING_BUDGET = 24576;
@@ -182,9 +203,10 @@ function getModelFamily(model: string): "claude" | "gemini" | "unknown" {
 }
 
 function getModelSpec(model: string): ModelSpec {
+	const specs = getActiveModelSpecs();
 	const lower = model.toLowerCase();
-	if (MODEL_SPECS[lower]) return MODEL_SPECS[lower];
-	for (const [key, spec] of Object.entries(MODEL_SPECS)) {
+	if (specs[lower]) return specs[lower];
+	for (const [key, spec] of Object.entries(specs)) {
 		if (lower.includes(key)) return spec;
 	}
 	const family = getModelFamily(model);
@@ -228,38 +250,34 @@ function isNonEmptyString(value: unknown): value is string {
  */
 const thoughtSignatureCache = new Map<string, string>();
 const THOUGHT_SIGNATURE_CACHE_MAX = 500;
-const RESPONSES_STORE_TTL_MS = 6 * 60 * 60 * 1000;
-const RESPONSES_STORE_MAX = 500;
-const responsesStore = new Map<string, StoredResponseEntry>();
+const responsesStore = new ResponsesStore();
 
 function makeCompatId(prefix: string): string {
 	return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function pruneResponsesStore(now = Date.now()): void {
-	for (const [id, entry] of responsesStore) {
-		if (entry.expiresAt <= now) responsesStore.delete(id);
-	}
-	while (responsesStore.size > RESPONSES_STORE_MAX) {
-		const oldest = responsesStore.keys().next();
-		if (oldest.done) break;
-		responsesStore.delete(oldest.value);
-	}
-}
-
 function getStoredResponse(id: string): StoredResponseEntry | null {
-	pruneResponsesStore();
-	return responsesStore.get(id) || null;
+	return responsesStore.get(id);
 }
 
 function setStoredResponse(id: string, entry: StoredResponseEntry): void {
-	pruneResponsesStore();
 	responsesStore.set(id, entry);
-	pruneResponsesStore();
 }
 
 export function resetResponsesStoreForTests(): void {
 	responsesStore.clear();
+}
+
+export async function loadResponsesStore(): Promise<void> {
+	await responsesStore.load();
+}
+
+export async function flushResponsesStore(): Promise<void> {
+	await responsesStore.flush();
+}
+
+export function flushResponsesStoreSync(): void {
+	responsesStore.flushSync();
 }
 
 function cacheThoughtSignature(callId: string, signature: string): void {
@@ -828,12 +846,13 @@ function messagesFromAntigravityRequest(value: Record<string, unknown>): ChatMes
 
 export function normalizeOpenAIChatCompletionRequest(value: unknown): unknown {
 	if (!isRecord(value) || Array.isArray(value.messages)) return value;
-	let messages: ChatMessage[] | null = null;
-	if ("messages" in value) messages = messagesFromLooseMessages(value.messages);
-	else if (typeof value.prompt === "string") messages = [{ role: "user", content: value.prompt }];
-	else if (Array.isArray(value.prompt)) messages = messagesFromResponsesInput(value.prompt) ?? value.prompt.map((prompt) => ({ role: "user", content: String(prompt) }));
-	else if ("input" in value) messages = messagesFromResponsesInput(value.input);
-	else messages = messagesFromAntigravityRequest(value);
+	const messages = (() => {
+		if ("messages" in value) return messagesFromLooseMessages(value.messages);
+		if (typeof value.prompt === "string") return [{ role: "user", content: value.prompt }];
+		if (Array.isArray(value.prompt)) return messagesFromResponsesInput(value.prompt) ?? value.prompt.map((prompt) => ({ role: "user", content: String(prompt) }));
+		if ("input" in value) return messagesFromResponsesInput(value.input);
+		return messagesFromAntigravityRequest(value);
+	})();
 	return messages ? { ...value, messages } : value;
 }
 
@@ -917,7 +936,7 @@ export function validateOpenAIChatCompletionRequest(value: unknown): { ok: true;
 	const errors: string[] = [];
 	if (!isNonEmptyString(value.model)) errors.push("body.model must be a non-empty string");
 	if (!validateMessages(value.messages)) {
-		compatLogger.warn(`OpenAI messages validation failed: ${JSON.stringify(value.messages)}`);
+		logValidationFailure("OpenAI messages validation failed", value.messages);
 		errors.push("body.messages must be an array of chat messages");
 	}
 	if (value.stream !== undefined && typeof value.stream !== "boolean") errors.push("body.stream must be boolean when provided");
@@ -981,9 +1000,15 @@ function convertResponsesToChatRequest(input: OpenAIResponsesRequest): Responses
 		throw new Error(`previous_response_id not found: ${previousResponseId}`);
 	}
 
-	const parsed = parseResponsesInput(input.input, previous?.callIdToName);
+	// Re-hydrate the persisted Maps/Arrays back into the runtime types.
+	const previousCallIdToName = previous ? new Map(Object.entries(previous.callIdToName)) : new Map<string, string>();
+	const previousConversationMessages: ChatMessage[] = previous
+		? (previous.conversationMessages as unknown as ChatMessage[])
+		: [];
+
+	const parsed = parseResponsesInput(input.input, previousCallIdToName);
 	const conversationMessages = [
-		...(previous?.conversationMessages ?? []),
+		...previousConversationMessages,
 		...parsed.messages,
 	];
 	const chatMessages = [
@@ -1106,12 +1131,13 @@ function saveResponsesEntry(
 	if (!responseId) return;
 	const { callIdToName } = buildResponsesOutput(completion);
 	const mergedConversation = [...conversationMessages, buildAssistantMessageFromCompletion(completion)];
+	const expiresAt = Date.now() + 6 * 60 * 60 * 1000;
 	setStoredResponse(responseId, {
 		response,
 		inputItems,
-		conversationMessages: mergedConversation,
-		callIdToName,
-		expiresAt: Date.now() + RESPONSES_STORE_TTL_MS,
+		conversationMessages: mergedConversation as unknown as Array<Record<string, unknown>>,
+		callIdToName: Object.fromEntries(callIdToName),
+		expiresAt,
 	});
 }
 
@@ -1144,19 +1170,37 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	for (let i = 0; i < conversationMessages.length; i++) {
 		const msg = conversationMessages[i];
 		if (msg.role === "assistant" || msg.role === "model") {
+			// Strip dangling tool calls that do not have corresponding tool results (e.g. if some or all tool calls were cancelled/failed)
+			let msgToolCalls = msg.tool_calls;
+			if (Array.isArray(msgToolCalls) && msgToolCalls.length > 0) {
+				const completedToolCallIds = new Set<string>();
+				let j = i + 1;
+				while (j < conversationMessages.length && conversationMessages[j].role === "tool") {
+					const toolCallId = conversationMessages[j].tool_call_id;
+					if (typeof toolCallId === "string") {
+						completedToolCallIds.add(toolCallId);
+					}
+					j++;
+				}
+				msgToolCalls = msgToolCalls.filter((tc) => tc.id && completedToolCallIds.has(tc.id));
+				if (msgToolCalls.length === 0) {
+					msgToolCalls = undefined;
+				}
+			}
+
 			// Check if this is a thinking model turn with tool calls that have no cached signatures.
 			// If so, we collapse the tool exchange into a neutral user summary instead of
 			// injecting [Tool call: ...] text that the model will learn to mimic.
 			const hasMissingSig =
 				isGeminiThinking &&
-				Array.isArray(msg.tool_calls) &&
-				msg.tool_calls.length > 0 &&
-				!thoughtSignatureCache.has(msg.tool_calls[0].id);
+				Array.isArray(msgToolCalls) &&
+				msgToolCalls.length > 0 &&
+				!thoughtSignatureCache.has(msgToolCalls[0].id);
 
 			if (hasMissingSig) {
 				// Build a summary of what the model did and what results came back.
 				// We collect the paired tool result(s) from the immediately following messages.
-				const toolNames = msg.tool_calls!.map((tc) => tc.function.name).join(", ");
+				const toolNames = msgToolCalls!.map((tc) => tc.function.name).join(", ");
 				const resultParts: string[] = [];
 				while (i + 1 < conversationMessages.length && conversationMessages[i + 1].role === "tool") {
 					i++;
@@ -1176,13 +1220,13 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 				const textContent = typeof msg.content === "string" ? msg.content : extractText(msg.content);
 				if (textContent) parts.push({ text: textContent });
 			}
-			if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+			if (Array.isArray(msgToolCalls) && msgToolCalls.length > 0) {
 				// Use native Gemini functionCall parts. Re-inject thought_signature from
 				// the server-side cache if available. Google only validates signatures on
 				// the *current turn* (after the last real user text message), so missing
 				// signatures on older historical turns are silently ignored.
 				let isFirstInMessage = true;
-				for (const tc of msg.tool_calls) {
+				for (const tc of msgToolCalls) {
 					let args: unknown;
 					try {
 						args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
@@ -1198,6 +1242,9 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 					});
 					isFirstInMessage = false;
 				}
+			}
+			if (parts.length === 0) {
+				parts.push({ text: "..." });
 			}
 			if (parts.length > 0) {
 				// For Claude: handle two scenarios that break tool_use/tool_result ordering.
@@ -1241,16 +1288,40 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 					? parsed
 					: { output: parsed };
 			} catch { responseData = { output: responseText }; }
+			// Extract any images present in the tool result content
+			const toolImages: AntigravityPart[] = [];
+			if (msg.content && Array.isArray(msg.content)) {
+				for (const part of msg.content) {
+					if (part.type === "image_url" && isRecord(part.image_url) && typeof part.image_url.url === "string") {
+						const inlineData = dataUrlToInlineData(part.image_url.url);
+						if (inlineData) toolImages.push(inlineData);
+					} else if (part.type === "image" && isRecord(part.source) && typeof part.source.data === "string") {
+						const mediaType = typeof part.source.media_type === "string" ? part.source.media_type : "image/png";
+						toolImages.push({ inlineData: { mimeType: mediaType, data: part.source.data } });
+					}
+				}
+			}
+
 			// Include id only for Claude — Gemini native models reject the id field in functionResponse
 			const fnResponsePart = { functionResponse: { ...(isClaude && toolCallId ? { id: toolCallId } : {}), name: fnName, response: responseData } };
 			// Merge consecutive tool results into a single user turn.
 			// Claude (via Vertex) requires ALL tool_result blocks in one message
 			// directly after the assistant message with tool_use blocks.
+			// Crucially, all tool_result (functionResponse) parts must appear before
+			// any other part types (such as inlineData images) in the parts array.
 			const lastContent = contents[contents.length - 1];
 			if (lastContent && lastContent.role === "user" && Array.isArray(lastContent.parts) && lastContent.parts.length > 0 && isRecord(lastContent.parts[0] as any) && (lastContent.parts[0] as any).functionResponse !== undefined) {
-				lastContent.parts.push(fnResponsePart);
+				const firstNonFnIdx = lastContent.parts.findIndex((p: any) => !isRecord(p) || p.functionResponse === undefined);
+				if (firstNonFnIdx === -1) {
+					lastContent.parts.push(fnResponsePart);
+				} else {
+					lastContent.parts.splice(firstNonFnIdx, 0, fnResponsePart);
+				}
+				if (toolImages.length > 0) {
+					lastContent.parts.push(...toolImages);
+				}
 			} else {
-				contents.push({ role: "user", parts: [fnResponsePart] });
+				contents.push({ role: "user", parts: [fnResponsePart, ...toolImages] });
 			}
 		} else {
 			// user message
@@ -1340,10 +1411,7 @@ export function openAIToAntigravityBody(input: OpenAIChatCompletionRequest): Req
 	if (geminiTools.length > 0) request.tools = geminiTools;
 	if (geminiToolConfig) request.toolConfig = geminiToolConfig;
 
-	let mappedModel = input.model;
-	if (mappedModel === "gemini-3.1-pro-high") mappedModel = "gemini-pro-agent";
-	if (mappedModel === "gemini-3.5-flash-high" || mappedModel === "gemini-3.5-flash" || mappedModel === "gemini-3.5-flash-medium") mappedModel = "gemini-3-flash-agent";
-	if (mappedModel === "gpt-oss-120b") mappedModel = "gpt-oss-120b-medium";
+	const mappedModel = applyModelAlias(input.model);
 
 	return {
 		project: "compat-placeholder",
@@ -1681,7 +1749,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 		return JSON.parse(body.toString("utf-8"));
 	} catch (err) {
 		if (err instanceof PayloadTooLargeError) throw err;
-		throw new Error("Invalid JSON body");
+		throw new Error("Invalid JSON body", { cause: err });
 	}
 }
 
@@ -1702,6 +1770,7 @@ async function streamCompatSse(
 	const created = Math.floor(Date.now() / 1000);
 	const id = format === "openai" ? `chatcmpl-${Date.now().toString(36)}` : `msg_${Date.now().toString(36)}`;
 
+	const openaiToolCalls: OpenAIToolCall[] = [];
 	let anthropicActiveBlockIndex = -1;
 	let anthropicActiveBlockType: "thinking" | "text" | null = null;
 	let anthropicHasToolUse = false;
@@ -1796,6 +1865,7 @@ async function streamCompatSse(
 									cacheThoughtSignature(callId, part.thoughtSignature);
 								}
 								if (format === "openai") {
+									openaiToolCalls.push({ id: callId, type: "function", function: { name, arguments: args } });
 									res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: { tool_calls: [{ index: toolCallIndex - 1, id: callId, type: "function", function: { name, arguments: args } }] }, finish_reason: null }] })}\n\n`);
 								} else {
 									// Close any active text/thinking block before emitting tool_use
@@ -1828,12 +1898,13 @@ async function streamCompatSse(
 			}
 		}
 	} catch (err) {
-		compatLogger.warn(`Stream read error: ${err}`);
+				compatLogger.warn(`Stream read error: ${redactSensitive(String(err)).slice(0, 200)}`);
 	}
 
 	if (!reqClosed && !res.writableEnded) {
 		if (format === "openai") {
-			res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
+			const openaiFinishReason = toolCallIndex > 0 ? "tool_calls" : "stop";
+			res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta: {}, finish_reason: openaiFinishReason }] })}\n\n`);
 			// Emit a usage chunk so agents (hermes, openwebui, etc.) can display token statistics
 			if (inputTokens > 0 || outputTokens > 0) {
 				res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [], usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens } })}\n\n`);
@@ -1851,7 +1922,8 @@ async function streamCompatSse(
 		res.end();
 	}
 
-	return { text, inputTokens, outputTokens, responseId, toolCalls: anthropicToolCalls.length > 0 ? anthropicToolCalls : undefined };
+	const collectedToolCalls = openaiToolCalls.length > 0 ? openaiToolCalls : anthropicToolCalls.length > 0 ? anthropicToolCalls : undefined;
+	return { text, inputTokens, outputTokens, responseId, toolCalls: collectedToolCalls };
 }
 
 async function streamResponsesSse(
@@ -2004,7 +2076,7 @@ async function streamResponsesSse(
 			}
 		}
 	} catch (err) {
-		compatLogger.warn(`Responses stream read error: ${err}`);
+			compatLogger.warn(`Responses stream read error: ${redactSensitive(String(err)).slice(0, 200)}`);
 	}
 
 	const completion: CompatCompletion = {
@@ -2310,12 +2382,13 @@ export async function handleOpenAIResponsesCreate(req: IncomingMessage, res: Ser
 	requestBody.requestId = responseId;
 
 	if (validation.value.store !== false) {
+		const expiresAt = Date.now() + 6 * 60 * 60 * 1000;
 		setStoredResponse(responseId, {
 			response: buildResponsesResponse(validation.value, responseId, createdAt, { text: "", inputTokens: 0, outputTokens: 0, toolCalls: [] }, "in_progress", converted.previousResponseId),
 			inputItems: converted.inputItems,
-			conversationMessages: converted.conversationMessages,
-			callIdToName: new Map(),
-			expiresAt: Date.now() + RESPONSES_STORE_TTL_MS,
+			conversationMessages: converted.conversationMessages as unknown as Array<Record<string, unknown>>,
+			callIdToName: {},
+			expiresAt,
 		});
 	}
 

@@ -471,6 +471,7 @@ Current adapter scope:
 
 Thanks to these amazing people who have contributed to the project:
 
+- **[@josenicomaia](https://github.com/josenicomaia)** (José Nicodemos Maia Neto) — Fixed streaming pass-through to emit correct `finish_reason` for tool calls, fixing tool execution on ZED editor. ([PR #8](https://github.com/tuxevil/pi-antigravity-rotator/pull/8))
 - **[@javargasm](https://github.com/javargasm)** (Jeisson Alexander Vargas Marroquin) — Anthropic tool-use compatibility layer (`tool_use`/`tool_result` content block conversion), JSON schema round-trip fixes, and compat test suite expansion. ([PR #3](https://github.com/tuxevil/pi-antigravity-rotator/pull/3), [PR #7](https://github.com/tuxevil/pi-antigravity-rotator/pull/7))
 
 

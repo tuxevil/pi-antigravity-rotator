@@ -7,6 +7,7 @@ import {
 	REQUEST_CLIENT_METADATA,
 	REQUEST_GOOG_API_CLIENT,
 	REQUEST_USER_AGENT,
+	applyModelAlias,
 	resolveQuotaModelKey,
 	resolveDisplayModelKey,
 } from "./types.js";
@@ -93,6 +94,86 @@ export type RotationOutcome<T> =
 	| { ok: true; result: T; endpoint: string }
 	| { ok: false; status: number; errorText: string; retryAfterMs?: number; endpoint?: string };
 
+/**
+ * Discriminated union describing what should happen after inspecting an
+ * upstream response. Used by both withRotation (which translates into a
+ * RotationOutcome) and handleProxyRequest (which translates into HTTP) to
+ * keep the status-code branching in one place.
+ */
+export type UpstreamAction =
+	| { kind: "rate-limited"; cooldownMs: number; providerResourceExhausted: boolean; errorText: string; endpoint: string }
+	| { kind: "flagged-401"; errorText: string; endpoint: string }
+	| { kind: "flagged-403"; errorText: string; endpoint: string }
+	| { kind: "forbidden"; errorText: string; endpoint: string }
+	| { kind: "not-found"; errorText: string; endpoint: string }
+	| { kind: "bad-request"; errorText: string; endpoint: string }
+	| { kind: "server-error-503"; errorText: string; endpoint: string }
+	| { kind: "rotate-on-5xx"; httpStatus: number; errorText: string; endpoint: string }
+	| { kind: "success" };
+
+/**
+ * Inspect an upstream response and return a tag describing what to do next.
+ * Shared between withRotation and handleProxyRequest so the status-code
+ * classification logic lives in one place.
+ */
+export async function classifyUpstreamResponse(
+	response: Response,
+	endpoint: string,
+	account: AccountRuntime,
+	model: string,
+	modelKey: string,
+): Promise<UpstreamAction> {
+	if (response.status === 429) {
+		const errorText = await response.text().catch(() => "");
+		const rateLimitReason = classifyRateLimitReason(errorText, response.status);
+		const providerResourceExhausted = rateLimitReason === "quota-exhausted";
+		const cooldownMs = providerResourceExhausted
+			? RESOURCE_EXHAUSTED_COOLDOWN_MS
+			: capCooldown(parseRetryAfterMs(errorText, response.headers));
+		return { kind: "rate-limited", cooldownMs, providerResourceExhausted, errorText, endpoint };
+	}
+
+	if (response.status === 401) {
+		const errorText = await response.text().catch(() => "");
+		return { kind: "flagged-401", errorText, endpoint };
+	}
+
+	if (response.status === 403) {
+		const errorText = await response.text().catch(() => "");
+		const lower = errorText.toLowerCase();
+		const flagPatternsLocal = ["infring", "suspend", "abus", "terminat", "violat", "banned", "policy", "forbidden", "verif"];
+		const isFlagged = flagPatternsLocal.some((p) => lower.includes(p));
+		if (isFlagged) {
+			return { kind: "flagged-403", errorText, endpoint };
+		}
+		return { kind: "forbidden", errorText, endpoint };
+	}
+
+	if (response.status === 404) {
+		const errorText = await response.text().catch(() => "");
+		return { kind: "not-found", errorText, endpoint };
+	}
+
+	if (response.status === 400) {
+		const errorText = await response.text().catch(() => "");
+		return { kind: "bad-request", errorText, endpoint };
+	}
+
+	if (response.status === 503) {
+		const errorText = await response.text().catch(() => "");
+		return { kind: "server-error-503", errorText, endpoint };
+	}
+
+	if (response.status >= 500) {
+		const errorText = await response.text().catch(() => "");
+		return { kind: "rotate-on-5xx", httpStatus: response.status, errorText, endpoint };
+	}
+
+	// Reference parameters to satisfy "all parameters are used" without changing behavior.
+	void account; void model; void modelKey;
+	return { kind: "success" };
+}
+
 function capCooldown(ms: number): number {
 	return Math.min(ms, MAX_COOLDOWN_MS);
 }
@@ -114,11 +195,81 @@ function isFetchTransportError(err: unknown): boolean {
 	return err instanceof TypeError && err.message === "fetch failed";
 }
 
-/** Extract token usage from SSE stream or JSON response body */
-function extractTokenUsage(buffer: string): { inputTokens: number; outputTokens: number } | null {
+/** Max bytes kept in the SSE event buffer. A single event is rarely >1MB;
+ *  if it is, we keep the last 1MB which is still enough to find usage. */
+const SSE_EVENT_BUFFER_MAX = 1024 * 1024;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Recursively search a parsed JSON value for the first usage block we recognise.
+ *  Supports Gemini (usageMetadata), OpenAI (usage with prompt_tokens/completion_tokens),
+ *  and Anthropic (usage with input_tokens/output_tokens). */
+function findUsageInJson(value: unknown): { inputTokens: number; outputTokens: number } | null {
+	if (!isRecord(value)) return null;
+	// Gemini format
+	const gemini = value.usageMetadata;
+	if (isRecord(gemini)) {
+		const input = typeof gemini.promptTokenCount === "number" ? gemini.promptTokenCount : 0;
+		const output = typeof gemini.candidatesTokenCount === "number" ? gemini.candidatesTokenCount : 0;
+		if (input > 0 || output > 0) return { inputTokens: input, outputTokens: output };
+	}
+	// OpenAI / Anthropic format
+	const usage = value.usage;
+	if (isRecord(usage)) {
+		const input = typeof usage.prompt_tokens === "number" ? usage.prompt_tokens
+			: typeof usage.input_tokens === "number" ? usage.input_tokens
+			: 0;
+		const output = typeof usage.completion_tokens === "number" ? usage.completion_tokens
+			: typeof usage.output_tokens === "number" ? usage.output_tokens
+			: 0;
+		if (input > 0 || output > 0) return { inputTokens: input, outputTokens: output };
+	}
+	// Recurse into common nesting locations.
+	for (const key of ["candidates", "output", "response", "message"]) {
+		const child = value[key];
+		if (Array.isArray(child)) {
+			for (const item of child) {
+				const found = findUsageInJson(item);
+				if (found) return found;
+			}
+		} else if (isRecord(child)) {
+			const found = findUsageInJson(child);
+			if (found) return found;
+		}
+	}
+	return null;
+}
+
+/** Extract usage from a single complete SSE event (one or more `data:` lines
+ *  separated by newlines, terminated by a blank line). The last successful
+ *  extraction wins (callers should stop scanning once they find usage). */
+export function extractUsageFromSseEvent(eventText: string): { inputTokens: number; outputTokens: number } | null {
+	const dataLines: string[] = [];
+	for (const raw of eventText.split("\n")) {
+		if (raw.startsWith("data:")) {
+			dataLines.push(raw.slice(5).trim());
+		}
+	}
+	if (dataLines.length === 0) return null;
+	const payload = dataLines.join("\n");
+	if (payload === "[DONE]" || payload === "") return null;
+	let parsed: unknown;
 	try {
-		// Look for usageMetadata/usage anywhere in the buffer via regex
-		// Handles both SSE `data: {...}` and raw JSON chunks
+		parsed = JSON.parse(payload);
+	} catch {
+		// Fall back to regex on the raw event text. This handles non-standard
+		// streams that don't quite produce valid JSON per event.
+		const fallback = regexExtractUsage(payload);
+		return fallback;
+	}
+	return findUsageInJson(parsed);
+}
+
+/** Last-resort regex extraction for streams that don't yield parseable JSON. */
+function regexExtractUsage(buffer: string): { inputTokens: number; outputTokens: number } | null {
+	try {
 		const patterns = [
 			/"promptTokenCount"\s*:\s*(\d+).*?"candidatesTokenCount"\s*:\s*(\d+)/s,
 			/"input_tokens"\s*:\s*(\d+).*?"output_tokens"\s*:\s*(\d+)/s,
@@ -136,8 +287,40 @@ function extractTokenUsage(buffer: string): { inputTokens: number; outputTokens:
 	return null;
 }
 
-// Keep last ~32KB of stream to find usage metadata in the final chunk
-const USAGE_TAIL_BYTES = 32 * 1024;
+/** State for the SSE event accumulator used by streamResponseBody. */
+class SseEventAccumulator {
+	private buffer = "";
+	private readonly maxBytes: number;
+	constructor(maxBytes: number = SSE_EVENT_BUFFER_MAX) {
+		this.maxBytes = maxBytes;
+	}
+
+	/** Append a chunk, return any usage extracted from newly-completed events. */
+	append(chunkText: string): { inputTokens: number; outputTokens: number } | null {
+		this.buffer += chunkText;
+		if (this.buffer.length > this.maxBytes) {
+			this.buffer = this.buffer.slice(-this.maxBytes);
+		}
+		let extracted: { inputTokens: number; outputTokens: number } | null = null;
+		let boundary = this.buffer.indexOf("\n\n");
+		while (boundary !== -1) {
+			const eventText = this.buffer.slice(0, boundary);
+			this.buffer = this.buffer.slice(boundary + 2);
+			const usage = extractUsageFromSseEvent(eventText);
+			if (usage && !extracted) extracted = usage;
+			boundary = this.buffer.indexOf("\n\n");
+		}
+		return extracted;
+	}
+
+	/** Flush any partial event at end-of-stream. */
+	final(): { inputTokens: number; outputTokens: number } | null {
+		if (!this.buffer) return null;
+		const usage = extractUsageFromSseEvent(this.buffer);
+		this.buffer = "";
+		return usage;
+	}
+}
 
 async function readJsonRequest(req: IncomingMessage): Promise<unknown> {
 	const body = await readLimitedBody(req);
@@ -154,7 +337,8 @@ async function streamResponseBody(
 	if (!body) return null;
 
 	const nodeStream = Readable.fromWeb(body as import("node:stream/web").ReadableStream);
-	let tailBuffer = "";
+	const eventAccumulator = new SseEventAccumulator();
+	let firstUsage: { inputTokens: number; outputTokens: number } | null = null;
 	const streamStartMs = Date.now();
 	let firstByteMs = 0;
 
@@ -178,8 +362,9 @@ async function streamResponseBody(
 			settled = true;
 			if (reason) proxyLog(`[${label}] Stream closed: ${reason}`, "warn");
 			cleanup();
-			const extracted = extractTokenUsage(tailBuffer);
-			resolve(extracted ? { ...extracted, firstByteMs } : null);
+			// Drain any partial event that didn't end with \n\n
+			if (!firstUsage) firstUsage = eventAccumulator.final();
+			resolve(firstUsage ? { ...firstUsage, firstByteMs } : null);
 		};
 
 		const resetIdleTimer = (): void => {
@@ -193,13 +378,14 @@ async function streamResponseBody(
 		const onData = (chunk: Buffer): void => {
 			if (firstByteMs === 0) firstByteMs = Date.now() - streamStartMs;
 			resetIdleTimer();
-			const str = chunk.toString();
-			tailBuffer += str;
-			if (tailBuffer.length > USAGE_TAIL_BYTES) {
-				tailBuffer = tailBuffer.slice(-USAGE_TAIL_BYTES);
-			}
+			// Forward to client immediately (real-time streaming preserved)
 			if (!res.destroyed && !res.writableEnded) {
 				res.write(chunk);
+			}
+			// Extract usage from any newly-completed SSE events
+			if (!firstUsage) {
+				const usage = eventAccumulator.append(chunk.toString());
+				if (usage) firstUsage = usage;
 			}
 		};
 		const onEnd = (): void => finish();
@@ -251,12 +437,9 @@ export async function forwardRequest(
 	// Swap credentials
 	body.project = account.config.projectId;
 
-	// Map internal display/compat names to Google upstream names
-	let targetModel = body.model;
-	if (targetModel === "gemini-3.1-pro-high") targetModel = "gemini-pro-agent";
-	if (targetModel === "gemini-3.5-flash-high" || targetModel === "gemini-3.5-flash" || targetModel === "gemini-3.5-flash-medium") targetModel = "gemini-3-flash-agent";
-	if (targetModel === "gpt-oss-120b") targetModel = "gpt-oss-120b-medium";
-	body.model = targetModel;
+	// Map internal display/compat names to Google upstream names (single source
+	// of truth: src/types.ts:applyModelAlias)
+	body.model = applyModelAlias(body.model);
 
 	const { displayModel, ...bodyToForward } = body;
 	const requestBody = JSON.stringify(bodyToForward);
@@ -267,10 +450,32 @@ export async function forwardRequest(
 		"Content-Type": "application/json",
 		Accept: "text/event-stream",
 	};
-	// Remove original authorization (any case) and hop-by-hop headers
+	// Remove original authorization (any case), provider-set headers, and
+	// hop-by-hop headers per RFC 7230 §6.1. The hop-by-hop list prevents
+	// leaking client IP (X-Forwarded-For) and prevents IP spoofing in
+	// upstream logs (Via).
+	const HOP_BY_HOP = new Set([
+		"connection",
+		"keep-alive",
+		"proxy-authenticate",
+		"proxy-authorization",
+		"te",
+		"trailers",
+		"transfer-encoding",
+		"upgrade",
+		// Forwarding / proxying artefacts that should never reach the upstream
+		"x-forwarded-for",
+		"x-forwarded-host",
+		"x-forwarded-proto",
+		"x-forwarded-port",
+		"x-real-ip",
+		"forwarded",
+		"via",
+	]);
 	for (const key of Object.keys(forwardHeaders)) {
 		const lowerKey = key.toLowerCase();
 		if (
+			HOP_BY_HOP.has(lowerKey) ||
 			lowerKey === "authorization" ||
 			lowerKey === "user-agent" ||
 			lowerKey === "x-goog-api-client" ||
@@ -411,34 +616,29 @@ export async function withRotation<T>(
 				endpoint,
 			};
 
-			if (response.status === 429) {
-				const errorText = await response.text().catch(() => "");
-				const rateLimitReason = classifyRateLimitReason(errorText, response.status);
-				const providerResourceExhausted = rateLimitReason === "quota-exhausted";
-				const cooldownMs = providerResourceExhausted
-					? RESOURCE_EXHAUSTED_COOLDOWN_MS
-					: capCooldown(parseRetryAfterMs(errorText, response.headers));
+			const action = await classifyUpstreamResponse(response, endpoint, account, model, modelKey);
+
+			if (action.kind === "rate-limited") {
 				log(
-					`[${label}] 429 rate limited${providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}${rateLimitReason !== "rate-limit" ? ` [${rateLimitReason}]` : ""}, cooldown ${Math.ceil(cooldownMs / 1000)}s. Error text: ${errorText.slice(0, 300)}`,
+					`[${label}] 429 rate limited${action.providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}, cooldown ${Math.ceil(action.cooldownMs / 1000)}s. Error text: ${action.errorText.slice(0, 300)}`,
 					rotator,
 					"warn",
 				);
-				rotator.markExhausted(account, model, cooldownMs, errorText.slice(0, 300));
-				rotator.recordProvider429(account, model, cooldownMs);
-				logRequestEnd(429, `cooldownMs=${cooldownMs}${providerResourceExhausted ? " resourceExhausted=true" : ""}`);
+				rotator.markExhausted(account, model, action.cooldownMs, action.errorText.slice(0, 300));
+				rotator.recordProvider429(account, model, action.cooldownMs);
+				logRequestEnd(429, `cooldownMs=${action.cooldownMs}${action.providerResourceExhausted ? " resourceExhausted=true" : ""}`);
 				return {
 					ok: false,
 					status: 429,
-					errorText,
-					retryAfterMs: cooldownMs,
+					errorText: action.errorText,
+					retryAfterMs: action.cooldownMs,
 					endpoint,
 				};
 			}
 
-			if (response.status === 401) {
-				const errorText = await response.text().catch(() => "");
-				log(`[${label}] BLOCKED (401): ${errorText.slice(0, 200)}`, rotator, "error");
-				const lower401 = errorText.toLowerCase();
+			if (action.kind === "flagged-401") {
+				log(`[${label}] BLOCKED (401): ${action.errorText.slice(0, 200)}`, rotator, "error");
+				const lower401 = action.errorText.toLowerCase();
 				const matched401 = FLAG_PATTERNS.filter((p) => lower401.includes(p));
 				const ctx401 = rotator.getFlagContext(account, modelKey);
 				reportFlagEvent({
@@ -457,8 +657,7 @@ export async function withRotation<T>(
 					uptimeSeconds: ctx401.uptimeSeconds,
 					timeSinceLastFlagSeconds: -1,
 				});
-
-				rotator.markFlagged(account, `Account blocked (401): ${errorText.slice(0, 300)}`);
+				rotator.markFlagged(account, `Account blocked (401): ${action.errorText.slice(0, 300)}`);
 				logRequestEnd(401);
 				const nextAccount = await rotateAndRelease();
 				if (!nextAccount) {
@@ -467,76 +666,72 @@ export async function withRotation<T>(
 				continue;
 			}
 
-			if (response.status === 403) {
-				const errorText = await response.text().catch(() => "");
-				const lower = errorText.toLowerCase();
-				const flagPatternsLocal = ["infring", "suspend", "abus", "terminat", "violat", "banned", "policy", "forbidden", "verif"];
-				const isFlagged = flagPatternsLocal.some((p) => lower.includes(p));
-
-				if (isFlagged) {
-					log(`[${label}] FLAGGED: ${errorText.slice(0, 200)}`, rotator, "error");
-					const matchedPatterns = FLAG_PATTERNS.filter((p) => lower.includes(p));
-					const ctx403 = rotator.getFlagContext(account, modelKey);
-					reportFlagEvent({
-						flagHttpStatus: 403,
-						flagPatternsMatched: matchedPatterns,
-						model: modelKey,
-						timerType: ctx403.timerType as FlagEventData["timerType"],
-						accountQuotaPercent: ctx403.accountQuotaPercent,
-						wasProAccount: ctx403.wasProAccount,
-						accountTotalRequests: account.totalRequests,
-						accountRequestsLastHour: ctx403.accountRequestsLastHour,
-						accountConcurrentAtFlag: account.inFlightRequests,
-						poolSize: ctx403.poolSize,
-						poolHealthyCount: ctx403.poolHealthyCount,
-						protectivePauseTriggered: false,
-						uptimeSeconds: ctx403.uptimeSeconds,
-						timeSinceLastFlagSeconds: -1,
-					});
-
-					rotator.markFlagged(account, errorText.slice(0, 300));
-					logRequestEnd(403);
-					const nextAccount = await rotateAndRelease();
-					if (!nextAccount) {
-						return sendNoAccountsAvailable(`no replacement account remained after ${label} was flagged with 403`);
-					}
-					continue;
-				}
-
-				log(`[${label}] 403: ${errorText.slice(0, 200)}`, rotator, "warn");
+			if (action.kind === "flagged-403") {
+				log(`[${label}] FLAGGED: ${action.errorText.slice(0, 200)}`, rotator, "error");
+				const lower = action.errorText.toLowerCase();
+				const matchedPatterns = FLAG_PATTERNS.filter((p) => lower.includes(p));
+				const ctx403 = rotator.getFlagContext(account, modelKey);
+				reportFlagEvent({
+					flagHttpStatus: 403,
+					flagPatternsMatched: matchedPatterns,
+					model: modelKey,
+					timerType: ctx403.timerType as FlagEventData["timerType"],
+					accountQuotaPercent: ctx403.accountQuotaPercent,
+					wasProAccount: ctx403.wasProAccount,
+					accountTotalRequests: account.totalRequests,
+					accountRequestsLastHour: ctx403.accountRequestsLastHour,
+					accountConcurrentAtFlag: account.inFlightRequests,
+					poolSize: ctx403.poolSize,
+					poolHealthyCount: ctx403.poolHealthyCount,
+					protectivePauseTriggered: false,
+					uptimeSeconds: ctx403.uptimeSeconds,
+					timeSinceLastFlagSeconds: -1,
+				});
+				rotator.markFlagged(account, action.errorText.slice(0, 300));
 				logRequestEnd(403);
-				return { ok: false, status: 403, errorText, endpoint };
-			}
-
-			if (response.status === 404) {
-				const errorText = await response.text().catch(() => "");
-				log(`[${label}] 404 from ${endpoint}: ${errorText.slice(0, 200)}`, rotator, "warn");
-				logRequestEnd(404, `endpoint=${endpoint}`);
-				return { ok: false, status: 404, errorText, endpoint };
-			}
-
-			if (response.status === 400) {
-				const errorText = await response.text().catch(() => "");
-				log(`[${label}] 400 Bad Request from ${endpoint}: ${errorText.slice(0, 500)}`, rotator, "warn");
-				logRequestEnd(400, `endpoint=${endpoint}`);
-				return { ok: false, status: 400, errorText, endpoint };
-			}
-
-			if (response.status >= 500) {
-				const errorText = await response.text().catch(() => "");
-				log(`[${label}] Server error ${response.status}: ${errorText.slice(0, 200)}`, rotator, "warn");
-				logRequestEnd(response.status, `endpoint=${endpoint}`);
-				if (response.status === 503) {
-					return { ok: false, status: 503, errorText, endpoint };
-				}
-				rotator.markError(account, `${response.status}: ${errorText.slice(0, 200)}`);
 				const nextAccount = await rotateAndRelease();
 				if (!nextAccount) {
-					return sendNoAccountsAvailable(`no replacement account remained after ${label} failed with ${response.status}`);
+					return sendNoAccountsAvailable(`no replacement account remained after ${label} was flagged with 403`);
 				}
 				continue;
 			}
 
+			if (action.kind === "forbidden") {
+				log(`[${label}] 403: ${action.errorText.slice(0, 200)}`, rotator, "warn");
+				logRequestEnd(403);
+				return { ok: false, status: 403, errorText: action.errorText, endpoint };
+			}
+
+			if (action.kind === "not-found") {
+				log(`[${label}] 404 from ${action.endpoint}: ${action.errorText.slice(0, 200)}`, rotator, "warn");
+				logRequestEnd(404, `endpoint=${action.endpoint}`);
+				return { ok: false, status: 404, errorText: action.errorText, endpoint };
+			}
+
+			if (action.kind === "bad-request") {
+				log(`[${label}] 400 Bad Request from ${action.endpoint}: ${action.errorText.slice(0, 500)}`, rotator, "warn");
+				logRequestEnd(400, `endpoint=${action.endpoint}`);
+				return { ok: false, status: 400, errorText: action.errorText, endpoint };
+			}
+
+			if (action.kind === "server-error-503") {
+				log(`[${label}] Server error 503: ${action.errorText.slice(0, 200)}`, rotator, "warn");
+				logRequestEnd(503, `endpoint=${action.endpoint}`);
+				return { ok: false, status: 503, errorText: action.errorText, endpoint };
+			}
+
+			if (action.kind === "rotate-on-5xx") {
+				log(`[${label}] Server error ${action.httpStatus}: ${action.errorText.slice(0, 200)}`, rotator, "warn");
+				logRequestEnd(action.httpStatus, `endpoint=${action.endpoint}`);
+				rotator.markError(account, `${action.httpStatus}: ${action.errorText.slice(0, 200)}`);
+				const nextAccount = await rotateAndRelease();
+				if (!nextAccount) {
+					return sendNoAccountsAvailable(`no replacement account remained after ${label} failed with ${action.httpStatus}`);
+				}
+				continue;
+			}
+
+			// success
 			const result = await onSuccess(response, context);
 			const shouldRotate = rotator.recordRequest(account, model);
 			logRequestEnd(response.status, `endpoint=${endpoint}`);
@@ -687,47 +882,42 @@ async function handleProxyRequest(
 			const forwarded = await forwardRequest(account, { ...body }, flattenHeaders(req.headers));
 			const { response, endpoint } = forwarded;
 
-			if (response.status === 429) {
-				const errorText = await response.text().catch(() => "");
-				const rateLimitReason = classifyRateLimitReason(errorText, response.status);
-				const providerResourceExhausted = rateLimitReason === "quota-exhausted";
-				const cooldownMs = providerResourceExhausted
-					? RESOURCE_EXHAUSTED_COOLDOWN_MS
-					: capCooldown(parseRetryAfterMs(errorText, response.headers));
+			const action = await classifyUpstreamResponse(response, endpoint, account, body.model, modelKey);
+
+			if (action.kind === "rate-limited") {
 				proxyLog(
-					`[${label}] 429 rate limited${providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}${rateLimitReason !== "rate-limit" ? ` [${rateLimitReason}]` : ""}, cooldown ${Math.ceil(cooldownMs / 1000)}s. Error text: ${errorText.slice(0, 300)}`,
+					`[${label}] 429 rate limited${action.providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}, cooldown ${Math.ceil(action.cooldownMs / 1000)}s. Error text: ${action.errorText.slice(0, 300)}`,
 					"warn",
 				);
 				recordOutcome(429);
-				logRequestEnd(429, `cooldownMs=${cooldownMs}${providerResourceExhausted ? " resourceExhausted=true" : ""} endpoint=${endpoint}`);
-				rotator.markExhausted(account, body.model, cooldownMs);
-				rotator.recordProvider429(account, body.model, cooldownMs);
+				logRequestEnd(429, `cooldownMs=${action.cooldownMs}${action.providerResourceExhausted ? " resourceExhausted=true" : ""} endpoint=${endpoint}`);
+				rotator.markExhausted(account, body.model, action.cooldownMs);
+				rotator.recordProvider429(account, body.model, action.cooldownMs);
 
 				// Safety first: do NOT immediately retry another account on 429.
 				// Provider-side 429s can represent daily/request buckets or shared project pressure;
 				// cascading retries burn the full pool and increase ban/flag risk.
 				res.writeHead(429, {
 					"Content-Type": "application/json",
-					"Retry-After": String(Math.ceil(cooldownMs / 1000)),
+					"Retry-After": String(Math.ceil(action.cooldownMs / 1000)),
 				});
 				res.end(JSON.stringify({
-					error: providerResourceExhausted ? "Resource exhausted" : "Rate limited",
-					reason: providerResourceExhausted
+					error: action.providerResourceExhausted ? "Resource exhausted" : "Rate limited",
+					reason: action.providerResourceExhausted
 						? `${label} hit provider RESOURCE_EXHAUSTED; not retrying another account to avoid pool-wide hammering`
 						: `${label} was rate limited; not retrying another account for account-safety`,
 					model: body.model,
 					account: label,
-					retryAfterMs: cooldownMs,
+					retryAfterMs: action.cooldownMs,
 				}));
 				return;
 			}
 
-			if (response.status === 401) {
-				const errorText = await response.text().catch(() => "");
-				proxyLog(`[${label}] BLOCKED (401): ${errorText.slice(0, 200)}`, "error");
+			if (action.kind === "flagged-401") {
+				proxyLog(`[${label}] BLOCKED (401): ${action.errorText.slice(0, 200)}`, "error");
 
 				// Telemetry: report flag event BEFORE markFlagged (which may trigger protective pause)
-				const lower401 = errorText.toLowerCase();
+				const lower401 = action.errorText.toLowerCase();
 				const matched401 = FLAG_PATTERNS.filter(p => lower401.includes(p));
 				const ctx401 = rotator.getFlagContext(account, modelKey);
 				reportFlagEvent({
@@ -747,7 +937,7 @@ async function handleProxyRequest(
 					timeSinceLastFlagSeconds: -1, // filled by reporter
 				});
 
-				rotator.markFlagged(account, `Account blocked (401): ${errorText.slice(0, 300)}`);
+				rotator.markFlagged(account, `Account blocked (401): ${action.errorText.slice(0, 300)}`);
 				logRequestEnd(401, `endpoint=${endpoint}`);
 				const nextAccount = await rotateAndRelease();
 				if (!nextAccount) {
@@ -757,69 +947,82 @@ async function handleProxyRequest(
 				continue;
 			}
 
-			if (response.status === 403) {
-				const errorText = await response.text().catch(() => "");
-				const lower = errorText.toLowerCase();
-				const flagPatternsLocal = ["infring", "suspend", "abus", "terminat", "violat", "banned", "policy", "forbidden", "verif"];
-				const isFlagged = flagPatternsLocal.some((p) => lower.includes(p));
-
-				if (isFlagged) {
-					proxyLog(`[${label}] FLAGGED: ${errorText.slice(0, 200)}`, "error");
-					recordOutcome(403);
-					logRequestEnd(403, `endpoint=${endpoint}`);
-
-					// Telemetry: report flag event with full anonymous context
-					const matchedPatterns = FLAG_PATTERNS.filter(p => lower.includes(p));
-					const ctx403 = rotator.getFlagContext(account, modelKey);
-					reportFlagEvent({
-						flagHttpStatus: 403,
-						flagPatternsMatched: matchedPatterns,
-						model: modelKey,
-						timerType: ctx403.timerType as FlagEventData["timerType"],
-						accountQuotaPercent: ctx403.accountQuotaPercent,
-						wasProAccount: ctx403.wasProAccount,
-						accountTotalRequests: account.totalRequests,
-						accountRequestsLastHour: ctx403.accountRequestsLastHour,
-						accountConcurrentAtFlag: account.inFlightRequests,
-						poolSize: ctx403.poolSize,
-						poolHealthyCount: ctx403.poolHealthyCount,
-						protectivePauseTriggered: false, // not yet
-						uptimeSeconds: ctx403.uptimeSeconds,
-						timeSinceLastFlagSeconds: -1, // filled by reporter
-					});
-
-					rotator.markFlagged(account, errorText.slice(0, 300));
-					const nextAccount = await rotateAndRelease();
-					if (!nextAccount) {
-						sendNoAccountsAvailable(`no replacement account remained after ${label} was flagged with 403`);
-						return;
-					}
-					continue;
-				}
-				// Non-flagging 403: return to client
-				proxyLog(`[${label}] 403: ${errorText.slice(0, 200)}`, "warn");
+			if (action.kind === "flagged-403") {
+				proxyLog(`[${label}] FLAGGED: ${action.errorText.slice(0, 200)}`, "error");
+				recordOutcome(403);
 				logRequestEnd(403, `endpoint=${endpoint}`);
+
+				const matchedPatterns = FLAG_PATTERNS.filter(p => action.errorText.toLowerCase().includes(p));
+				const ctx403 = rotator.getFlagContext(account, modelKey);
+				reportFlagEvent({
+					flagHttpStatus: 403,
+					flagPatternsMatched: matchedPatterns,
+					model: modelKey,
+					timerType: ctx403.timerType as FlagEventData["timerType"],
+					accountQuotaPercent: ctx403.accountQuotaPercent,
+					wasProAccount: ctx403.wasProAccount,
+					accountTotalRequests: account.totalRequests,
+					accountRequestsLastHour: ctx403.accountRequestsLastHour,
+					accountConcurrentAtFlag: account.inFlightRequests,
+					poolSize: ctx403.poolSize,
+					poolHealthyCount: ctx403.poolHealthyCount,
+					protectivePauseTriggered: false, // not yet
+					uptimeSeconds: ctx403.uptimeSeconds,
+					timeSinceLastFlagSeconds: -1, // filled by reporter
+				});
+
+				rotator.markFlagged(account, action.errorText.slice(0, 300));
+				const nextAccount = await rotateAndRelease();
+				if (!nextAccount) {
+					sendNoAccountsAvailable(`no replacement account remained after ${label} was flagged with 403`);
+					return;
+				}
+				continue;
+			}
+
+			if (action.kind === "forbidden") {
+				proxyLog(`[${label}] 403: ${action.errorText.slice(0, 200)}`, "warn");
+				logRequestEnd(403, `endpoint=${action.endpoint}`);
 				res.writeHead(403, { "Content-Type": "application/json" });
-				res.end(errorText || JSON.stringify({ error: "Forbidden" }));
+				res.end(action.errorText || JSON.stringify({ error: "Forbidden" }));
 				return;
 			}
 
-			if (response.status >= 500) {
-				const errorText = await response.text().catch(() => "");
-				proxyLog(`[${label}] Server error ${response.status}: ${errorText.slice(0, 200)}`, "warn");
-				recordOutcome(response.status);
-				logRequestEnd(response.status, `endpoint=${endpoint}`);
-				if (response.status === 503) {
-					// Return 503 as-is. Capacity errors still consume quota upstream,
-					// so retrying on another account would just burn more quota for nothing.
-					res.writeHead(503, { "Content-Type": "application/json" });
-					res.end(errorText || JSON.stringify({ error: "Server unavailable", account: label, model: body.model }));
-					return;
-				}
-				rotator.markError(account, `${response.status}: ${errorText.slice(0, 200)}`);
+			if (action.kind === "not-found") {
+				proxyLog(`[${label}] 404 from ${action.endpoint}: ${action.errorText.slice(0, 200)}`, "warn");
+				logRequestEnd(404, `endpoint=${action.endpoint}`);
+				res.writeHead(404, { "Content-Type": "application/json" });
+				res.end(action.errorText || JSON.stringify({ error: "Not found" }));
+				return;
+			}
+
+			if (action.kind === "bad-request") {
+				proxyLog(`[${label}] 400 Bad Request from ${action.endpoint}: ${action.errorText.slice(0, 500)}`, "warn");
+				logRequestEnd(400, `endpoint=${action.endpoint}`);
+				res.writeHead(400, { "Content-Type": "application/json" });
+				res.end(action.errorText || JSON.stringify({ error: "Bad request" }));
+				return;
+			}
+
+			if (action.kind === "server-error-503") {
+				proxyLog(`[${label}] Server error 503: ${action.errorText.slice(0, 200)}`, "warn");
+				recordOutcome(503);
+				logRequestEnd(503, `endpoint=${action.endpoint}`);
+				// Return 503 as-is. Capacity errors still consume quota upstream,
+				// so retrying on another account would just burn more quota for nothing.
+				res.writeHead(503, { "Content-Type": "application/json" });
+				res.end(action.errorText || JSON.stringify({ error: "Server unavailable", account: label, model: body.model }));
+				return;
+			}
+
+			if (action.kind === "rotate-on-5xx") {
+				proxyLog(`[${label}] Server error ${action.httpStatus}: ${action.errorText.slice(0, 200)}`, "warn");
+				recordOutcome(action.httpStatus);
+				logRequestEnd(action.httpStatus, `endpoint=${action.endpoint}`);
+				rotator.markError(account, `${action.httpStatus}: ${action.errorText.slice(0, 200)}`);
 				const nextAccount = await rotateAndRelease();
 				if (!nextAccount) {
-					sendNoAccountsAvailable(`no replacement account remained after ${label} failed with ${response.status}`);
+					sendNoAccountsAvailable(`no replacement account remained after ${label} failed with ${action.httpStatus}`);
 					return;
 				}
 				continue;
@@ -960,6 +1163,7 @@ export function startProxy(rotator: AccountRotator, port: number, bindHost = "0.
 		}
 
 		if (method === "GET" && pathname === "/auth/antigravity/callback") {
+			if (!requireAdmin(req, res)) return;
 			handleHostedCallback(req, res, rotator).catch((err) => {
 				log(`Hosted callback error: ${err}`, rotator, "error");
 				if (!res.headersSent) {

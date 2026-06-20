@@ -19,6 +19,7 @@ interface PendingSession {
 
 const pendingSessions = new Map<string, PendingSession>();
 const SESSION_TTL_MS = 15 * 60 * 1000;
+const SESSION_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 
 function prunePendingSessions(): void {
 	const cutoff = Date.now() - SESSION_TTL_MS;
@@ -28,6 +29,24 @@ function prunePendingSessions(): void {
 		}
 	}
 }
+
+// Background reaper. Without this, a long-lived proxy that never sees
+// /auth/antigravity/start or /callback would accumulate stale sessions
+// (each is a 96-byte PKCE verifier + timestamp). The interval is unref'd
+// so it does not block process exit.
+let pruneTimer: ReturnType<typeof setInterval> | null = null;
+function startPendingSessionReaper(): void {
+	if (pruneTimer) return;
+	pruneTimer = setInterval(() => prunePendingSessions(), SESSION_PRUNE_INTERVAL_MS);
+	if (pruneTimer.unref) pruneTimer.unref();
+}
+function stopPendingSessionReaper(): void {
+	if (pruneTimer) {
+		clearInterval(pruneTimer);
+		pruneTimer = null;
+	}
+}
+startPendingSessionReaper();
 
 function renderPage(title: string, body: string): string {
 	return `<!DOCTYPE html>

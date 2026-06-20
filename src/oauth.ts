@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { CLIENT_ID, CLIENT_SECRET, TOKEN_URL } from "./types.js";
 import { fetchWithRetry } from "./fetch-with-retry.js";
+import { logger } from "./logger.js";
+
+const oauthLogger = logger.child("oauth");
 
 export const DEFAULT_REDIRECT_URI = "http://localhost:51121/oauth-callback";
 export const SCOPES = [
@@ -30,6 +33,34 @@ export function getOAuthClientConfig(): OAuthClientConfig {
 		clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || CLIENT_SECRET,
 		redirectUri: process.env.ANTIGRAVITY_REDIRECT_URI || DEFAULT_REDIRECT_URI,
 	};
+}
+
+let warnedAboutFallback = false;
+
+/**
+ * Check whether the rotator is running on the hardcoded fallback OAuth
+ * credentials (the public Antigravity IDE client shipped in types.ts). When
+ * the operator has not provided ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET,
+ * every Google OAuth call uses the bundled client, which may violate Google's
+ * ToS for third-party usage of the official client.
+ *
+ * The warning is printed at most once per process to avoid log spam.
+ */
+export function warnIfUsingFallbackOAuthCreds(env: NodeJS.ProcessEnv = process.env): boolean {
+	const usingFallbackId = !env.ANTIGRAVITY_CLIENT_ID?.trim();
+	const usingFallbackSecret = !env.ANTIGRAVITY_CLIENT_SECRET?.trim();
+	if (!usingFallbackId && !usingFallbackSecret) return false;
+	if (warnedAboutFallback) return true;
+	warnedAboutFallback = true;
+	const missing: string[] = [];
+	if (usingFallbackId) missing.push("ANTIGRAVITY_CLIENT_ID");
+	if (usingFallbackSecret) missing.push("ANTIGRAVITY_CLIENT_SECRET");
+	oauthLogger.log("warn",
+		`Using the bundled fallback OAuth client credentials (missing env: ${missing.join(", ")}). ` +
+		`This identifies the rotator as the official Antigravity IDE client. ` +
+		`For self-hosted deployments, set ${missing.join(" and ")} to your own registered OAuth client.`,
+	);
+	return true;
 }
 
 export function isHostedOAuthConfigured(): boolean {

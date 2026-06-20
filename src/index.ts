@@ -8,34 +8,47 @@ import { startProxy } from "./proxy.js";
 import { getConfigDir } from "./paths.js";
 import { TelemetryReporter, setActiveReporter } from "./telemetry.js";
 import { loadConfigFromDisk } from "./account-store.js";
-import { ensureAdminToken, getConfiguredAdminToken, setPersistedAdminToken } from "./admin-auth.js";
+import {
+  ensureAdminToken,
+  getConfiguredAdminToken,
+  setPersistedAdminToken,
+} from "./admin-auth.js";
 import { warnIfUsingFallbackOAuthCreds } from "./oauth.js";
 import { warnIfInsecureTelemetryEndpoint } from "./telemetry.js";
-import { setModelSpecsOverride, loadResponsesStore, flushResponsesStoreSync } from "./compat.js";
+import {
+  setModelSpecsOverride,
+  loadResponsesStore,
+  flushResponsesStoreSync,
+} from "./compat.js";
 import { setModelAliasesOverride } from "./types.js";
 import { writeTextFileAtomic } from "./storage.js";
+import { initDb } from "./db-store.js";
 
 function loadConfig(): Config {
-	const configPath = join(getConfigDir(), "accounts.json");
-	if (!existsSync(configPath)) {
-		console.error(`Config not found: ${configPath}`);
-		console.error("Run 'pi-antigravity-rotator login' to add your first account.");
-		process.exit(1);
-	}
+  const configPath = join(getConfigDir(), "accounts.json");
+  if (!existsSync(configPath)) {
+    console.error(`Config not found: ${configPath}`);
+    console.error(
+      "Run 'pi-antigravity-rotator login' to add your first account.",
+    );
+    process.exit(1);
+  }
 
-	try {
-		const config = loadConfigFromDisk();
+  try {
+    const config = loadConfigFromDisk();
 
-		if (!config.accounts || config.accounts.length === 0) {
-			console.error("No accounts configured. Run 'pi-antigravity-rotator login' to add one.");
-			process.exit(1);
-		}
+    if (!config.accounts || config.accounts.length === 0) {
+      console.error(
+        "No accounts configured. Run 'pi-antigravity-rotator login' to add one.",
+      );
+      process.exit(1);
+    }
 
-		return config;
-	} catch (err) {
-		console.error(`Failed to parse ${configPath}: ${err}`);
-		process.exit(1);
-	}
+    return config;
+  } catch (err) {
+    console.error(`Failed to parse ${configPath}: ${err}`);
+    process.exit(1);
+  }
 }
 
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
@@ -46,36 +59,46 @@ const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
  * then writes .star-prompted so it never appears again.
  */
 function maybeShowStarNudge(): void {
-	const dir = getConfigDir();
-	const promptedPath = join(dir, ".star-prompted");
-	if (existsSync(promptedPath)) return; // already shown, done forever
+  const dir = getConfigDir();
+  const promptedPath = join(dir, ".star-prompted");
+  if (existsSync(promptedPath)) return; // already shown, done forever
 
-	const firstBootPath = join(dir, ".first-boot");
-	let firstBootMs: number;
+  const firstBootPath = join(dir, ".first-boot");
+  let firstBootMs: number;
 
-	if (existsSync(firstBootPath)) {
-		try {
-			firstBootMs = parseInt(readFileSync(firstBootPath, "utf-8").trim(), 10);
-			if (Number.isNaN(firstBootMs)) return;
-		} catch { return; }
-	} else {
-		// First ever boot — record timestamp
-		firstBootMs = Date.now();
-		try { writeTextFileAtomic(firstBootPath, String(firstBootMs)); } catch { /* best effort */ }
-		return; // too early, come back after 24h
-	}
+  if (existsSync(firstBootPath)) {
+    try {
+      firstBootMs = parseInt(readFileSync(firstBootPath, "utf-8").trim(), 10);
+      if (Number.isNaN(firstBootMs)) return;
+    } catch {
+      return;
+    }
+  } else {
+    // First ever boot — record timestamp
+    firstBootMs = Date.now();
+    try {
+      writeTextFileAtomic(firstBootPath, String(firstBootMs));
+    } catch {
+      /* best effort */
+    }
+    return; // too early, come back after 24h
+  }
 
-	if (Date.now() - firstBootMs < TWENTY_FOUR_HOURS_MS) return; // not yet
+  if (Date.now() - firstBootMs < TWENTY_FOUR_HOURS_MS) return; // not yet
 
-	// Show it once
-	console.log("  ╭──────────────────────────────────────────────────────────╮");
-	console.log("  │  ⭐ Enjoying pi-antigravity-rotator?                     │");
-	console.log("  │  github.com/tuxevil/pi-antigravity-rotator              │");
-	console.log("  │  A star helps others find it. Thanks!                   │");
-	console.log("  ╰──────────────────────────────────────────────────────────╯");
-	console.log();
+  // Show it once
+  console.log("  ╭──────────────────────────────────────────────────────────╮");
+  console.log("  │  ⭐ Enjoying pi-antigravity-rotator?                     │");
+  console.log("  │  github.com/tuxevil/pi-antigravity-rotator              │");
+  console.log("  │  A star helps others find it. Thanks!                   │");
+  console.log("  ╰──────────────────────────────────────────────────────────╯");
+  console.log();
 
-	try { writeTextFileAtomic(promptedPath, String(Date.now())); } catch { /* best effort */ }
+  try {
+    writeTextFileAtomic(promptedPath, String(Date.now()));
+  } catch {
+    /* best effort */
+  }
 }
 
 /**
@@ -85,106 +108,144 @@ function maybeShowStarNudge(): void {
  * admin routes are protected by default on first run.
  */
 function bootstrapAdminToken(configDir: string): void {
-	const resolved = ensureAdminToken(configDir);
-	setPersistedAdminToken(resolved.token);
-	if (resolved.source === "generated") {
-		console.log();
-		console.log("  ╭──────────────────────────────────────────────────────────╮");
-		console.log("  │  Generated admin token (persisted to .admin-token):      │");
-		const tokenPreview = resolved.token.length > 12
-			? `${resolved.token.slice(0, 8)}…${resolved.token.slice(-4)}`
-			: resolved.token;
-		console.log(`  │  ${tokenPreview}  │`);
-		console.log("  │  (full token in .admin-token; cat to view)               │");
-		console.log("  │                                                          │");
-		console.log("  │  Header: x-rotator-admin-token: <token>                  │");
-		console.log("  │  Bearer: Authorization: Bearer <token>                   │");
-		console.log("  │  URL:    <url>?token=<token>                             │");
-		console.log("  ╰──────────────────────────────────────────────────────────╯");
-		console.log();
-	}
+  const resolved = ensureAdminToken(configDir);
+  setPersistedAdminToken(resolved.token);
+  if (resolved.source === "generated") {
+    console.log();
+    console.log(
+      "  ╭──────────────────────────────────────────────────────────╮",
+    );
+    console.log(
+      "  │  Generated admin token (persisted to .admin-token):      │",
+    );
+    const tokenPreview =
+      resolved.token.length > 12
+        ? `${resolved.token.slice(0, 8)}…${resolved.token.slice(-4)}`
+        : resolved.token;
+    console.log(`  │  ${tokenPreview}  │`);
+    console.log(
+      "  │  (full token in .admin-token; cat to view)               │",
+    );
+    console.log(
+      "  │                                                          │",
+    );
+    console.log(
+      "  │  Header: x-rotator-admin-token: <token>                  │",
+    );
+    console.log(
+      "  │  Bearer: Authorization: Bearer <token>                   │",
+    );
+    console.log(
+      "  │  URL:    <url>?token=<token>                             │",
+    );
+    console.log(
+      "  ╰──────────────────────────────────────────────────────────╯",
+    );
+    console.log();
+  }
 }
 
 function maybeWarnAboutAdminExposure(config: Config): void {
-	if (getConfiguredAdminToken()) return;
-	console.warn("WARNING: PI_ROTATOR_ADMIN_TOKEN is not configured.");
-	console.warn(`WARNING: Dashboard and /api/* routes are open on ${config.bindHost}:${config.proxyPort}.`);
-	console.warn("WARNING: For local-only use, prefer bindHost=127.0.0.1 or set PI_ROTATOR_ADMIN_TOKEN.");
-	console.warn();
+  if (getConfiguredAdminToken()) return;
+  console.warn("WARNING: PI_ROTATOR_ADMIN_TOKEN is not configured.");
+  console.warn(
+    `WARNING: Dashboard and /api/* routes are open on ${config.bindHost}:${config.proxyPort}.`,
+  );
+  console.warn(
+    "WARNING: For local-only use, prefer bindHost=127.0.0.1 or set PI_ROTATOR_ADMIN_TOKEN.",
+  );
+  console.warn();
 }
 
-export function main(): void {
-	console.log("=== Pi Antigravity Rotator ===");
-	console.log();
+export async function main(): Promise<void> {
+  console.log("=== Pi Antigravity Rotator ===");
+  console.log();
 
-	const config = loadConfig();
-	console.log(`Loaded ${config.accounts.length} accounts`);
-	console.log(`Rotation: ${config.requestsPerRotation} requests / ${config.rotateOnQuotaDrop}% quota drop`);
-	console.log(`Quota poll: every ${Math.round((config.quotaPollIntervalMs || 300000) / 1000)}s`);
-	console.log(`Concurrency cap: ${config.maxConcurrentRequestsPerAccount} request/account, ${config.maxConcurrentRequestsPerProjectModel} request/project+model`);
-	console.log(`Bind host: ${config.bindHost}`);
-	console.log(`Routing policy: ${config.routingPolicy}`);
-	console.log(`Safety breaker: ${config.projectCircuitBreaker429Threshold} provider 429s / ${Math.round((config.projectCircuitBreakerWindowMs || 0) / 60000)}m pauses project+model for ${Math.round((config.projectCircuitBreakerCooldownMs || 0) / 60000)}m`);
-	console.log(`Protective pause: ${Math.round((config.protectivePauseMs || 0) / 3600000)}h after serious flag`);
-	console.log();
+  await initDb();
 
-	for (const account of config.accounts) {
-		console.log(`  ${account.label || account.email} (${account.email})`);
-	}
-	console.log();
+  const config = loadConfig();
+  console.log(`Loaded ${config.accounts.length} accounts`);
+  console.log(
+    `Rotation: ${config.requestsPerRotation} requests / ${config.rotateOnQuotaDrop}% quota drop`,
+  );
+  console.log(
+    `Quota poll: every ${Math.round((config.quotaPollIntervalMs || 300000) / 1000)}s`,
+  );
+  console.log(
+    `Concurrency cap: ${config.maxConcurrentRequestsPerAccount} request/account, ${config.maxConcurrentRequestsPerProjectModel} request/project+model`,
+  );
+  console.log(`Bind host: ${config.bindHost}`);
+  console.log(`Routing policy: ${config.routingPolicy}`);
+  console.log(
+    `Safety breaker: ${config.projectCircuitBreaker429Threshold} provider 429s / ${Math.round((config.projectCircuitBreakerWindowMs || 0) / 60000)}m pauses project+model for ${Math.round((config.projectCircuitBreakerCooldownMs || 0) / 60000)}m`,
+  );
+  console.log(
+    `Protective pause: ${Math.round((config.protectivePauseMs || 0) / 3600000)}h after serious flag`,
+  );
+  console.log();
 
-	maybeShowStarNudge();
-	bootstrapAdminToken(getConfigDir());
-	maybeWarnAboutAdminExposure(config);
-	warnIfUsingFallbackOAuthCreds();
-	warnIfInsecureTelemetryEndpoint();
-	setModelSpecsOverride(config.modelSpecs ?? null);
-	setModelAliasesOverride(config.modelAliases ?? null);
-	void loadResponsesStore();
+  for (const account of config.accounts) {
+    console.log(`  ${account.label || account.email} (${account.email})`);
+  }
+  console.log();
 
-	const rotator = new AccountRotator(config);
+  maybeShowStarNudge();
+  bootstrapAdminToken(getConfigDir());
+  maybeWarnAboutAdminExposure(config);
+  warnIfUsingFallbackOAuthCreds();
+  warnIfInsecureTelemetryEndpoint();
+  setModelSpecsOverride(config.modelSpecs ?? null);
+  setModelAliasesOverride(config.modelAliases ?? null);
+  void loadResponsesStore();
 
-	// ── Telemetry (anonymous, opt-out via PI_ROTATOR_TELEMETRY=off) ──
-	const telemetry = new TelemetryReporter(() => {
-		const status = rotator.getStatus();
+  const rotator = new AccountRotator(config);
 
-		// getTokenUsage() deduplicates rolled-up buckets and exposes tokensByModel
-		const tu = rotator.getTokenUsage();
-		const tokensByModel = tu.tokensByModel;
+  // ── Telemetry (anonymous, opt-out via PI_ROTATOR_TELEMETRY=off) ──
+  const telemetry = new TelemetryReporter(() => {
+    const status = rotator.getStatus();
 
-		return {
-			accountCount: status.accounts.length,
-			modelsUsed: Object.keys(status.activeAccounts),
-			totalRequests: status.totalRequestsAllAccounts,
-			uptimeSeconds: Math.round(status.uptime / 1000),
-			routingHealthState: status.routingHealth.state,
-			flaggedCount: status.routingHealth.flaggedCount,
-			disabledCount: status.routingHealth.disabledCount,
-			proCount: status.accounts.filter(a => a.proDetected).length,
-			freeCount: status.accounts.filter(a => !a.proDetected).length,
-			tokensByModel,
-		};
-	});
-	setActiveReporter(telemetry);
-	void telemetry.start();
+    // getTokenUsage() deduplicates rolled-up buckets and exposes tokensByModel
+    const tu = rotator.getTokenUsage();
+    const tokensByModel = tu.tokensByModel;
 
-	// ── Graceful shutdown ──
-	const shutdown = async (): Promise<void> => {
-		console.log("\nShutting down...");
-		flushResponsesStoreSync();
-		rotator.flushPendingStateSaveSync();
-		rotator.flushPendingTokenUsageSaveSync();
-		await telemetry.shutdown();
-		rotator.stopQuotaPolling();
-		process.exit(0);
-	};
-	process.on("SIGINT", () => void shutdown());
-	process.on("SIGTERM", () => void shutdown());
+    return {
+      accountCount: status.accounts.length,
+      modelsUsed: Object.keys(status.activeAccounts),
+      totalRequests: status.totalRequestsAllAccounts,
+      uptimeSeconds: Math.round(status.uptime / 1000),
+      routingHealthState: status.routingHealth.state,
+      flaggedCount: status.routingHealth.flaggedCount,
+      disabledCount: status.routingHealth.disabledCount,
+      proCount: status.accounts.filter((a) => a.proDetected).length,
+      freeCount: status.accounts.filter((a) => !a.proDetected).length,
+      tokensByModel,
+    };
+  });
+  setActiveReporter(telemetry);
+  void telemetry.start();
 
-	startProxy(rotator, config.proxyPort, config.bindHost || "0.0.0.0");
+  // ── Graceful shutdown ──
+  const shutdown = async (): Promise<void> => {
+    console.log("\nShutting down...");
+    flushResponsesStoreSync();
+    rotator.flushPendingStateSaveSync();
+    rotator.flushPendingTokenUsageSaveSync();
+    await telemetry.shutdown();
+    rotator.stopQuotaPolling();
+    const { closeDb } = await import("./db-store.js");
+    await closeDb();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
+
+  startProxy(rotator, config.proxyPort, config.bindHost || "0.0.0.0");
 }
 
 // Direct execution
 if (process.argv[1]?.includes("index")) {
-	main();
+  main().catch((err) => {
+    console.error("Fatal startup error:", err);
+    process.exit(1);
+  });
 }

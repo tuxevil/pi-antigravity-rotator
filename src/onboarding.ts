@@ -43,7 +43,7 @@ function startPendingSessionReaper(): void {
   );
   if (pruneTimer.unref) pruneTimer.unref();
 }
-function stopPendingSessionReaper(): void {
+function _stopPendingSessionReaper(): void {
   if (pruneTimer) {
     clearInterval(pruneTimer);
     pruneTimer = null;

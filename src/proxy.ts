@@ -534,7 +534,7 @@ export async function forwardRequest(
   // of truth: src/types.ts:applyModelAlias)
   body.model = applyModelAlias(body.model);
 
-  const { displayModel, ...bodyToForward } = body;
+  const { displayModel: _displayModel, ...bodyToForward } = body;
   const requestBody = JSON.stringify(bodyToForward);
 
   // Build headers: keep originals but swap Authorization

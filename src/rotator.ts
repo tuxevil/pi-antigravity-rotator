@@ -19,7 +19,6 @@ import {
   type TokenUsageTiered,
   MODEL_PRICING,
   TOKEN_URL,
-  LONG_TIMER_MS,
   QUOTA_API_URL,
   QUOTA_USER_AGENT,
   QUOTA_MODEL_KEYS,

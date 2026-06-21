@@ -3141,7 +3141,8 @@ function confirmRemoveAccount(email) {
 }
 
 function openCliLogin() {
-  window.open('/login-cli' + (ADMIN_TOKEN ? ('?token=' + encodeURIComponent(ADMIN_TOKEN)) : ''), '_blank');
+  var path = window.__lastData && window.__lastData.hostedOAuthConfigured ? '/login' : '/login-cli';
+  window.open(path + (ADMIN_TOKEN ? ('?token=' + encodeURIComponent(ADMIN_TOKEN)) : ''), '_blank');
 }
 
 function toggleTierDropdown(badge, email) {

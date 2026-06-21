@@ -37,7 +37,7 @@ import {
   saveAccountsConfig,
   removeAccountFromConfig,
 } from "./account-store.js";
-import { getOAuthClientConfig } from "./oauth.js";
+import { getOAuthClientConfig, isHostedOAuthConfigured } from "./oauth.js";
 import { fetchWithRetry } from "./fetch-with-retry.js";
 import { logger } from "./logger.js";
 import { getUpdateInfo } from "./version-check.js";
@@ -2605,6 +2605,7 @@ export class AccountRotator {
       latencyStats: this.getLatencyStats(),
       updateInfo,
       notifications: getNotifications(),
+      hostedOAuthConfigured: isHostedOAuthConfigured(),
     };
   }
 

@@ -42,11 +42,13 @@
   },
   "author": "Sebastián Real (tuxevil)",
   "dependencies": {
+    "pg": "^8.22.0",
     "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.20.0",
     "c8": "^11.0.0",
     "eslint": "^10.5.0",
     "typescript": "^5.7.0",

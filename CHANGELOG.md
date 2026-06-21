@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-06-21
+
+### Fixed
+- **Telemetry HTTPS Error**: Reverted the default telemetry endpoint from `https://` back to `http://` because the backend server does not support SSL, which was causing silent "packet length too long" errors and preventing telemetry and broadcast notifications from working.
+
 ### Refactored
 - **Compatibility Layer**: Massively refactored the 2,400-line `src/compat.ts` into smaller, single-responsibility modules under `src/compat/` for easier maintenance. (PR [#11](https://github.com/tuxevil/pi-antigravity-rotator/pull/11) by [@josenicomaia](https://github.com/josenicomaia))
 

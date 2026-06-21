@@ -1,20 +1,20 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { addAccountToConfig } from "./account-store.js";
 import {
-	buildAuthUrl,
-	discoverProject,
-	exchangeAuthorizationCode,
-	generatePkce,
-	generateState,
-	getOAuthClientConfig,
-	getUserEmail,
-	isHostedOAuthConfigured,
+  buildAuthUrl,
+  discoverProject,
+  exchangeAuthorizationCode,
+  generatePkce,
+  generateState,
+  getOAuthClientConfig,
+  getUserEmail,
+  isHostedOAuthConfigured,
 } from "./oauth.js";
 import type { AccountRotator } from "./rotator.js";
 
 interface PendingSession {
-	verifier: string;
-	createdAt: number;
+  verifier: string;
+  createdAt: number;
 }
 
 const pendingSessions = new Map<string, PendingSession>();
@@ -22,12 +22,12 @@ const SESSION_TTL_MS = 15 * 60 * 1000;
 const SESSION_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 
 function prunePendingSessions(): void {
-	const cutoff = Date.now() - SESSION_TTL_MS;
-	for (const [state, session] of pendingSessions.entries()) {
-		if (session.createdAt < cutoff) {
-			pendingSessions.delete(state);
-		}
-	}
+  const cutoff = Date.now() - SESSION_TTL_MS;
+  for (const [state, session] of pendingSessions.entries()) {
+    if (session.createdAt < cutoff) {
+      pendingSessions.delete(state);
+    }
+  }
 }
 
 // Background reaper. Without this, a long-lived proxy that never sees
@@ -36,20 +36,23 @@ function prunePendingSessions(): void {
 // so it does not block process exit.
 let pruneTimer: ReturnType<typeof setInterval> | null = null;
 function startPendingSessionReaper(): void {
-	if (pruneTimer) return;
-	pruneTimer = setInterval(() => prunePendingSessions(), SESSION_PRUNE_INTERVAL_MS);
-	if (pruneTimer.unref) pruneTimer.unref();
+  if (pruneTimer) return;
+  pruneTimer = setInterval(
+    () => prunePendingSessions(),
+    SESSION_PRUNE_INTERVAL_MS,
+  );
+  if (pruneTimer.unref) pruneTimer.unref();
 }
 function stopPendingSessionReaper(): void {
-	if (pruneTimer) {
-		clearInterval(pruneTimer);
-		pruneTimer = null;
-	}
+  if (pruneTimer) {
+    clearInterval(pruneTimer);
+    pruneTimer = null;
+  }
 }
 startPendingSessionReaper();
 
 function renderPage(title: string, body: string): string {
-	return `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -150,109 +153,130 @@ function renderPage(title: string, body: string): string {
 </html>`;
 }
 
-export function serveLoginLanding(res: ServerResponse): void {
-	const oauth = getOAuthClientConfig();
-	const hostedReady = isHostedOAuthConfigured();
-	const message = hostedReady
-		? `<p>This page starts the Antigravity sign-in flow and returns here automatically so the account can be added to this rotator.</p>
+export function serveLoginLanding(
+  req: IncomingMessage,
+  res: ServerResponse,
+): void {
+  const oauth = getOAuthClientConfig();
+  const hostedReady = isHostedOAuthConfigured();
+
+  // Preserve the admin token for sub-navigation links
+  const requestUrl = new URL(req.url || "/", "http://localhost");
+  const adminToken = requestUrl.searchParams.get("token");
+  const tokenQs = adminToken ? `?token=${encodeURIComponent(adminToken)}` : "";
+
+  let message: string;
+  if (hostedReady) {
+    message = `<p>This page starts the Antigravity sign-in flow and returns here automatically so the account can be added to this rotator.</p>
 <p class="mono">Configured callback: ${oauth.redirectUri}</p>
 <div class="note">Signing in here grants this server a refresh token for the selected Google account. That allows the rotator to keep using that account until access is revoked.</div>
-<a class="cta" href="/auth/antigravity/start">Continue With Google</a>`
-		: `<p>This server is not yet configured for hosted OAuth.</p>
-<p class="mono">Set ANTIGRAVITY_REDIRECT_URI, and usually ANTIGRAVITY_CLIENT_ID plus ANTIGRAVITY_CLIENT_SECRET, to a public callback URL registered with the OAuth client.</p>
-<div class="note error">The current redirect is still loopback-only, so the transparent public callback cannot complete yet.</div>`;
+<a class="cta" href="/auth/antigravity/start${tokenQs}">Continue With Google</a>`;
+  } else {
+    message = `<p>This page starts the Antigravity sign-in flow. Because the redirect goes to <code>localhost</code>, you will need to paste the redirect URL back here after completing the Google sign-in.</p>
+<div class="note">Signing in here grants this server a refresh token for the selected Google account. That allows the rotator to keep using that account until access is revoked.</div>
+<a class="cta" href="/auth/antigravity/start${tokenQs}">Continue With Google</a>`;
+  }
 
-	res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-	res.end(renderPage("Antigravity Login", `<h1>Connect Your Account</h1>${message}`));
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(
+    renderPage("Antigravity Login", `<h1>Connect Your Account</h1>${message}`),
+  );
 }
 
-export function startHostedLogin(req: IncomingMessage, res: ServerResponse): void {
-	if (!isHostedOAuthConfigured()) {
-		res.writeHead(409, { "Content-Type": "text/html; charset=utf-8" });
-		res.end(
-			renderPage(
-				"Hosted OAuth Not Configured",
-				"<h1>Hosted Login Isn’t Ready</h1><p>This server still uses a loopback redirect URI. Configure a public redirect before sharing this page.</p>",
-			),
-		);
-		return;
-	}
+export function startHostedLogin(
+  req: IncomingMessage,
+  res: ServerResponse,
+): void {
+  prunePendingSessions();
+  const { verifier, challenge } = generatePkce();
+  const state = generateState();
+  pendingSessions.set(state, { verifier, createdAt: Date.now() });
 
-	prunePendingSessions();
-	const { verifier, challenge } = generatePkce();
-	const state = generateState();
-	pendingSessions.set(state, { verifier, createdAt: Date.now() });
-
-	const authUrl = buildAuthUrl(state, challenge);
-	res.writeHead(302, { Location: authUrl });
-	res.end();
+  const authUrl = buildAuthUrl(state, challenge);
+  res.writeHead(302, { Location: authUrl });
+  res.end();
 }
 
 export async function handleHostedCallback(
-	req: IncomingMessage,
-	res: ServerResponse,
-	rotator: AccountRotator,
+  req: IncomingMessage,
+  res: ServerResponse,
+  rotator: AccountRotator,
 ): Promise<void> {
-	const requestUrl = new URL(req.url || "/", "http://localhost");
-	const code = requestUrl.searchParams.get("code");
-	const state = requestUrl.searchParams.get("state");
-	const error = requestUrl.searchParams.get("error");
+  const requestUrl = new URL(req.url || "/", "http://localhost");
+  const code = requestUrl.searchParams.get("code");
+  const state = requestUrl.searchParams.get("state");
+  const error = requestUrl.searchParams.get("error");
 
-	if (error) {
-		res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-		res.end(renderPage("Sign-In Cancelled", `<h1>Sign-In Cancelled</h1><p>Google returned: ${error}</p>`));
-		return;
-	}
+  if (error) {
+    res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(
+      renderPage(
+        "Sign-In Cancelled",
+        `<h1>Sign-In Cancelled</h1><p>Google returned: ${error}</p>`,
+      ),
+    );
+    return;
+  }
 
-	if (!code || !state) {
-		res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-		res.end(renderPage("Missing Parameters", "<h1>Missing Parameters</h1><p>The callback did not include a valid code and state.</p>"));
-		return;
-	}
+  if (!code || !state) {
+    res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(
+      renderPage(
+        "Missing Parameters",
+        "<h1>Missing Parameters</h1><p>The callback did not include a valid code and state.</p>",
+      ),
+    );
+    return;
+  }
 
-	prunePendingSessions();
-	const session = pendingSessions.get(state);
-	if (!session) {
-		res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-		res.end(renderPage("Session Expired", "<h1>Session Expired</h1><p>This sign-in session is no longer valid. Start again from the login page.</p>"));
-		return;
-	}
-	pendingSessions.delete(state);
+  prunePendingSessions();
+  const session = pendingSessions.get(state);
+  if (!session) {
+    res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(
+      renderPage(
+        "Session Expired",
+        "<h1>Session Expired</h1><p>This sign-in session is no longer valid. Start again from the login page.</p>",
+      ),
+    );
+    return;
+  }
+  pendingSessions.delete(state);
 
-	try {
-		const tokenData = await exchangeAuthorizationCode(code, session.verifier);
-		const email = await getUserEmail(tokenData.accessToken);
-		const project = await discoverProject(tokenData.accessToken);
-		const label = email ? email.split("@")[0] : "Account";
-		const entry = {
-			email: email || "unknown@gmail.com",
-			refreshToken: tokenData.refreshToken,
-			projectId: project.projectId,
-			projectSource: project.source,
-			label,
-		};
+  try {
+    const tokenData = await exchangeAuthorizationCode(code, session.verifier);
+    const email = await getUserEmail(tokenData.accessToken);
+    const project = await discoverProject(tokenData.accessToken);
+    const label = email ? email.split("@")[0] : "Account";
+    const entry = {
+      email: email || "unknown@gmail.com",
+      refreshToken: tokenData.refreshToken,
+      projectId: project.projectId,
+      projectSource: project.source,
+      label,
+    };
 
-		const { isNew } = addAccountToConfig(entry);
-		rotator.addOrUpdateAccount(entry);
+    const { isNew } = addAccountToConfig(entry);
+    rotator.addOrUpdateAccount(entry);
 
-		res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-		res.end(
-			renderPage(
-				"Account Connected",
-				`<h1>Account Connected</h1>
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(
+      renderPage(
+        "Account Connected",
+        `<h1>Account Connected</h1>
 <p><strong>${entry.email}</strong> was ${isNew ? "added" : "updated"} successfully.</p>
 <p>Project: <span class="mono">${project.projectId}</span> via ${project.source}.</p>
 <p>The rotator can start using this account immediately.</p>
 <div class="note">If you ever want to stop sharing access, revoke this app's access from the Google account security settings.</div>`,
-			),
-		);
-	} catch (err) {
-		res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
-		res.end(
-			renderPage(
-				"Sign-In Failed",
-				`<h1>Sign-In Failed</h1><p>${err instanceof Error ? err.message : String(err)}</p>`,
-			),
-		);
-	}
+      ),
+    );
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(
+      renderPage(
+        "Sign-In Failed",
+        `<h1>Sign-In Failed</h1><p>${err instanceof Error ? err.message : String(err)}</p>`,
+      ),
+    );
+  }
 }

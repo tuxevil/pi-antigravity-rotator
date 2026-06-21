@@ -25,6 +25,15 @@ import { writeTextFileAtomic } from "./storage.js";
 import { initDb } from "./db-store.js";
 
 function loadConfig(): Config {
+  if (isDbConfigured()) {
+    try {
+      return loadConfigFromDisk();
+    } catch (err) {
+      console.error(`Failed to load config: ${err}`);
+      process.exit(1);
+    }
+  }
+
   const configPath = join(getConfigDir(), "accounts.json");
   if (!existsSync(configPath)) {
     console.error(`Config not found: ${configPath}`);

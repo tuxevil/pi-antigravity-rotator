@@ -38,11 +38,21 @@ export async function runDoctor(
     );
   }
 
-  if (!existsSync(configDir)) {
-    errors.push(`Config directory missing: ${configDir}`);
-  }
-  if (!checkWritable(configDir)) {
-    errors.push(`Config directory is not writable: ${configDir}`);
+  const dbConfigured = isDbConfigured();
+
+  if (dbConfigured) {
+    // When using PostgreSQL, configDir is not required for data persistence
+    if (!existsSync(configDir)) {
+      warnings.push(
+        `Config directory does not exist (${configDir}), but storage backend is PostgreSQL — this is expected in containerised environments.`,
+      );
+    }
+  } else {
+    if (!existsSync(configDir)) {
+      errors.push(`Config directory missing: ${configDir}`);
+    } else if (!checkWritable(configDir)) {
+      errors.push(`Config directory is not writable: ${configDir}`);
+    }
   }
 
   // Validate config — read from repository (handles both DB and file)
@@ -65,17 +75,19 @@ export async function runDoctor(
     warnings.push("Token usage data is corrupted.");
   }
 
+  const backups = dbConfigured ? [] : listBackups();
+
   return {
     ok: errors.length === 0,
     warnings,
     errors,
     info: {
       configDir,
-      backupCount: listBackups().length,
-      firstBackup: listBackups()[0] ?? null,
+      backupCount: backups.length,
+      firstBackup: backups[0] ?? null,
       adminTokenConfigured: !!getConfiguredAdminToken(env),
       bindHost: env.PI_ROTATOR_BIND_HOST ?? null,
-      storageBackend: isDbConfigured() ? "postgresql" : "file",
+      storageBackend: dbConfigured ? "postgresql" : "file",
     },
   };
 }

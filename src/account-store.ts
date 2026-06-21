@@ -5,14 +5,14 @@ import { getAccountsPath } from "./paths.js";
 import type { AccountConfig, Config } from "./types.js";
 import { writeJsonFileAtomic } from "./storage.js";
 import {
-  loadConfigFromDisk,
+  loadConfig,
   loadOrCreateAccountsConfig,
   saveAccountsConfig,
 } from "./config-storage.js";
 import { applyConfigDefaults, getDefaultConfig } from "./config-defaults.js";
 
 export {
-  loadConfigFromDisk,
+  loadConfig,
   loadOrCreateAccountsConfig,
   saveAccountsConfig,
   applyConfigDefaults,

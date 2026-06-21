@@ -71,10 +71,20 @@ function diskPath(key: string): string | null {
 
 // ----- PostgresSettingsRepository -----
 
+const RETRY_DELAY_MS = 5_000;
+const MAX_RETRIES = 3;
+
+interface PendingWrite {
+  value: string;
+  attempts: number;
+}
+
 export class PostgresSettingsRepository implements ISettingsRepository {
   private pool: pg.Pool | null = null;
   private cache = new Map<string, string>();
   private initialized = false;
+  private pendingRetries = new Map<string, PendingWrite>();
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -155,12 +165,78 @@ export class PostgresSettingsRepository implements ISettingsRepository {
           console.error(
             `Failed to save ${key} to database in background: ${err}`,
           );
+          this.enqueueRetry(key, value);
         });
     }
   }
 
+  private enqueueRetry(key: string, value: string): void {
+    const existing = this.pendingRetries.get(key);
+    // If the key is already pending, keep the higher attempt count
+    // but always use the latest value.
+    this.pendingRetries.set(key, {
+      value,
+      attempts: existing ? existing.attempts + 1 : 1,
+    });
+    this.scheduleRetryFlush();
+  }
+
+  private scheduleRetryFlush(): void {
+    if (this.retryTimer) return; // already scheduled
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.flushPendingRetries();
+    }, RETRY_DELAY_MS);
+    // Don't keep the process alive just for retries
+    this.retryTimer.unref();
+  }
+
+  private async flushPendingRetries(): Promise<void> {
+    if (!this.pool || this.pendingRetries.size === 0) return;
+
+    const entries = [...this.pendingRetries.entries()];
+    this.pendingRetries.clear();
+
+    for (const [key, pending] of entries) {
+      try {
+        await this.pool.query(
+          `INSERT INTO rotator_settings (key, value, updated_at)
+           VALUES ($1, $2, CURRENT_TIMESTAMP)
+           ON CONFLICT (key) DO UPDATE
+           SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+          [key, pending.value],
+        );
+      } catch (err) {
+        if (pending.attempts >= MAX_RETRIES) {
+          console.error(
+            `Giving up on persisting ${key} after ${pending.attempts} failed attempts: ${err}`,
+          );
+        } else {
+          console.error(
+            `Retry ${pending.attempts}/${MAX_RETRIES} failed for ${key}: ${err}`,
+          );
+          this.pendingRetries.set(key, {
+            value: pending.value,
+            attempts: pending.attempts + 1,
+          });
+        }
+      }
+    }
+
+    // If there are still entries that failed, schedule another round
+    if (this.pendingRetries.size > 0) {
+      this.scheduleRetryFlush();
+    }
+  }
+
   async close(): Promise<void> {
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     if (this.pool) {
+      // Final attempt to drain any pending retries before shutdown
+      await this.flushPendingRetries();
       await this.pool.end();
       this.pool = null;
     }

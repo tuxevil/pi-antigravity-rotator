@@ -5,6 +5,7 @@ import {
   type StoredResponseEntry,
 } from "../src/responses-store.js";
 import {
+  initDb,
   setCachedResponsesStore,
   getCachedResponsesStore,
 } from "../src/db-store.js";
@@ -28,7 +29,8 @@ function makeEntry(
 describe("ResponsesStore", () => {
   let store: ResponsesStore;
 
-  before(() => {
+  before(async () => {
+    await initDb();
     store = new ResponsesStore();
   });
 
@@ -114,6 +116,10 @@ describe("ResponsesStore", () => {
 });
 
 describe("ResponsesStore.flushSync", () => {
+  before(async () => {
+    await initDb();
+  });
+
   it("writes to repository synchronously when dirty", () => {
     const store = new ResponsesStore();
     store.set("sync-1", makeEntry("sync-1", Date.now() + 60_000)[1]);

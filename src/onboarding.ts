@@ -43,7 +43,7 @@ function startPendingSessionReaper(): void {
   );
   if (pruneTimer.unref) pruneTimer.unref();
 }
-function _stopPendingSessionReaper(): void {
+export function stopPendingSessionReaper(): void {
   if (pruneTimer) {
     clearInterval(pruneTimer);
     pruneTimer = null;
@@ -285,10 +285,18 @@ document.getElementById('pasteForm').addEventListener('submit', async (e) => {
         'Project: <span class="mono" style="padding:2px 6px;">' + data.projectId + '</span>' +
         '</div>';
     } else {
-      resultDiv.innerHTML = '<div class="note error">' + (data.error || 'Unknown error') + '</div>';
+      var errorDiv = document.createElement('div');
+      errorDiv.className = 'note error';
+      errorDiv.textContent = data.error || 'Unknown error';
+      resultDiv.innerHTML = '';
+      resultDiv.appendChild(errorDiv);
     }
   } catch (err) {
-    resultDiv.innerHTML = '<div class="note error">Request failed: ' + err.message + '</div>';
+    var errDiv = document.createElement('div');
+    errDiv.className = 'note error';
+    errDiv.textContent = 'Request failed: ' + err.message;
+    resultDiv.innerHTML = '';
+    resultDiv.appendChild(errDiv);
   } finally {
     btn.disabled = false;
     btn.textContent = 'Connect Account';

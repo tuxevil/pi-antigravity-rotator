@@ -24,7 +24,7 @@ export interface StoredResponseEntry {
   expiresAt: number;
 }
 
-export interface PersistedStore {
+export interface PersistedResponsesStore {
   version: 1;
   entries: Array<[string, StoredResponseEntry]>;
 }
@@ -137,7 +137,7 @@ export class ResponsesStore {
     this.flushing = (async () => {
       try {
         if (!this.dirty) return;
-        const data: PersistedStore = {
+        const data: PersistedResponsesStore = {
           version: 1,
           entries: Array.from(this.cache.entries()),
         };
@@ -162,7 +162,7 @@ export class ResponsesStore {
   flushSync(): void {
     if (!this.dirty) return;
     try {
-      const data: PersistedStore = {
+      const data: PersistedResponsesStore = {
         version: 1,
         entries: Array.from(this.cache.entries()),
       };

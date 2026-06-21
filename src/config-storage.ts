@@ -2,7 +2,7 @@ import type { Config } from "./types.js";
 import { getCachedConfig, setCachedConfig } from "./db-store.js";
 import { getDefaultConfig } from "./config-defaults.js";
 
-export function loadConfigFromDisk(): Config {
+export function loadConfig(): Config {
   const cached = getCachedConfig();
   if (cached) return cached;
   return getDefaultConfig();
@@ -10,7 +10,7 @@ export function loadConfigFromDisk(): Config {
 
 export function loadOrCreateAccountsConfig(): Config {
   try {
-    return loadConfigFromDisk();
+    return loadConfig();
   } catch {
     return getDefaultConfig();
   }

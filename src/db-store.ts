@@ -6,7 +6,10 @@
 // self-contained — callers no longer need to branch on isDbConfigured().
 
 import type { Config, PersistedState, TokenUsageTiered } from "./types.js";
-import type { StoredResponseEntry } from "./responses-store.js";
+import type {
+  StoredResponseEntry,
+  PersistedResponsesStore,
+} from "./responses-store.js";
 import { validateConfig } from "./validators.js";
 import { applyConfigDefaults } from "./config-defaults.js";
 import {
@@ -15,14 +18,7 @@ import {
   FileSettingsRepository,
 } from "./settings-repository.js";
 
-/**
- * PersistedStore shape used by ResponsesStore on disk.
- * Duplicated here to avoid a circular import from responses-store.
- */
-export interface PersistedResponsesStore {
-  version: 1;
-  entries: Array<[string, StoredResponseEntry]>;
-}
+export type { PersistedResponsesStore } from "./responses-store.js";
 
 // ----- Repository strategy -----
 
@@ -34,6 +30,16 @@ function createRepository(): ISettingsRepository {
 }
 
 const repository: ISettingsRepository = createRepository();
+
+let initialized = false;
+
+function assertInitialized(): void {
+  if (!initialized) {
+    throw new Error(
+      "db-store: repository not initialized. Call initDb() before accessing settings.",
+    );
+  }
+}
 
 // ----- Backward-compatible public API -----
 
@@ -48,16 +54,19 @@ export function isDbConfigured(): boolean {
 }
 
 export async function initDb(): Promise<void> {
-  return repository.init();
+  await repository.init();
+  initialized = true;
 }
 
 export async function closeDb(): Promise<void> {
-  return repository.close();
+  await repository.close();
+  initialized = false;
 }
 
 // --- Accounts config ---
 
 export function getCachedConfig(): Config | null {
+  assertInitialized();
   const raw = repository.get("accounts_json");
   if (!raw) return null;
   try {
@@ -73,6 +82,7 @@ export function getCachedConfig(): Config | null {
 }
 
 export function setCachedConfig(config: Config): void {
+  assertInitialized();
   const withDefaults = applyConfigDefaults(config);
   repository.set("accounts_json", JSON.stringify(withDefaults, null, 2));
 }
@@ -80,17 +90,20 @@ export function setCachedConfig(config: Config): void {
 // --- Admin token ---
 
 export function getCachedAdminToken(): string | null {
+  assertInitialized();
   const raw = repository.get("admin_token");
   return raw ? raw.trim() : null;
 }
 
 export function setCachedAdminToken(token: string): void {
+  assertInitialized();
   repository.set("admin_token", token.trim());
 }
 
 // --- Rotator state ---
 
 export function getCachedState(): PersistedState | null {
+  assertInitialized();
   const raw = repository.get("rotator_state");
   if (!raw) return null;
   try {
@@ -102,12 +115,14 @@ export function getCachedState(): PersistedState | null {
 }
 
 export function setCachedState(state: PersistedState): void {
+  assertInitialized();
   repository.set("rotator_state", JSON.stringify(state));
 }
 
 // --- Token usage ---
 
 export function getCachedTokenUsage(): TokenUsageTiered | null {
+  assertInitialized();
   const raw = repository.get("token_usage");
   if (!raw) return null;
   try {
@@ -119,12 +134,14 @@ export function getCachedTokenUsage(): TokenUsageTiered | null {
 }
 
 export function setCachedTokenUsage(usage: TokenUsageTiered): void {
+  assertInitialized();
   repository.set("token_usage", JSON.stringify(usage));
 }
 
 // --- Responses store ---
 
 export function getCachedResponsesStore(): PersistedResponsesStore | null {
+  assertInitialized();
   const raw = repository.get("responses_store");
   if (!raw) return null;
   try {
@@ -136,5 +153,6 @@ export function getCachedResponsesStore(): PersistedResponsesStore | null {
 }
 
 export function setCachedResponsesStore(store: PersistedResponsesStore): void {
+  assertInitialized();
   repository.set("responses_store", JSON.stringify(store));
 }

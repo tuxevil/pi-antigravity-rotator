@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   ensureAdminToken,
@@ -10,7 +10,7 @@ import {
   setPersistedAdminToken,
   writePersistedAdminToken,
 } from "../src/admin-auth.js";
-import { getCachedAdminToken } from "../src/db-store.js";
+import { initDb, getCachedAdminToken } from "../src/db-store.js";
 
 function req(
   url: string,
@@ -88,6 +88,10 @@ describe("admin auth helpers", () => {
 });
 
 describe("admin token generation and persistence", () => {
+  before(async () => {
+    await initDb();
+  });
+
   beforeEach(() => {
     setPersistedAdminToken(null);
     // Clear repository state for admin_token between tests

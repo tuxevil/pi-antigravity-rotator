@@ -33,6 +33,8 @@ import {
   serveAccountFreshWindowStartsApi,
   serveClearInFlightApi,
   serveClearBreakerApi,
+  serveStaticCss,
+  serveStaticJs,
 } from "./dashboard.js";
 import {
   handleHostedCallback,
@@ -1491,6 +1493,16 @@ export function startProxy(
       if (!requireAdmin(req, res)) return;
       trackFeature("dashboard");
       serveDashboard(res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/static/dashboard.css") {
+      serveStaticCss(res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/static/dashboard.js") {
+      serveStaticJs(res);
       return;
     }
 

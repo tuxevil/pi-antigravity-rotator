@@ -1,6 +1,7 @@
-import { describe, it, after } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
+  initDb,
   isDbConfigured,
   getCachedConfig,
   setCachedConfig,
@@ -17,6 +18,10 @@ import type { Config, PersistedState, TokenUsageTiered } from "../src/types.js";
 import type { PersistedResponsesStore } from "../src/db-store.js";
 
 describe("db-store helpers", () => {
+  before(async () => {
+    await initDb();
+  });
+
   const originalEnv = process.env.PI_ROTATOR_DATABASE_URL;
   const originalDbEnv = process.env.DATABASE_URL;
 

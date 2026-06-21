@@ -7,7 +7,7 @@ import { AccountRotator } from "./rotator.js";
 import { startProxy } from "./proxy.js";
 import { getConfigDir } from "./paths.js";
 import { TelemetryReporter, setActiveReporter } from "./telemetry.js";
-import { loadConfigFromDisk } from "./account-store.js";
+import { loadConfig as loadConfigFromStore } from "./account-store.js";
 import {
   ensureAdminToken,
   getConfiguredAdminToken,
@@ -23,10 +23,11 @@ import {
 import { setModelAliasesOverride } from "./types.js";
 import { writeTextFileAtomic } from "./storage.js";
 import { initDb } from "./db-store.js";
+import { stopPendingSessionReaper } from "./onboarding.js";
 
 function loadConfig(): Config {
   try {
-    const config = loadConfigFromDisk();
+    const config = loadConfigFromStore();
 
     if (!config.accounts || config.accounts.length === 0) {
       console.error(
@@ -220,6 +221,7 @@ export async function main(): Promise<void> {
     rotator.flushPendingTokenUsageSaveSync();
     await telemetry.shutdown();
     rotator.stopQuotaPolling();
+    stopPendingSessionReaper();
     const { closeDb } = await import("./db-store.js");
     await closeDb();
     process.exit(0);

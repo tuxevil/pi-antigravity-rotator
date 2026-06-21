@@ -153,7 +153,7 @@ If login fails at project discovery:
 
 After starting the proxy, open `http://localhost:51200/dashboard` or `http://<your-server-ip>:51200/dashboard` from any machine on the same network (the proxy binds to `0.0.0.0`).
 
-If `PI_ROTATOR_ADMIN_TOKEN` is unset, dashboard and `/api/*` access remains open for backwards compatibility. v2.0 now surfaces loud warnings about that state in startup logs, `/api/status`, and the dashboard itself.
+If `PI_ROTATOR_ADMIN_TOKEN` is unset, the proxy automatically generates a cryptographically secure token on first run and saves it to a `.admin-token` file in the root directory. This token will be printed to the console on first startup. You must append `?token=<your-token>` to the dashboard URL to access it, or set `PI_ROTATOR_ADMIN_TOKEN` in your environment to override it.
 
 The dashboard shows:
 
@@ -285,7 +285,7 @@ Config files (`accounts.json`, `state.json`) are stored in `~/.pi-antigravity-ro
 # Environment variables
 export PI_ROTATOR_DIR=/path/to/config
 export PI_ROTATOR_QUOTA_USER_AGENT="antigravity/1.107.0 darwin/arm64"
-# Optional: require this token for dashboard/API access. If unset, legacy open access is preserved.
+# Optional: require this token for dashboard/API access. If unset, a secure token is auto-generated.
 export PI_ROTATOR_ADMIN_TOKEN="change-me"
 # Optional: bind the proxy to a safer local-only interface.
 export PI_ROTATOR_BIND_HOST="127.0.0.1"
@@ -410,7 +410,7 @@ Login now fails if Google does not return a project ID. No shared fallback.
 | `POST` | `/v1/chat/completions` | OpenAI-compatible non-streaming chat adapter |
 | `POST` | `/v1/messages` | Anthropic-compatible non-streaming messages adapter |
 
-If `PI_ROTATOR_ADMIN_TOKEN` is set, dashboard/API requests must include either `Authorization: Bearer <token>`, `X-Rotator-Admin-Token: <token>`, or `?token=<token>` for browser dashboard access. The native pi proxy endpoint and compatibility adapters remain unauthenticated so existing clients keep working. Put this service behind a trusted local boundary if exposing beyond localhost/LAN.
+Dashboard and internal `/api/*` requests must include either `Authorization: Bearer <token>`, `X-Rotator-Admin-Token: <token>`, or `?token=<token>` for browser dashboard access. The native pi proxy endpoint and compatibility adapters (`/v1/*`) remain unauthenticated by design, so your AI agents and existing clients will keep working without requiring a token. Put this service behind a trusted local boundary if exposing beyond localhost/LAN.
 
 ### Compatibility Adapters
 

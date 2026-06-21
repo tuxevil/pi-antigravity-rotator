@@ -2,13 +2,16 @@
 
 ## [Unreleased]
 
+### Refactored
+- **Compatibility Layer**: Massively refactored the 2,400-line `src/compat.ts` into smaller, single-responsibility modules under `src/compat/` for easier maintenance. (PR [#11](https://github.com/tuxevil/pi-antigravity-rotator/pull/11) by [@josenicomaia](https://github.com/josenicomaia))
+
 ## [2.2.1] - 2026-06-20
 
 ### Fixed
-- **Support tool response images**: Extracted any image content (`image_url` or `image` formats) from OpenAI tool response content and mapped them to Antigravity `inlineData` parts.
-- **Ordered tool results**: Guaranteed all tool results remain clustered at the top of the parts array, complying with Claude's strict layout requirements.
-- **Dangling tool call filtering**: Filtered out any `tool_calls` that do not have a matching `tool_result` in the subsequent message to prevent `400 Bad Request`.
-- **Inline JSON-Schema union types**: Collapsed Draft-2020-12 inline union type arrays (e.g. `type: ["number", "null"]`) to the first non-null type and lifted nullability into the proto-supported `nullable` flag to fix 400 errors.
+- **Support tool response images**: Extracted any image content (`image_url` or `image` formats) from OpenAI tool response content and mapped them to Antigravity `inlineData` parts. (PR [#9](https://github.com/tuxevil/pi-antigravity-rotator/pull/9) by [@josenicomaia](https://github.com/josenicomaia))
+- **Ordered tool results**: Guaranteed all tool results remain clustered at the top of the parts array, complying with Claude's strict layout requirements. (PR [#9](https://github.com/tuxevil/pi-antigravity-rotator/pull/9) by [@josenicomaia](https://github.com/josenicomaia))
+- **Dangling tool call filtering**: Filtered out any `tool_calls` that do not have a matching `tool_result` in the subsequent message to prevent `400 Bad Request`. (PR [#9](https://github.com/tuxevil/pi-antigravity-rotator/pull/9) by [@josenicomaia](https://github.com/josenicomaia))
+- **Inline JSON-Schema union types**: Collapsed Draft-2020-12 inline union type arrays (e.g. `type: ["number", "null"]`) to the first non-null type and lifted nullability into the proto-supported `nullable` flag to fix 400 errors. (PR [#10](https://github.com/tuxevil/pi-antigravity-rotator/pull/10) by [@yashyadav711](https://github.com/yashyadav711))
 
 ## [2.2.0] - 2026-06-16
 

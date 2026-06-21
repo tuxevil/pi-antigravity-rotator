@@ -5,6 +5,7 @@ import {
   type AccountConfig,
   type AccountRuntime,
   type AccountStatus,
+  type AccountTier,
   type Config,
   type GoogleQuotaResponse,
   type ModelQuota,
@@ -2810,6 +2811,20 @@ export class AccountRotator {
     removeAccountFromConfig(email);
     this.saveState();
     this.log(`${email}: account removed`);
+    return true;
+  }
+
+  setAccountTier(email: string, tier: string): boolean {
+    const validTiers = ["unknown", "free", "pro", "ultra"];
+    if (!validTiers.includes(tier)) return false;
+    const account = this.accounts.find((a) => a.config.email === email);
+    if (!account) return false;
+    account.config.tier = tier as AccountTier;
+    const configAccount = this.config.accounts.find((a) => a.email === email);
+    if (configAccount) configAccount.tier = tier as AccountTier;
+    saveAccountsConfig(this.config);
+    this.saveState();
+    this.log(`${email}: tier changed to ${tier}`);
     return true;
   }
 

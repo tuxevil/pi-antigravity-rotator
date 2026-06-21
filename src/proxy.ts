@@ -28,6 +28,7 @@ import {
   serveQuarantineApi,
   serveRestoreApi,
   serveRemoveAccountApi,
+  serveSetTierApi,
   serveFreshWindowStartsApi,
   serveAccountFreshWindowStartsApi,
   serveClearInFlightApi,
@@ -1643,6 +1644,26 @@ export function startProxy(
         url.slice("/api/remove-account/".length),
       );
       serveRemoveAccountApi(res, rotator, email);
+      return;
+    }
+
+    if (method === "POST" && url.startsWith("/api/set-tier/")) {
+      if (!requireAdmin(req, res)) return;
+      const rest = url.slice("/api/set-tier/".length);
+      const lastSlash = rest.lastIndexOf("/");
+      if (lastSlash < 0) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: "Missing tier. Use /api/set-tier/:email/:tier",
+          }),
+        );
+        return;
+      }
+      const email = decodeURIComponent(rest.slice(0, lastSlash));
+      const tier = decodeURIComponent(rest.slice(lastSlash + 1));
+      serveSetTierApi(res, rotator, email, tier);
       return;
     }
 

@@ -105,6 +105,17 @@ export function serveRemoveAccountApi(
   res.end(JSON.stringify({ ok, email }));
 }
 
+export function serveSetTierApi(
+  res: ServerResponse,
+  rotator: AccountRotator,
+  email: string,
+  tier: string,
+): void {
+  const ok = rotator.setAccountTier(email, tier);
+  res.writeHead(ok ? 200 : 400, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok, email, tier }));
+}
+
 export function serveFreshWindowStartsApi(
   res: ServerResponse,
   rotator: AccountRotator,
@@ -1367,6 +1378,24 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     padding: 32px;
     font-size: 13px;
   }
+
+  .tier-option {
+    padding: 6px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    color: var(--text);
+  }
+  .tier-option:hover {
+    background: var(--surface-hover);
+  }
+  .tier-option:first-child {
+    border-radius: 8px 8px 0 0;
+  }
+  .tier-option:last-child {
+    border-radius: 0 0 8px 8px;
+  }
 </style>
 </head>
 <body>
@@ -1786,7 +1815,15 @@ function renderAccounts(data) {
         '<div class="card-label">' + escapeHtml(maskText(a.label)) + '</div>' +
         '<div class="card-badges">' +
           '<span class="badge badge-' + escapeHtml(a.status) + (isActive ? ' pulse' : '') + '">' + escapeHtml(a.status) + '</span>' +
-          '<span class="badge badge-model">' + escapeHtml(tierLabel) + '</span>' +
+          '<div style="position:relative;display:inline-block">' +
+            '<span class="badge badge-model" onclick="toggleTierDropdown(this, \\'' + jsString(a.email) + '\\')" style="cursor:pointer" title="Click to change tier">' + escapeHtml(tierLabel) + ' \u25BE</span>' +
+            '<div class="tier-dropdown" style="display:none;position:absolute;top:100%;right:0;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:4px;min-width:100px;box-shadow:0 8px 24px rgba(0,0,0,0.4)">' +
+              '<div class="tier-option" onclick="setAccountTier(\\'' + jsString(a.email) + '\\', \\'unknown\\')">' + 'UNKNOWN</div>' +
+              '<div class="tier-option" onclick="setAccountTier(\\'' + jsString(a.email) + '\\', \\'free\\')">' + 'FREE</div>' +
+              '<div class="tier-option" onclick="setAccountTier(\\'' + jsString(a.email) + '\\', \\'pro\\')">' + 'PRO</div>' +
+              '<div class="tier-option" onclick="setAccountTier(\\'' + jsString(a.email) + '\\', \\'ultra\\')">' + 'ULTRA</div>' +
+            '</div>' +
+          '</div>' +
           modelBadges +
         '</div>' +
       '</div>' +
@@ -3105,6 +3142,33 @@ function confirmRemoveAccount(email) {
 
 function openCliLogin() {
   window.open('/login-cli' + (ADMIN_TOKEN ? ('?token=' + encodeURIComponent(ADMIN_TOKEN)) : ''), '_blank');
+}
+
+function toggleTierDropdown(badge, email) {
+  var dropdown = badge.nextElementSibling;
+  var isOpen = dropdown.style.display !== 'none';
+  // Close all other dropdowns first
+  document.querySelectorAll('.tier-dropdown').forEach(function(d) { d.style.display = 'none'; });
+  if (!isOpen) {
+    dropdown.style.display = 'block';
+    // Close on click outside
+    setTimeout(function() {
+      document.addEventListener('click', function closeDropdown(e) {
+        if (!dropdown.contains(e.target) && e.target !== badge) {
+          dropdown.style.display = 'none';
+          document.removeEventListener('click', closeDropdown);
+        }
+      });
+    }, 0);
+  }
+}
+
+async function setAccountTier(email, tier) {
+  try {
+    var r = await authFetch('/api/set-tier/' + encodeURIComponent(email) + '/' + encodeURIComponent(tier), { method: 'POST' });
+    var d = await r.json();
+    if (d.ok) refresh(); else alert('Failed to set tier: ' + JSON.stringify(d));
+  } catch(e) { alert('Failed to set tier: ' + e); }
 }
 
 async function setFreshWindowStarts(enabled) {

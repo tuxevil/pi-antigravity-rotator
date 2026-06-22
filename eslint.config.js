@@ -38,6 +38,43 @@ export default [
     },
   },
   {
+    // Browser JS served as static assets (dashboard frontend)
+    files: ["src/static/**/*.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: {
+        window: "readonly",
+        document: "readonly",
+        localStorage: "readonly",
+        setTimeout: "readonly",
+        setInterval: "readonly",
+        clearTimeout: "readonly",
+        clearInterval: "readonly",
+        fetch: "readonly",
+        URLSearchParams: "readonly",
+        URL: "readonly",
+        Headers: "readonly",
+        EventSource: "readonly",
+        Blob: "readonly",
+        alert: "readonly",
+        confirm: "readonly",
+        prompt: "readonly",
+        encodeURIComponent: "readonly",
+        decodeURIComponent: "readonly",
+        console: "readonly",
+      },
+    },
+    rules: {
+      // Functions/vars are called from HTML onclick attributes, not from within JS
+      "no-unused-vars": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+      // Dashboard JS uses empty catch blocks and reassignment patterns
+      "no-empty": "off",
+      "no-useless-assignment": "off",
+      "no-useless-escape": "off",
+    },
+  },
+  {
     // Generated / vendor dirs
     ignores: [
       "node_modules/**",
@@ -45,7 +82,6 @@ export default [
       "coverage/**",
       ".github/**",
       "scripts/**",
-      "src/static/**",
     ],
   },
 ];

@@ -21,3 +21,4 @@ ROADMAP.md
 *.db
 .beads-credential-key
 models.json
+.idea/

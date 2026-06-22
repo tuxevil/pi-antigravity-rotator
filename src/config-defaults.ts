@@ -1,0 +1,64 @@
+import type { Config } from "./types.js";
+
+export function applyConfigDefaults(config: Config): Config {
+	return {
+		proxyPort: config.proxyPort || 51200,
+		bindHost: config.bindHost || process.env.PI_ROTATOR_BIND_HOST || "0.0.0.0",
+		routingPolicy: config.routingPolicy || "timer-first",
+		requestsPerRotation: config.requestsPerRotation || 5,
+		rotateOnQuotaDrop: config.rotateOnQuotaDrop ?? 20,
+		quotaPollIntervalMs: config.quotaPollIntervalMs || 300000,
+		maxConcurrentRequestsPerAccount: config.maxConcurrentRequestsPerAccount ?? 1,
+		maxConcurrentRequestsPerProjectModel: config.maxConcurrentRequestsPerProjectModel ?? 1,
+		projectCircuitBreaker429Threshold: config.projectCircuitBreaker429Threshold ?? 3,
+		projectCircuitBreakerWindowMs: config.projectCircuitBreakerWindowMs ?? 10 * 60 * 1000,
+		projectCircuitBreakerCooldownMs: config.projectCircuitBreakerCooldownMs ?? 60 * 60 * 1000,
+		modelCircuitBreaker429Threshold: config.modelCircuitBreaker429Threshold ?? 3,
+		modelCircuitBreakerCooldownMs: config.modelCircuitBreakerCooldownMs ?? 6 * 60 * 60 * 1000,
+		dailyAccountSlowRequests: config.dailyAccountSlowRequests ?? 250,
+		dailyAccountStopRequests: config.dailyAccountStopRequests ?? 350,
+		dailyProjectSlowRequests: config.dailyProjectSlowRequests ?? 900,
+		dailyProjectStopRequests: config.dailyProjectStopRequests ?? 1200,
+		slowModeJitterMinMs: config.slowModeJitterMinMs ?? 8_000,
+		slowModeJitterMaxMs: config.slowModeJitterMaxMs ?? 25_000,
+		protectivePauseMs: config.protectivePauseMs ?? 21600000,
+		useRequestCountRotationWhenQuotaUnknownOnly: config.useRequestCountRotationWhenQuotaUnknownOnly ?? true,
+		tokenBucketEnabled: config.tokenBucketEnabled ?? false,
+		tokenBucketMaxTokens: config.tokenBucketMaxTokens ?? 50,
+		tokenBucketRefillPerMinute: config.tokenBucketRefillPerMinute ?? 6,
+		tokenBucketInitialTokens: config.tokenBucketInitialTokens ?? (config.tokenBucketMaxTokens ?? 50),
+		accounts: config.accounts ? config.accounts.map((account) => ({
+			...account,
+			tier: account.tier || "unknown",
+		})) : [],
+	};
+}
+
+export function getDefaultConfig(): Config {
+	return applyConfigDefaults({
+		proxyPort: 51200,
+		accounts: [],
+		requestsPerRotation: 5,
+		rotateOnQuotaDrop: 20,
+		quotaPollIntervalMs: 300000,
+		maxConcurrentRequestsPerAccount: 1,
+		maxConcurrentRequestsPerProjectModel: 1,
+		projectCircuitBreaker429Threshold: 3,
+		projectCircuitBreakerWindowMs: 10 * 60 * 1000,
+		projectCircuitBreakerCooldownMs: 60 * 60 * 1000,
+		modelCircuitBreaker429Threshold: 3,
+		modelCircuitBreakerCooldownMs: 6 * 60 * 60 * 1000,
+		dailyAccountSlowRequests: 250,
+		dailyAccountStopRequests: 350,
+		dailyProjectSlowRequests: 900,
+		dailyProjectStopRequests: 1200,
+		slowModeJitterMinMs: 8_000,
+		slowModeJitterMaxMs: 25_000,
+		protectivePauseMs: 21600000,
+		useRequestCountRotationWhenQuotaUnknownOnly: true,
+		tokenBucketEnabled: false,
+		tokenBucketMaxTokens: 50,
+		tokenBucketRefillPerMinute: 6,
+		tokenBucketInitialTokens: 50,
+	});
+}

@@ -164,6 +164,7 @@ The dashboard shows:
 - **Quota Forecast** -- Predictive modeling showing when each model's quota will run out based on the current requests/hour burn rate.
 - **Searchable Request Log** -- Live feed of the last 200 requests with exact timestamps, models, masked accounts, status codes, and latency.
 - **Account Cards** -- Sorted by total quota. Shows status (`active`, `ready`, `cooldown`, `flagged`, `disabled`), quota bars with timers, and precise error messages.
+- **Web-based Account Management** -- Add, remove, and manage account credentials and tier configurations directly from the UI without touching JSON files.
 - **Operator Panels** -- "Attention Needed" summaries for quarantined accounts, unroutable models, token-bucket pressure, and a real-time event feed of rotator actions.
 - **Routing Inspector** -- On-demand modal showing the active routing policy, candidate scores, local token bucket state, and rejection reasons per model.
 
@@ -282,12 +283,19 @@ The dashboard is intended to replace day-to-day `journalctl` digging for normal 
 Config files (`accounts.json`, `state.json`) are stored in `~/.pi-antigravity-rotator/` by default. Override with:
 
 ```bash
+
 # Environment variables
 export PI_ROTATOR_DIR=/path/to/config
 export PI_ROTATOR_QUOTA_USER_AGENT="antigravity/1.107.0 darwin/arm64"
+
+# Postgres Storage Support (v2.3.0+)
+# Optional: Set this to use a Postgres database instead of local JSON files for persistence.
+export PI_ROTATOR_DATABASE_URL="postgres://user:pass@localhost:5432/rotatordb"
+export DATABASE_URL="postgres://user:pass@localhost:5432/rotatordb" # Fallback
+
 # Optional: require this token for dashboard/API access. If unset, a secure token is auto-generated.
+# Note: Upgrading to v2.3.0+ will regenerate your existing auto-generated token. Check logs!
 export PI_ROTATOR_ADMIN_TOKEN="change-me"
-# Optional: bind the proxy to a safer local-only interface.
 export PI_ROTATOR_BIND_HOST="127.0.0.1"
 # Optional: max accepted proxy request body size in bytes. Default: 26214400 (25 MiB).
 export PI_ROTATOR_MAX_BODY_BYTES=26214400

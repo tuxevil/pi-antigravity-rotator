@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-06-22
+
+### Added
+- **PostgreSQL Storage Layer**: Optional PostgreSQL persistence support via a clean Repository Pattern (`ISettingsRepository`), enabling deployments without local disk writes. (PR [#13](https://github.com/tuxevil/pi-antigravity-rotator/pull/13) by [@josenicomaia](https://github.com/josenicomaia))
+- **Web-based Account Management**: Add, remove, and update accounts and their tier directly from the dashboard UI without manually editing JSON files.
+- **Improved Auth Flow**: Added `/login-cli` endpoint to dramatically simplify the OAuth login callback process.
+
+### Changed
+- **Token Regeneration**: As part of the refactor to the new storage abstraction, upgrading to this version will automatically regenerate the `PI_ROTATOR_ADMIN_TOKEN` on first boot. The new token will be printed to the console output.
+
+
 ## [2.2.2] - 2026-06-21
 
 ### Fixed

@@ -11,7 +11,7 @@
     "start": "tsx src/cli.ts start",
     "login": "tsx src/cli.ts login",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx/esm --test \"test/**/*.test.ts\"",
+    "test": "PI_ROTATOR_DIR=/tmp/pi-rotator-test node --import tsx/esm --test \"test/**/*.test.ts\"",
     "lint": "eslint src test",
     "coverage": "c8 --reporter=text --reporter=html npm test",
     "check": "npm run typecheck && npm test && npm run lint"

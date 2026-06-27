@@ -2,6 +2,7 @@ node_modules/
 dist/
 accounts.json
 state.json
+responses.json
 backups/
 *.bak
 *.log

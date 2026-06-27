@@ -509,17 +509,19 @@ export class AccountRotator {
         // Token refresh or quota fetch failed, skip this account
       }
 
-      // Auto-warmup: send minimal kickstart requests for idle (fresh) pools on accounts that
-      // have opted in via allowFreshWindowStartsOverride, but only if the operator has enabled
-      // the global auto-warmup toggle. Deduplicates by upstream model within this cycle.
+      // Auto-warmup: send minimal kickstart requests for idle pools on accounts that have opted
+      // in via allowFreshWindowStartsOverride, but only if the operator has enabled the global
+      // auto-warmup toggle. "Idle" includes both fresh pools (no active timer) and rolling idle
+      // pools (100% quota with resetTime very close to a full 5h or 7d window — timer exists but
+      // untouched). Deduplicates by upstream model within this cycle.
       if (this.autoWarmupEnabled && account.allowFreshWindowStartsOverride) {
-        const freshPools = account.quota.filter((q) => q.timerType === "fresh");
-        if (freshPools.length > 0) {
+        const idlePools = account.quota.filter((q) => this.isQuotaIdleForKickstart(q));
+        if (idlePools.length > 0) {
           const alreadySent =
             this.warmupSentThisCycle.get(account.config.email) ?? new Set<string>();
           // Build deduplicated upstream model list
           const upstreamToQuotaKey = new Map<string, string>();
-          for (const q of freshPools) {
+          for (const q of idlePools) {
             const upstream = KICKSTART_MODEL_FOR_QUOTA_POOL[q.modelKey] ?? q.modelKey;
             if (!upstreamToQuotaKey.has(upstream)) {
               const primaryKey = QUOTA_POOL_FOR_KICKSTART_MODEL[upstream] ?? q.modelKey;
@@ -737,6 +739,19 @@ export class AccountRotator {
   ): "fresh" | "5h" | "7d" {
     const q = account.quota.find((q) => q.modelKey === modelKey);
     return q?.timerType ?? "fresh";
+  }
+
+  // A pool is "idle for kickstart" when it has a fresh pool (no active timer)
+  // OR a rolling idle timer (100% quota with resetTime very close to a full 5h or 7d
+  // window — the timer exists but the quota is completely untouched). Sending a
+  // minimal kickstart request against an idle pool starts the consumption clock.
+  private isQuotaIdleForKickstart(q: ModelQuota): boolean {
+    if (q.timerType === "fresh") return true;
+    if (!q.resetTime || q.percentRemaining !== 100) return false;
+    const remaining = new Date(q.resetTime).getTime() - Date.now();
+    if (remaining <= 0) return false;
+    const within = (target: number) => Math.abs(remaining - target) < 600_000;
+    return within(5 * 3600 * 1000) || within(7 * 24 * 3600 * 1000);
   }
 
   // Timer priority for a specific model:
@@ -3255,9 +3270,10 @@ export class AccountRotator {
   }
 
   /**
-   * Kickstart all quota pools that are currently idle (timerType === "fresh") for a given
-   * account. Deduplicates by upstream model so that pools sharing the same upstream
-   * (e.g. gemini-3.5-flash and gemini-3.1-pro → gemini-3-flash) only receive one request.
+   * Kickstart all quota pools that are currently idle (no active timer, or rolling
+   * idle with 100% quota and a fresh resetTime) for a given account. Deduplicates by
+   * upstream model so that pools sharing the same upstream (e.g. gemini-3.5-flash and
+   * gemini-3.1-pro → gemini-3-flash) only receive one request.
    */
   async kickstartAllFreshTimers(email: string): Promise<{
     ok: boolean;
@@ -3274,14 +3290,14 @@ export class AccountRotator {
       return { ok: false, error: "account not found", results: [] };
     }
 
-    const freshPools = account.quota.filter((q) => q.timerType === "fresh");
-    if (freshPools.length === 0) {
+    const idlePools = account.quota.filter((q) => this.isQuotaIdleForKickstart(q));
+    if (idlePools.length === 0) {
       return { ok: true, results: [] };
     }
 
     // Deduplicate: group quota pool keys by their upstream model
     const upstreamToQuotaPools = new Map<string, string[]>();
-    for (const q of freshPools) {
+    for (const q of idlePools) {
       const upstream = KICKSTART_MODEL_FOR_QUOTA_POOL[q.modelKey] ?? q.modelKey;
       const list = upstreamToQuotaPools.get(upstream) ?? [];
       list.push(q.modelKey);

@@ -25,9 +25,25 @@ function timerDisplayLabel(timerType) {
   return timerType === "fresh" ? "idle" : timerType;
 }
 
+// A pool is "idle" (worth kickstarting) when either:
+//   1. The server reports timerType === "fresh" (no active timer at all), or
+//   2. Google is showing a "rolling" timer: 100% quota AND remaining time is
+//      very close to a full 5h or 7d window (the timer exists but hasn't been
+//      touched yet — a kickstart request will start consuming from it).
+function isIdleForKickstart(q, now) {
+  if (q.timerType === "fresh") return true;
+  if (!q.resetTime || q.percentRemaining !== 100) return false;
+  var remaining = new Date(q.resetTime).getTime() - now;
+  if (remaining <= 0) return false;
+  var isRolling5h = Math.abs(remaining - 5 * 3600000) < 600000;
+  var isRolling7d = Math.abs(remaining - 7 * 86400000) < 600000;
+  return isRolling5h || isRolling7d;
+}
+
 function renderQuotaBars(account) {
   var quota = account.quota;
   if (!quota || quota.length === 0) return "";
+  var now = Date.now();
   var rows = quota
     .map(function (q) {
       var inFlightForModel = (account.inFlightByModel || {})[q.modelKey] || 0;
@@ -43,36 +59,26 @@ function renderQuotaBars(account) {
           : '<button class="btn-clear-flight" title="No in-flight requests for ' +
             q.displayName +
             '" disabled>Clear</button>';
-      var kickstartBtn =
-        q.timerType === "fresh"
-          ? '<button class="btn-kickstart" title="Send minimal request to start idle timer for ' +
-            escapeHtml(q.displayName) +
-            '" onclick="kickstartTimer(\'' +
-            jsString(account.email) +
-            "', '" +
-            jsString(q.modelKey) +
-            "'\")>\u25b6 Start</button>"
-          : "";
+      var idle = isIdleForKickstart(q, now);
+      var kickstartBtn = idle
+        ? '<button class="btn-kickstart" title="Send minimal request to start idle timer for ' +
+          escapeHtml(q.displayName) +
+          '" onclick="kickstartTimer(\'' +
+          jsString(account.email) +
+          "', '" +
+          jsString(q.modelKey) +
+          "'\")>\u25b6 Start</button>"
+        : "";
       var color = quotaBarColor(q.percentRemaining);
       var timerClass = "timer-" + q.timerType;
       var resetLabel = "";
-      if (q.resetTime && q.timerType !== "fresh") {
+      if (idle && q.resetTime && q.timerType !== "fresh") {
+        // Rolling idle timer already has resetTime set; show "idle" label
+        resetLabel = '<span style="color:var(--text-dim)">idle</span>';
+      } else if (q.resetTime && q.timerType !== "fresh") {
         var remaining = new Date(q.resetTime).getTime() - Date.now();
         if (remaining > 0) {
-          // Detect "Rolling Timers" from Google (unactivated 100% quota)
-          // If quota is 100% and remaining time is very close to exactly 5 hours or 7 days, it's a rolling idle timer
-          var isRolling5h =
-            q.percentRemaining === 100 &&
-            Math.abs(remaining - 5 * 3600000) < 600000; // Within 10 min of 5h
-          var isRolling7d =
-            q.percentRemaining === 100 &&
-            Math.abs(remaining - 7 * 86400000) < 600000; // Within 10 min of 7d
-
-          if (isRolling5h || isRolling7d) {
-            resetLabel = '<span style="color:var(--text-dim)">idle</span>';
-          } else {
-            resetLabel = formatDuration(remaining);
-          }
+          resetLabel = formatDuration(remaining);
         }
       }
       return (
@@ -469,7 +475,7 @@ function renderAccounts(data) {
           : "Allow Fresh On This Account") +
         "</button>" +
         ((a.quota || []).some(function (q) {
-          return q.timerType === "fresh";
+          return isIdleForKickstart(q, Date.now());
         })
           ? '<button class="btn-enable" onclick="kickstartAllTimers(\'' +
             jsString(a.email) +

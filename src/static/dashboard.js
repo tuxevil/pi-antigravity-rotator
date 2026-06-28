@@ -55,7 +55,8 @@ function renderQuotaBars(account) {
             jsString(account.email) +
             "', '" +
             jsString(q.modelKey) +
-            "'\")>Clear</button>"
+            "')\">" +
+            "Clear</button>"
           : '<button class="btn-clear-flight" title="No in-flight requests for ' +
             q.displayName +
             '" disabled>Clear</button>';

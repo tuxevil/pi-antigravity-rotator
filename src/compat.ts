@@ -360,14 +360,20 @@ async function streamCompatSse(
 
   let tailBuffer = "";
   let reqClosed = false;
-  req.once("close", () => {
+  const closeUpstreamForClient = (): void => {
     reqClosed = true;
-  });
+    if (!nodeStream.destroyed) nodeStream.destroy();
+  };
+  const responseEvents = res as {
+    once?: (event: "close", listener: () => void) => unknown;
+    off?: (event: "close", listener: () => void) => unknown;
+  };
+  req.once("close", closeUpstreamForClient);
+  responseEvents.once?.("close", closeUpstreamForClient);
 
   try {
     for await (const chunk of nodeStream) {
       if (reqClosed) {
-        nodeStream.destroy();
         break;
       }
       if (firstByteMs === undefined) firstByteMs = Date.now() - streamStartMs;
@@ -540,9 +546,14 @@ async function streamCompatSse(
       }
     }
   } catch (err) {
-    compatLogger.warn(
-      `Stream read error: ${redactSensitive(String(err)).slice(0, 200)}`,
-    );
+    if (!reqClosed) {
+      compatLogger.warn(
+        `Stream read error: ${redactSensitive(String(err)).slice(0, 200)}`,
+      );
+    }
+  } finally {
+    req.off("close", closeUpstreamForClient);
+    responseEvents.off?.("close", closeUpstreamForClient);
   }
 
   if (!reqClosed && !res.writableEnded) {
@@ -619,9 +630,16 @@ async function streamResponsesSse(
   let reasoningItemId = "";
   let reasoningDone = false;
   let reqClosed = false;
-  req.once("close", () => {
+  const closeUpstreamForClient = (): void => {
     reqClosed = true;
-  });
+    if (!nodeStream.destroyed) nodeStream.destroy();
+  };
+  const responseEvents = res as {
+    once?: (event: "close", listener: () => void) => unknown;
+    off?: (event: "close", listener: () => void) => unknown;
+  };
+  req.once("close", closeUpstreamForClient);
+  responseEvents.once?.("close", closeUpstreamForClient);
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -663,7 +681,6 @@ async function streamResponsesSse(
   try {
     for await (const chunk of nodeStream) {
       if (reqClosed) {
-        nodeStream.destroy();
         break;
       }
       if (firstByteMs === undefined) firstByteMs = Date.now() - streamStartMs;
@@ -858,9 +875,14 @@ async function streamResponsesSse(
       }
     }
   } catch (err) {
-    compatLogger.warn(
-      `Responses stream read error: ${redactSensitive(String(err)).slice(0, 200)}`,
-    );
+    if (!reqClosed) {
+      compatLogger.warn(
+        `Responses stream read error: ${redactSensitive(String(err)).slice(0, 200)}`,
+      );
+    }
+  } finally {
+    req.off("close", closeUpstreamForClient);
+    responseEvents.off?.("close", closeUpstreamForClient);
   }
 
   const completion: CompatCompletion = {

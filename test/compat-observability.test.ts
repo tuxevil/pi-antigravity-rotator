@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import {
   createServer,
+  request as httpRequest,
   type IncomingMessage,
+  type Server,
   type ServerResponse,
 } from "node:http";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, it } from "node:test";
 import {
@@ -13,6 +17,9 @@ import {
   handleOpenAIResponsesCreate,
   resetResponsesStoreForTests,
 } from "../src/compat.js";
+import { startProxy } from "../src/proxy.js";
+import { stopNotificationPoller } from "../src/notification-poller.js";
+import { stopVersionChecker } from "../src/version-check.js";
 import { ANTIGRAVITY_ENDPOINTS, type AccountRuntime } from "../src/types.js";
 import type { AccountRotator } from "../src/rotator.js";
 
@@ -31,6 +38,7 @@ type Tracking = {
   latencies: Array<{ model: string | undefined; ttfbMs: number; totalMs: number }>;
   tokenUsage: Array<{ model: string | undefined; inputTokens: number; outputTokens: number }>;
   recordRequests: number;
+  finishRequests: number;
 };
 
 type ResponseStub = ServerResponse & {
@@ -44,6 +52,8 @@ const originalEndpoints = [...endpointOverrides];
 afterEach(() => {
   endpointOverrides.splice(0, endpointOverrides.length, ...originalEndpoints);
   resetResponsesStoreForTests();
+  stopVersionChecker();
+  stopNotificationPoller();
 });
 
 function createTracking(): Tracking {
@@ -52,6 +62,7 @@ function createTracking(): Tracking {
     latencies: [],
     tokenUsage: [],
     recordRequests: 0,
+    finishRequests: 0,
   };
 }
 
@@ -95,7 +106,9 @@ function createRotatorStub(tracking: Tracking): AccountRotator {
     getActiveAccount: async () => account,
     getRetryAfterMs: () => 0,
     rotateToNext: async () => null,
-    finishRequest: () => {},
+    finishRequest: () => {
+      tracking.finishRequests++;
+    },
     getSafetyJitterMs: () => 0,
     recordUpstreamAttempt: () => {},
     markExhausted: () => {},
@@ -134,6 +147,8 @@ function createRotatorStub(tracking: Tracking): AccountRotator {
     ) => {
       tracking.tokenUsage.push({ model, inputTokens, outputTokens });
     },
+    saveState: () => {},
+    getStatus: () => ({ accounts: [] }),
   } as unknown as AccountRotator;
 }
 
@@ -203,6 +218,98 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
   await new Promise<void>((resolve, reject) =>
     server.close((err) => (err ? reject(err) : resolve())),
   );
+}
+
+async function closeHttpServer(server: Server): Promise<void> {
+  server.closeAllConnections?.();
+  await closeServer(server);
+}
+
+async function startTestProxy(rotator: AccountRotator): Promise<Server> {
+  const server = startProxy(rotator, 0, "127.0.0.1");
+  await once(server, "listening");
+  return server;
+}
+
+async function waitFor(
+  condition: () => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail("condition was not met before timeout");
+}
+
+async function postAndAbortAfterFirstChunk(
+  url: string,
+  payload: unknown,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const req = httpRequest(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": String(Buffer.byteLength(body)),
+        },
+      },
+      (res) => {
+        res.once("data", () => {
+          res.destroy();
+          req.destroy();
+          resolve();
+        });
+      },
+    );
+    req.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "ECONNRESET") return;
+      reject(err);
+    });
+    req.setTimeout(1000, () => {
+      req.destroy();
+      reject(new Error("timed out waiting for first response chunk"));
+    });
+    req.end(body);
+  });
+}
+
+async function assertCompatAbortReleasesInFlight(
+  path: string,
+  payload: unknown,
+): Promise<void> {
+  let upstreamResponse: ServerResponse | undefined;
+  const upstream = await listenServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      upstreamResponse = res;
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.flushHeaders();
+    });
+  });
+  endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
+
+  const tracking = createTracking();
+  const rotator = createRotatorStub(tracking);
+  const proxy = await startTestProxy(rotator);
+  const port = (proxy.address() as AddressInfo).port;
+
+  try {
+    await postAndAbortAfterFirstChunk(
+      `http://127.0.0.1:${port}${path}`,
+      payload,
+    );
+
+    await waitFor(() => tracking.finishRequests === 1);
+  } finally {
+    upstreamResponse?.destroy();
+    await closeHttpServer(proxy);
+    await closeHttpServer(upstream.server);
+  }
 }
 
 function assertCompatObservability(
@@ -359,5 +466,21 @@ describe("compat observability", () => {
     } finally {
       await closeServer(upstream.server);
     }
+  });
+
+  it("releases an in-flight compat chat request when the client disconnects before upstream completes", async () => {
+    await assertCompatAbortReleasesInFlight("/v1/chat/completions", {
+      model: "gemini-3.5-flash",
+      messages: [{ role: "user", content: "hold the stream open" }],
+      stream: true,
+    });
+  });
+
+  it("releases an in-flight Responses request when the client disconnects before upstream completes", async () => {
+    await assertCompatAbortReleasesInFlight("/v1/responses", {
+      model: "gemini-3.5-flash",
+      input: "hold the stream open",
+      stream: true,
+    });
   });
 });

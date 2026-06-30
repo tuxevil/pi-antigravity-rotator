@@ -3,7 +3,13 @@ import { Readable } from "node:stream";
 import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
 import { logger, redactSensitive } from "./logger.js";
 import type { AccountRotator } from "./rotator.js";
-import { withRotation, flattenHeaders, type RequestBody } from "./proxy.js";
+import {
+  withRotation,
+  flattenHeaders,
+  type RequestBody,
+  type RotationAttemptContext,
+  type RotationOutcome,
+} from "./proxy.js";
 import {
   isRecord,
   sanitizeGeminiSchema,
@@ -258,7 +264,42 @@ function summarizeCompatRequest(body: RequestBody): string {
   return `model=${body.model} userAgent=${body.userAgent || "none"} turns=${contents.length} tools=${tools} systemInstruction=${systemInstruction}`;
 }
 
+function recordCompatOutcome(
+  rotator: AccountRotator,
+  body: RequestBody,
+  context: RotationAttemptContext,
+  statusCode: number,
+  completion?: CompatCompletion,
+  totalMs = Date.now() - context.requestStartMs,
+): void {
+  const ttfbMs = completion?.firstByteMs ?? totalMs;
+  rotator.recordLatency(body.displayModel || body.model, ttfbMs, totalMs);
+  rotator.recordRequestLog({
+    model: context.displayModelKey,
+    account: context.label,
+    statusCode,
+    ttfbMs,
+    totalMs,
+    inputTokens: completion?.inputTokens ?? 0,
+    outputTokens: completion?.outputTokens ?? 0,
+  });
+}
 
+function recordCompatFailure(
+  rotator: AccountRotator,
+  body: RequestBody,
+  outcome: RotationOutcome<unknown>,
+): void {
+  if (outcome.ok || !outcome.context) return;
+  recordCompatOutcome(
+    rotator,
+    body,
+    outcome.context,
+    outcome.status,
+    undefined,
+    outcome.totalMs,
+  );
+}
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   try {
@@ -283,6 +324,8 @@ async function streamCompatSse(
   let text = "";
   let inputTokens = 0;
   let outputTokens = 0;
+  const streamStartMs = Date.now();
+  let firstByteMs: number | undefined;
   let responseId: string | undefined;
   let toolCallIndex = 0;
 
@@ -327,6 +370,7 @@ async function streamCompatSse(
         nodeStream.destroy();
         break;
       }
+      if (firstByteMs === undefined) firstByteMs = Date.now() - streamStartMs;
       const str = chunk.toString();
       tailBuffer += str;
       let newlineIdx;
@@ -542,6 +586,7 @@ async function streamCompatSse(
     text,
     inputTokens,
     outputTokens,
+    firstByteMs,
     responseId,
     toolCalls: collectedToolCalls,
   };
@@ -563,6 +608,8 @@ async function streamResponsesSse(
   let thinkingText = "";
   let inputTokens = 0;
   let outputTokens = 0;
+  const streamStartMs = Date.now();
+  let firstByteMs: number | undefined;
   const toolCalls: OpenAIToolCall[] = [];
   let toolCallIndex = 0;
   let nextOutputIndex = 0;
@@ -619,6 +666,7 @@ async function streamResponsesSse(
         nodeStream.destroy();
         break;
       }
+      if (firstByteMs === undefined) firstByteMs = Date.now() - streamStartMs;
       tailBuffer += chunk.toString();
       let newlineIdx;
       while ((newlineIdx = tailBuffer.indexOf("\n")) >= 0) {
@@ -820,6 +868,7 @@ async function streamResponsesSse(
     thinkingText: thinkingText || undefined,
     inputTokens,
     outputTokens,
+    firstByteMs,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
   };
   if (!reqClosed && !res.writableEnded) {
@@ -899,7 +948,7 @@ async function completeResponsesViaRotator(
     body.model,
     flattenHeaders(req.headers),
     body,
-    async (response) => {
+    async (response, context) => {
       const completion = await streamResponsesSse(
         response.body,
         req,
@@ -916,10 +965,12 @@ async function completeResponsesViaRotator(
           completion.outputTokens,
         );
       }
+      recordCompatOutcome(rotator, body, context, response.status, completion);
       return completion;
     },
   );
   if (!outcome.ok) {
+    recordCompatFailure(rotator, body, outcome);
     return {
       completion: { text: "", inputTokens: 0, outputTokens: 0 },
       status: outcome.status,
@@ -949,7 +1000,7 @@ async function completeViaRotator(
     body.model,
     flattenHeaders(req.headers),
     body,
-    async (response) => {
+    async (response, context) => {
       if (streamMode === "none") {
         const raw = await response.text();
         const completion = parseAntigravitySse(raw);
@@ -960,6 +1011,13 @@ async function completeViaRotator(
             completion.outputTokens,
           );
         }
+        recordCompatOutcome(
+          rotator,
+          body,
+          context,
+          response.status,
+          completion,
+        );
         return completion;
       } else {
         const completion = await streamCompatSse(
@@ -976,11 +1034,19 @@ async function completeViaRotator(
             completion.outputTokens,
           );
         }
+        recordCompatOutcome(
+          rotator,
+          body,
+          context,
+          response.status,
+          completion,
+        );
         return completion;
       }
     },
   );
   if (!outcome.ok) {
+    recordCompatFailure(rotator, body, outcome);
     if (outcome.status === 404) {
       compatLogger.warn(
         `Compat upstream 404 endpoint=${outcome.endpoint || "unknown"} ${summarizeCompatRequest(body)} error=${(outcome.errorText || "").slice(0, 300)}`,

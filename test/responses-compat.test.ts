@@ -105,6 +105,8 @@ function createRotatorStub(account: AccountRuntime): AccountRotator {
 		recordRequest: () => false,
 		recordProxyEvent: () => {},
 		getGlobalDelayMs: () => 0,
+		recordLatency: () => {},
+		recordRequestLog: () => {},
 		recordTokenUsage: () => {},
 	} as unknown as AccountRotator;
 }

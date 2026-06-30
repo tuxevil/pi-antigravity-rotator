@@ -63,17 +63,27 @@ function makeAccount(email: string, projectId = "test-project"): AccountRuntime 
 	};
 }
 
-function makeRotator(account: AccountRuntime, tracking: { markExhausted?: number; markFlagged?: number; markError?: number; recordRequest?: number; recordProvider429?: number } = {}): AccountRotator {
+type RotatorTracking = {
+	markExhausted?: number;
+	markFlagged?: number;
+	markError?: number;
+	recordRequest?: number;
+	recordProvider429?: number;
+	finishRequest?: number;
+};
+
+function makeRotator(account: AccountRuntime, tracking: RotatorTracking = {}): AccountRotator {
 	tracking.markExhausted ??= 0;
 	tracking.markFlagged ??= 0;
 	tracking.markError ??= 0;
 	tracking.recordRequest ??= 0;
 	tracking.recordProvider429 ??= 0;
+	tracking.finishRequest ??= 0;
 	return {
 		getActiveAccount: async () => account,
 		getRetryAfterMs: () => 0,
 		rotateToNext: async () => null,
-		finishRequest: () => {},
+		finishRequest: () => { tracking.finishRequest!++; },
 		getSafetyJitterMs: () => 0,
 		recordUpstreamAttempt: () => {},
 		markExhausted: () => { tracking.markExhausted!++; },
@@ -120,7 +130,7 @@ describe("proxy e2e: 200 happy path", () => {
 		});
 		endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
 
-		const tracking = { recordRequest: 0 };
+		const tracking = { recordRequest: 0, finishRequest: 0 };
 		const rotator = makeRotator(makeAccount("ok@example.com"), tracking);
 
 		try {
@@ -141,6 +151,7 @@ describe("proxy e2e: 200 happy path", () => {
 				assert.equal(outcome.endpoint, upstream.url);
 			}
 			assert.equal(tracking.recordRequest, 1, "recordRequest should be called once");
+			assert.equal(tracking.finishRequest, 1, "finishRequest should release the account once");
 			assert.equal(captures.length, 1);
 			assert.match(captures[0].headers.authorization || "", /^Bearer token-ok@example\.com$/);
 			// Body is forwarded verbatim, including our model mapping
@@ -213,7 +224,7 @@ describe("proxy e2e: 429 rate-limited", () => {
 		});
 		endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
 
-		const tracking = { markExhausted: 0, recordProvider429: 0 };
+		const tracking = { markExhausted: 0, recordProvider429: 0, finishRequest: 0 };
 		const rotator = makeRotator(makeAccount("rl@example.com"), tracking);
 
 		try {
@@ -234,6 +245,7 @@ describe("proxy e2e: 429 rate-limited", () => {
 			}
 			assert.equal(tracking.markExhausted, 1);
 			assert.equal(tracking.recordProvider429, 1);
+			assert.equal(tracking.finishRequest, 1, "429 should still release the account once");
 		} finally {
 			await upstream.close();
 		}
@@ -248,7 +260,7 @@ describe("proxy e2e: 429 rate-limited", () => {
 		});
 		endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
 
-		const tracking = { markExhausted: 0, recordProvider429: 0 };
+		const tracking = { markExhausted: 0, recordProvider429: 0, finishRequest: 0 };
 		const rotator = makeRotator(makeAccount("quota@example.com"), tracking);
 
 		try {
@@ -266,6 +278,7 @@ describe("proxy e2e: 429 rate-limited", () => {
 				// RESOURCE_EXHAUSTED gets a fixed 30min cooldown regardless of Retry-After
 				assert.equal(outcome.retryAfterMs, 1_800_000);
 			}
+			assert.equal(tracking.finishRequest, 1, "RESOURCE_EXHAUSTED should release the account once");
 		} finally {
 			await upstream.close();
 		}
@@ -286,13 +299,13 @@ describe("proxy e2e: 401 unauthorized", () => {
 		});
 		endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
 
-		const tracking = { markFlagged: 0 };
+		const tracking = { markFlagged: 0, finishRequest: 0 };
 		const flaggedAccount = makeAccount("bad@example.com");
 		// Make the rotator return null after the 401 to simulate "no replacement"
 		const rotator = {
 			getActiveAccount: async () => flaggedAccount,
 			rotateToNext: async () => null,
-			finishRequest: () => {},
+			finishRequest: () => { tracking.finishRequest++; },
 			getSafetyJitterMs: () => 0,
 			recordUpstreamAttempt: () => {},
 			markExhausted: () => {},
@@ -332,6 +345,7 @@ describe("proxy e2e: 401 unauthorized", () => {
 				assert.ok([429, 503].includes(outcome.status), `expected 429 or 503, got ${outcome.status}`);
 			}
 			assert.equal(tracking.markFlagged, 1, "account should be flagged exactly once");
+			assert.equal(tracking.finishRequest, 1, "401 should release the flagged account once");
 			assert.equal(flags.length, 1, "upstream should be hit exactly once before rotation");
 		} finally {
 			await upstream.close();
@@ -349,11 +363,11 @@ describe("proxy e2e: 403 flagged (infringement)", () => {
 		});
 		endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
 
-		const tracking = { markFlagged: 0 };
+		const tracking = { markFlagged: 0, finishRequest: 0 };
 		const rotator = {
 			getActiveAccount: async () => makeAccount("flag@example.com"),
 			rotateToNext: async () => null,
-			finishRequest: () => {},
+			finishRequest: () => { tracking.finishRequest++; },
 			getSafetyJitterMs: () => 0,
 			recordUpstreamAttempt: () => {},
 			markExhausted: () => {},
@@ -389,6 +403,7 @@ describe("proxy e2e: 403 flagged (infringement)", () => {
 				assert.ok([429, 503].includes(outcome.status));
 			}
 			assert.equal(tracking.markFlagged, 1, "flagged 403 should mark the account");
+			assert.equal(tracking.finishRequest, 1, "flagged 403 should release the account once");
 		} finally {
 			await upstream.close();
 		}
@@ -403,7 +418,7 @@ describe("proxy e2e: 403 non-flagged", () => {
 		});
 		endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
 
-		const tracking = { markFlagged: 0, markError: 0 };
+		const tracking = { markFlagged: 0, markError: 0, finishRequest: 0 };
 		const rotator = makeRotator(makeAccount("forbid@example.com"), tracking);
 
 		try {
@@ -420,6 +435,7 @@ describe("proxy e2e: 403 non-flagged", () => {
 				assert.equal(outcome.status, 403);
 			}
 			assert.equal(tracking.markFlagged, 0, "non-flagging 403 must not mark the account");
+			assert.equal(tracking.finishRequest, 1, "non-flagging 403 should release the account once");
 		} finally {
 			await upstream.close();
 		}
@@ -440,11 +456,11 @@ describe("proxy e2e: 5xx (non-503)", () => {
 		});
 		endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
 
-		const tracking = { markError: 0 };
+		const tracking = { markError: 0, finishRequest: 0 };
 		const rotator = {
 			getActiveAccount: async () => makeAccount("err@example.com"),
 			rotateToNext: async () => null,
-			finishRequest: () => {},
+			finishRequest: () => { tracking.finishRequest++; },
 			getSafetyJitterMs: () => 0,
 			recordUpstreamAttempt: () => {},
 			markExhausted: () => {},
@@ -481,6 +497,7 @@ describe("proxy e2e: 5xx (non-503)", () => {
 				assert.ok([429, 503].includes(outcome.status));
 			}
 			assert.equal(tracking.markError, 1, "500 should call markError");
+			assert.equal(tracking.finishRequest, 1, "5xx should release the account once");
 		} finally {
 			await upstream.close();
 		}

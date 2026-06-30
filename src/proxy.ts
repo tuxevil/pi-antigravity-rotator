@@ -123,6 +123,8 @@ export type RotationOutcome<T> =
       errorText: string;
       retryAfterMs?: number;
       endpoint?: string;
+      context?: RotationAttemptContext;
+      totalMs?: number;
     };
 
 /**
@@ -241,6 +243,266 @@ export async function classifyUpstreamResponse(
 
 function capCooldown(ms: number): number {
   return Math.min(ms, MAX_COOLDOWN_MS);
+}
+
+type UpstreamActionDecision =
+  | { kind: "retry" }
+  | {
+      kind: "fail";
+      status: number;
+      errorText: string;
+      retryAfterMs?: number;
+      endpoint?: string;
+      context: RotationAttemptContext;
+      totalMs: number;
+      actionKind: Exclude<UpstreamAction["kind"], "success">;
+      providerResourceExhausted?: boolean;
+      noReplacementReason?: string;
+    };
+
+type UpstreamFailureDecision = Extract<UpstreamActionDecision, { kind: "fail" }>;
+type UpstreamFailureExtra = Partial<
+  Pick<
+    UpstreamFailureDecision,
+    | "retryAfterMs"
+    | "endpoint"
+    | "providerResourceExhausted"
+    | "noReplacementReason"
+  >
+>;
+
+type UpstreamActionHandlerOptions = {
+  action: Exclude<UpstreamAction, { kind: "success" }>;
+  rotator: AccountRotator;
+  account: AccountRuntime;
+  model: string;
+  modelKey: string;
+  label: string;
+  context: RotationAttemptContext;
+  logRequestEnd: (status: string | number, extra?: string) => void;
+  rotateAndRelease: () => Promise<AccountRuntime | null>;
+  writeLog: (message: string, level?: "info" | "warn" | "error") => void;
+  recordFailureAttempt?: (statusCode: number) => void;
+};
+
+function buildFailureDecision(
+  options: UpstreamActionHandlerOptions,
+  status: number,
+  errorText: string,
+  extra: UpstreamFailureExtra = {},
+): UpstreamFailureDecision {
+  return {
+    kind: "fail",
+    status,
+    errorText,
+    context: options.context,
+    totalMs: Date.now() - options.context.requestStartMs,
+    actionKind: options.action.kind,
+    endpoint: "endpoint" in options.action ? options.action.endpoint : undefined,
+    ...extra,
+  };
+}
+
+function buildNoReplacementDecision(
+  options: UpstreamActionHandlerOptions,
+  reason: string,
+): UpstreamFailureDecision {
+  const retryAfterMs = options.rotator.getRetryAfterMs(options.model);
+  if (retryAfterMs > 0) {
+    return buildFailureDecision(
+      options,
+      429,
+      `All accounts cooling down or model circuit breaker active: ${reason}`,
+      { retryAfterMs, noReplacementReason: reason },
+    );
+  }
+  return buildFailureDecision(
+    options,
+    503,
+    `All accounts exhausted or disabled: ${reason}`,
+    { noReplacementReason: reason },
+  );
+}
+
+async function handleUpstreamAccountAction(
+  options: UpstreamActionHandlerOptions,
+): Promise<UpstreamActionDecision> {
+  const {
+    action,
+    rotator,
+    account,
+    model,
+    modelKey,
+    label,
+    logRequestEnd,
+    rotateAndRelease,
+    writeLog,
+    recordFailureAttempt,
+  } = options;
+
+  if (action.kind === "rate-limited") {
+    writeLog(
+      `[${label}] 429 rate limited${action.providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}, cooldown ${Math.ceil(action.cooldownMs / 1000)}s. Error text: ${action.errorText.slice(0, 300)}`,
+      "warn",
+    );
+    recordFailureAttempt?.(429);
+    rotator.markExhausted(
+      account,
+      model,
+      action.cooldownMs,
+      action.errorText.slice(0, 300),
+    );
+    rotator.recordProvider429(account, model, action.cooldownMs);
+    logRequestEnd(
+      429,
+      `cooldownMs=${action.cooldownMs}${action.providerResourceExhausted ? " resourceExhausted=true" : ""} endpoint=${action.endpoint}`,
+    );
+    return buildFailureDecision(options, 429, action.errorText, {
+      retryAfterMs: action.cooldownMs,
+      providerResourceExhausted: action.providerResourceExhausted,
+    });
+  }
+
+  if (action.kind === "flagged-401") {
+    writeLog(
+      `[${label}] BLOCKED (401): ${action.errorText.slice(0, 200)}`,
+      "error",
+    );
+    const lower401 = action.errorText.toLowerCase();
+    const matched401 = FLAG_PATTERNS.filter((p) => lower401.includes(p));
+    const ctx401 = rotator.getFlagContext(account, modelKey);
+    reportFlagEvent({
+      flagHttpStatus: 401,
+      flagPatternsMatched:
+        matched401.length > 0 ? matched401 : ["blocked_401" as FlagPattern],
+      model: modelKey,
+      timerType: ctx401.timerType as FlagEventData["timerType"],
+      accountQuotaPercent: ctx401.accountQuotaPercent,
+      wasProAccount: ctx401.wasProAccount,
+      accountTotalRequests: account.totalRequests,
+      accountRequestsLastHour: ctx401.accountRequestsLastHour,
+      accountConcurrentAtFlag: account.inFlightRequests,
+      poolSize: ctx401.poolSize,
+      poolHealthyCount: ctx401.poolHealthyCount,
+      protectivePauseTriggered: false,
+      uptimeSeconds: ctx401.uptimeSeconds,
+      timeSinceLastFlagSeconds: -1,
+    });
+    rotator.markFlagged(
+      account,
+      `Account blocked (401): ${action.errorText.slice(0, 300)}`,
+    );
+    logRequestEnd(401, `endpoint=${action.endpoint}`);
+    const nextAccount = await rotateAndRelease();
+    if (!nextAccount) {
+      return buildNoReplacementDecision(
+        options,
+        `no replacement account remained after ${label} was flagged with 401`,
+      );
+    }
+    return { kind: "retry" };
+  }
+
+  if (action.kind === "flagged-403") {
+    writeLog(`[${label}] FLAGGED: ${action.errorText.slice(0, 200)}`, "error");
+    recordFailureAttempt?.(403);
+    logRequestEnd(403, `endpoint=${action.endpoint}`);
+    const lower = action.errorText.toLowerCase();
+    const matchedPatterns = FLAG_PATTERNS.filter((p) => lower.includes(p));
+    const ctx403 = rotator.getFlagContext(account, modelKey);
+    reportFlagEvent({
+      flagHttpStatus: 403,
+      flagPatternsMatched: matchedPatterns,
+      model: modelKey,
+      timerType: ctx403.timerType as FlagEventData["timerType"],
+      accountQuotaPercent: ctx403.accountQuotaPercent,
+      wasProAccount: ctx403.wasProAccount,
+      accountTotalRequests: account.totalRequests,
+      accountRequestsLastHour: ctx403.accountRequestsLastHour,
+      accountConcurrentAtFlag: account.inFlightRequests,
+      poolSize: ctx403.poolSize,
+      poolHealthyCount: ctx403.poolHealthyCount,
+      protectivePauseTriggered: false,
+      uptimeSeconds: ctx403.uptimeSeconds,
+      timeSinceLastFlagSeconds: -1,
+    });
+    rotator.markFlagged(account, action.errorText.slice(0, 300));
+    const nextAccount = await rotateAndRelease();
+    if (!nextAccount) {
+      return buildNoReplacementDecision(
+        options,
+        `no replacement account remained after ${label} was flagged with 403`,
+      );
+    }
+    return { kind: "retry" };
+  }
+
+  if (action.kind === "forbidden") {
+    writeLog(`[${label}] 403: ${action.errorText.slice(0, 200)}`, "warn");
+    logRequestEnd(403, `endpoint=${action.endpoint}`);
+    return buildFailureDecision(options, 403, action.errorText);
+  }
+
+  if (action.kind === "not-found") {
+    writeLog(
+      `[${label}] 404 from ${action.endpoint}: ${action.errorText.slice(0, 200)}`,
+      "warn",
+    );
+    logRequestEnd(404, `endpoint=${action.endpoint}`);
+    return buildFailureDecision(options, 404, action.errorText);
+  }
+
+  if (action.kind === "bad-request") {
+    writeLog(
+      `[${label}] 400 Bad Request from ${action.endpoint}: ${action.errorText.slice(0, 500)}`,
+      "warn",
+    );
+    logRequestEnd(400, `endpoint=${action.endpoint}`);
+    return buildFailureDecision(options, 400, action.errorText);
+  }
+
+  if (action.kind === "server-error-503") {
+    writeLog(
+      `[${label}] Server error 503: ${action.errorText.slice(0, 200)}`,
+      "warn",
+    );
+    recordFailureAttempt?.(503);
+    logRequestEnd(503, `endpoint=${action.endpoint}`);
+    return buildFailureDecision(options, 503, action.errorText);
+  }
+
+  writeLog(
+    `[${label}] Server error ${action.httpStatus}: ${action.errorText.slice(0, 200)}`,
+    "warn",
+  );
+  recordFailureAttempt?.(action.httpStatus);
+  logRequestEnd(action.httpStatus, `endpoint=${action.endpoint}`);
+  rotator.markError(
+    account,
+    `${action.httpStatus}: ${action.errorText.slice(0, 200)}`,
+  );
+  const nextAccount = await rotateAndRelease();
+  if (!nextAccount) {
+    return buildNoReplacementDecision(
+      options,
+      `no replacement account remained after ${label} failed with ${action.httpStatus}`,
+    );
+  }
+  return { kind: "retry" };
+}
+
+function failureDecisionToOutcome<T>(
+  decision: UpstreamFailureDecision,
+): RotationOutcome<T> {
+  return {
+    ok: false,
+    status: decision.status,
+    errorText: decision.errorText,
+    retryAfterMs: decision.retryAfterMs,
+    endpoint: decision.endpoint,
+    context: decision.context,
+    totalMs: decision.totalMs,
+  };
 }
 
 function formatError(err: unknown): string {
@@ -657,21 +919,29 @@ export async function withRotation<T>(
     context: RotationAttemptContext,
   ) => Promise<T>,
 ): Promise<RotationOutcome<T>> {
-  const sendNoAccountsAvailable = (reason: string): RotationOutcome<T> => {
+  const sendNoAccountsAvailable = (
+    reason: string,
+    context?: RotationAttemptContext,
+  ): RotationOutcome<T> => {
     log(`[${model}] No healthy account available: ${reason}`, rotator, "warn");
     const retryAfterMs = rotator.getRetryAfterMs(model);
+    const contextFields = context
+      ? { context, totalMs: Date.now() - context.requestStartMs }
+      : {};
     if (retryAfterMs > 0) {
       return {
         ok: false,
         status: 429,
         errorText: `All accounts cooling down or model circuit breaker active: ${reason}`,
         retryAfterMs,
+        ...contextFields,
       };
     }
     return {
       ok: false,
       status: 503,
       errorText: `All accounts exhausted or disabled: ${reason}`,
+      ...contextFields,
     };
   };
 
@@ -757,186 +1027,21 @@ export async function withRotation<T>(
         modelKey,
       );
 
-      if (action.kind === "rate-limited") {
-        log(
-          `[${label}] 429 rate limited${action.providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}, cooldown ${Math.ceil(action.cooldownMs / 1000)}s. Error text: ${action.errorText.slice(0, 300)}`,
+      if (action.kind !== "success") {
+        const decision = await handleUpstreamAccountAction({
+          action,
           rotator,
-          "warn",
-        );
-        rotator.markExhausted(
           account,
           model,
-          action.cooldownMs,
-          action.errorText.slice(0, 300),
-        );
-        rotator.recordProvider429(account, model, action.cooldownMs);
-        logRequestEnd(
-          429,
-          `cooldownMs=${action.cooldownMs}${action.providerResourceExhausted ? " resourceExhausted=true" : ""}`,
-        );
-        return {
-          ok: false,
-          status: 429,
-          errorText: action.errorText,
-          retryAfterMs: action.cooldownMs,
-          endpoint,
-        };
-      }
-
-      if (action.kind === "flagged-401") {
-        log(
-          `[${label}] BLOCKED (401): ${action.errorText.slice(0, 200)}`,
-          rotator,
-          "error",
-        );
-        const lower401 = action.errorText.toLowerCase();
-        const matched401 = FLAG_PATTERNS.filter((p) => lower401.includes(p));
-        const ctx401 = rotator.getFlagContext(account, modelKey);
-        reportFlagEvent({
-          flagHttpStatus: 401,
-          flagPatternsMatched:
-            matched401.length > 0 ? matched401 : ["blocked_401" as FlagPattern],
-          model: modelKey,
-          timerType: ctx401.timerType as FlagEventData["timerType"],
-          accountQuotaPercent: ctx401.accountQuotaPercent,
-          wasProAccount: ctx401.wasProAccount,
-          accountTotalRequests: account.totalRequests,
-          accountRequestsLastHour: ctx401.accountRequestsLastHour,
-          accountConcurrentAtFlag: account.inFlightRequests,
-          poolSize: ctx401.poolSize,
-          poolHealthyCount: ctx401.poolHealthyCount,
-          protectivePauseTriggered: false,
-          uptimeSeconds: ctx401.uptimeSeconds,
-          timeSinceLastFlagSeconds: -1,
+          modelKey,
+          label,
+          context,
+          logRequestEnd,
+          rotateAndRelease,
+          writeLog: (message, level = "info") => log(message, rotator, level),
         });
-        rotator.markFlagged(
-          account,
-          `Account blocked (401): ${action.errorText.slice(0, 300)}`,
-        );
-        logRequestEnd(401);
-        const nextAccount = await rotateAndRelease();
-        if (!nextAccount) {
-          return sendNoAccountsAvailable(
-            `no replacement account remained after ${label} was flagged with 401`,
-          );
-        }
-        continue;
-      }
-
-      if (action.kind === "flagged-403") {
-        log(
-          `[${label}] FLAGGED: ${action.errorText.slice(0, 200)}`,
-          rotator,
-          "error",
-        );
-        const lower = action.errorText.toLowerCase();
-        const matchedPatterns = FLAG_PATTERNS.filter((p) => lower.includes(p));
-        const ctx403 = rotator.getFlagContext(account, modelKey);
-        reportFlagEvent({
-          flagHttpStatus: 403,
-          flagPatternsMatched: matchedPatterns,
-          model: modelKey,
-          timerType: ctx403.timerType as FlagEventData["timerType"],
-          accountQuotaPercent: ctx403.accountQuotaPercent,
-          wasProAccount: ctx403.wasProAccount,
-          accountTotalRequests: account.totalRequests,
-          accountRequestsLastHour: ctx403.accountRequestsLastHour,
-          accountConcurrentAtFlag: account.inFlightRequests,
-          poolSize: ctx403.poolSize,
-          poolHealthyCount: ctx403.poolHealthyCount,
-          protectivePauseTriggered: false,
-          uptimeSeconds: ctx403.uptimeSeconds,
-          timeSinceLastFlagSeconds: -1,
-        });
-        rotator.markFlagged(account, action.errorText.slice(0, 300));
-        logRequestEnd(403);
-        const nextAccount = await rotateAndRelease();
-        if (!nextAccount) {
-          return sendNoAccountsAvailable(
-            `no replacement account remained after ${label} was flagged with 403`,
-          );
-        }
-        continue;
-      }
-
-      if (action.kind === "forbidden") {
-        log(
-          `[${label}] 403: ${action.errorText.slice(0, 200)}`,
-          rotator,
-          "warn",
-        );
-        logRequestEnd(403);
-        return {
-          ok: false,
-          status: 403,
-          errorText: action.errorText,
-          endpoint,
-        };
-      }
-
-      if (action.kind === "not-found") {
-        log(
-          `[${label}] 404 from ${action.endpoint}: ${action.errorText.slice(0, 200)}`,
-          rotator,
-          "warn",
-        );
-        logRequestEnd(404, `endpoint=${action.endpoint}`);
-        return {
-          ok: false,
-          status: 404,
-          errorText: action.errorText,
-          endpoint,
-        };
-      }
-
-      if (action.kind === "bad-request") {
-        log(
-          `[${label}] 400 Bad Request from ${action.endpoint}: ${action.errorText.slice(0, 500)}`,
-          rotator,
-          "warn",
-        );
-        logRequestEnd(400, `endpoint=${action.endpoint}`);
-        return {
-          ok: false,
-          status: 400,
-          errorText: action.errorText,
-          endpoint,
-        };
-      }
-
-      if (action.kind === "server-error-503") {
-        log(
-          `[${label}] Server error 503: ${action.errorText.slice(0, 200)}`,
-          rotator,
-          "warn",
-        );
-        logRequestEnd(503, `endpoint=${action.endpoint}`);
-        return {
-          ok: false,
-          status: 503,
-          errorText: action.errorText,
-          endpoint,
-        };
-      }
-
-      if (action.kind === "rotate-on-5xx") {
-        log(
-          `[${label}] Server error ${action.httpStatus}: ${action.errorText.slice(0, 200)}`,
-          rotator,
-          "warn",
-        );
-        logRequestEnd(action.httpStatus, `endpoint=${action.endpoint}`);
-        rotator.markError(
-          account,
-          `${action.httpStatus}: ${action.errorText.slice(0, 200)}`,
-        );
-        const nextAccount = await rotateAndRelease();
-        if (!nextAccount) {
-          return sendNoAccountsAvailable(
-            `no replacement account remained after ${label} failed with ${action.httpStatus}`,
-          );
-        }
-        continue;
+        if (decision.kind === "retry") continue;
+        return failureDecisionToOutcome(decision);
       }
 
       // success
@@ -1082,6 +1187,69 @@ async function handleProxyRequest(
     }
     return nextAccount;
   };
+  const sendFailureDecision = (decision: UpstreamFailureDecision): void => {
+    if (decision.noReplacementReason) {
+      sendNoAccountsAvailable(decision.noReplacementReason);
+      return;
+    }
+
+    const label = decision.context.label;
+    if (decision.actionKind === "rate-limited") {
+      const retryAfterMs = decision.retryAfterMs ?? 0;
+      res.writeHead(429, {
+        "Content-Type": "application/json",
+        "Retry-After": String(Math.ceil(retryAfterMs / 1000)),
+      });
+      res.end(
+        JSON.stringify({
+          error: decision.providerResourceExhausted
+            ? "Resource exhausted"
+            : "Rate limited",
+          reason: decision.providerResourceExhausted
+            ? `${label} hit provider RESOURCE_EXHAUSTED; not retrying another account to avoid pool-wide hammering`
+            : `${label} was rate limited; not retrying another account for account-safety`,
+          model: body.model,
+          account: label,
+          retryAfterMs,
+        }),
+      );
+      return;
+    }
+
+    if (decision.actionKind === "forbidden") {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(decision.errorText || JSON.stringify({ error: "Forbidden" }));
+      return;
+    }
+
+    if (decision.actionKind === "not-found") {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(decision.errorText || JSON.stringify({ error: "Not found" }));
+      return;
+    }
+
+    if (decision.actionKind === "bad-request") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(decision.errorText || JSON.stringify({ error: "Bad request" }));
+      return;
+    }
+
+    if (decision.actionKind === "server-error-503") {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(
+        decision.errorText ||
+          JSON.stringify({
+            error: "Server unavailable",
+            account: label,
+            model: body.model,
+          }),
+      );
+      return;
+    }
+
+    res.writeHead(decision.status, { "Content-Type": "application/json" });
+    res.end(decision.errorText || JSON.stringify({ error: "Upstream error" }));
+  };
 
   for (let attempt = 0; attempt < MAX_ENDPOINT_RETRIES; attempt++) {
     const account = await rotator.getActiveAccount(body.model);
@@ -1157,195 +1325,32 @@ async function handleProxyRequest(
         modelKey,
       );
 
-      if (action.kind === "rate-limited") {
-        proxyLog(
-          `[${label}] 429 rate limited${action.providerResourceExhausted ? " (RESOURCE_EXHAUSTED)" : ""}, cooldown ${Math.ceil(action.cooldownMs / 1000)}s. Error text: ${action.errorText.slice(0, 300)}`,
-          "warn",
-        );
-        recordOutcome(429);
-        logRequestEnd(
-          429,
-          `cooldownMs=${action.cooldownMs}${action.providerResourceExhausted ? " resourceExhausted=true" : ""} endpoint=${endpoint}`,
-        );
-        rotator.markExhausted(account, body.model, action.cooldownMs);
-        rotator.recordProvider429(account, body.model, action.cooldownMs);
-
-        // Safety first: do NOT immediately retry another account on 429.
-        // Provider-side 429s can represent daily/request buckets or shared project pressure;
-        // cascading retries burn the full pool and increase ban/flag risk.
-        res.writeHead(429, {
-          "Content-Type": "application/json",
-          "Retry-After": String(Math.ceil(action.cooldownMs / 1000)),
-        });
-        res.end(
-          JSON.stringify({
-            error: action.providerResourceExhausted
-              ? "Resource exhausted"
-              : "Rate limited",
-            reason: action.providerResourceExhausted
-              ? `${label} hit provider RESOURCE_EXHAUSTED; not retrying another account to avoid pool-wide hammering`
-              : `${label} was rate limited; not retrying another account for account-safety`,
-            model: body.model,
-            account: label,
-            retryAfterMs: action.cooldownMs,
-          }),
-        );
-        return;
-      }
-
-      if (action.kind === "flagged-401") {
-        proxyLog(
-          `[${label}] BLOCKED (401): ${action.errorText.slice(0, 200)}`,
-          "error",
-        );
-
-        // Telemetry: report flag event BEFORE markFlagged (which may trigger protective pause)
-        const lower401 = action.errorText.toLowerCase();
-        const matched401 = FLAG_PATTERNS.filter((p) => lower401.includes(p));
-        const ctx401 = rotator.getFlagContext(account, modelKey);
-        reportFlagEvent({
-          flagHttpStatus: 401,
-          flagPatternsMatched:
-            matched401.length > 0 ? matched401 : ["blocked_401" as FlagPattern],
-          model: modelKey,
-          timerType: ctx401.timerType as FlagEventData["timerType"],
-          accountQuotaPercent: ctx401.accountQuotaPercent,
-          wasProAccount: ctx401.wasProAccount,
-          accountTotalRequests: account.totalRequests,
-          accountRequestsLastHour: ctx401.accountRequestsLastHour,
-          accountConcurrentAtFlag: account.inFlightRequests,
-          poolSize: ctx401.poolSize,
-          poolHealthyCount: ctx401.poolHealthyCount,
-          protectivePauseTriggered: false, // not yet — markFlagged decides
-          uptimeSeconds: ctx401.uptimeSeconds,
-          timeSinceLastFlagSeconds: -1, // filled by reporter
-        });
-
-        rotator.markFlagged(
+      if (action.kind !== "success") {
+        const context: RotationAttemptContext = {
           account,
-          `Account blocked (401): ${action.errorText.slice(0, 300)}`,
-        );
-        logRequestEnd(401, `endpoint=${endpoint}`);
-        const nextAccount = await rotateAndRelease();
-        if (!nextAccount) {
-          sendNoAccountsAvailable(
-            `no replacement account remained after ${label} was flagged with 401`,
-          );
-          return;
-        }
-        continue;
-      }
-
-      if (action.kind === "flagged-403") {
-        proxyLog(
-          `[${label}] FLAGGED: ${action.errorText.slice(0, 200)}`,
-          "error",
-        );
-        recordOutcome(403);
-        logRequestEnd(403, `endpoint=${endpoint}`);
-
-        const matchedPatterns = FLAG_PATTERNS.filter((p) =>
-          action.errorText.toLowerCase().includes(p),
-        );
-        const ctx403 = rotator.getFlagContext(account, modelKey);
-        reportFlagEvent({
-          flagHttpStatus: 403,
-          flagPatternsMatched: matchedPatterns,
-          model: modelKey,
-          timerType: ctx403.timerType as FlagEventData["timerType"],
-          accountQuotaPercent: ctx403.accountQuotaPercent,
-          wasProAccount: ctx403.wasProAccount,
-          accountTotalRequests: account.totalRequests,
-          accountRequestsLastHour: ctx403.accountRequestsLastHour,
-          accountConcurrentAtFlag: account.inFlightRequests,
-          poolSize: ctx403.poolSize,
-          poolHealthyCount: ctx403.poolHealthyCount,
-          protectivePauseTriggered: false, // not yet
-          uptimeSeconds: ctx403.uptimeSeconds,
-          timeSinceLastFlagSeconds: -1, // filled by reporter
-        });
-
-        rotator.markFlagged(account, action.errorText.slice(0, 300));
-        const nextAccount = await rotateAndRelease();
-        if (!nextAccount) {
-          sendNoAccountsAvailable(
-            `no replacement account remained after ${label} was flagged with 403`,
-          );
-          return;
-        }
-        continue;
-      }
-
-      if (action.kind === "forbidden") {
-        proxyLog(`[${label}] 403: ${action.errorText.slice(0, 200)}`, "warn");
-        logRequestEnd(403, `endpoint=${action.endpoint}`);
-        res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(action.errorText || JSON.stringify({ error: "Forbidden" }));
-        return;
-      }
-
-      if (action.kind === "not-found") {
-        proxyLog(
-          `[${label}] 404 from ${action.endpoint}: ${action.errorText.slice(0, 200)}`,
-          "warn",
-        );
-        logRequestEnd(404, `endpoint=${action.endpoint}`);
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(action.errorText || JSON.stringify({ error: "Not found" }));
-        return;
-      }
-
-      if (action.kind === "bad-request") {
-        proxyLog(
-          `[${label}] 400 Bad Request from ${action.endpoint}: ${action.errorText.slice(0, 500)}`,
-          "warn",
-        );
-        logRequestEnd(400, `endpoint=${action.endpoint}`);
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(action.errorText || JSON.stringify({ error: "Bad request" }));
-        return;
-      }
-
-      if (action.kind === "server-error-503") {
-        proxyLog(
-          `[${label}] Server error 503: ${action.errorText.slice(0, 200)}`,
-          "warn",
-        );
-        recordOutcome(503);
-        logRequestEnd(503, `endpoint=${action.endpoint}`);
-        // Return 503 as-is. Capacity errors still consume quota upstream,
-        // so retrying on another account would just burn more quota for nothing.
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(
-          action.errorText ||
-            JSON.stringify({
-              error: "Server unavailable",
-              account: label,
-              model: body.model,
-            }),
-        );
-        return;
-      }
-
-      if (action.kind === "rotate-on-5xx") {
-        proxyLog(
-          `[${label}] Server error ${action.httpStatus}: ${action.errorText.slice(0, 200)}`,
-          "warn",
-        );
-        recordOutcome(action.httpStatus);
-        logRequestEnd(action.httpStatus, `endpoint=${action.endpoint}`);
-        rotator.markError(
+          label,
+          modelKey,
+          displayModelKey,
+          requestId,
+          requestStartMs,
+          endpoint,
+        };
+        const decision = await handleUpstreamAccountAction({
+          action,
+          rotator,
           account,
-          `${action.httpStatus}: ${action.errorText.slice(0, 200)}`,
-        );
-        const nextAccount = await rotateAndRelease();
-        if (!nextAccount) {
-          sendNoAccountsAvailable(
-            `no replacement account remained after ${label} failed with ${action.httpStatus}`,
-          );
-          return;
-        }
-        continue;
+          model: body.model,
+          modelKey,
+          label,
+          context,
+          logRequestEnd,
+          rotateAndRelease,
+          writeLog: proxyLog,
+          recordFailureAttempt: recordOutcome,
+        });
+        if (decision.kind === "retry") continue;
+        sendFailureDecision(decision);
+        return;
       }
 
       // Success or non-error client response

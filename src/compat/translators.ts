@@ -145,6 +145,7 @@ export interface CompatCompletion {
   thinkingText?: string; // Gemini thought blocks (thought: true), emitted as reasoning_content
   inputTokens: number;
   outputTokens: number;
+  firstByteMs?: number;
   responseId?: string;
   toolCalls?: OpenAIToolCall[];
 }

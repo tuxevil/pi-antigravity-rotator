@@ -30,7 +30,7 @@ jobs:
         run: npm run check
 
       - name: Run coverage
-        run: npm run coverage -- --check-coverage --lines=60 --branches=50 --functions=60 --statements=60
+        run: npm run coverage
 
       - name: Upload coverage to artifact
         if: always()

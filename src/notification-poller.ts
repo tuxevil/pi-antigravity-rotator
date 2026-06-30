@@ -48,6 +48,7 @@ function getVersion(): string {
 
 // ── Cached notifications ─────────────────────────────────────────────
 let _notifications: AdminNotification[] = [];
+let _initialPollTimer: ReturnType<typeof setTimeout> | null = null;
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
@@ -100,18 +101,26 @@ export function startNotificationPoller(): void {
 	}
 
 	// Initial delayed fetch
-	setTimeout(() => {
-		void fetchNotifications();
-	}, 15_000);
+	if (!_initialPollTimer) {
+		_initialPollTimer = setTimeout(() => {
+			_initialPollTimer = null;
+			void fetchNotifications();
+		}, 15_000);
+		if (_initialPollTimer.unref) {
+			_initialPollTimer.unref();
+		}
+	}
 
 	// Periodic poll
-	_pollTimer = setInterval(() => {
-		void fetchNotifications();
-	}, POLL_INTERVAL_MS);
+	if (!_pollTimer) {
+		_pollTimer = setInterval(() => {
+			void fetchNotifications();
+		}, POLL_INTERVAL_MS);
 
-	// Don't prevent process exit
-	if (_pollTimer.unref) {
-		_pollTimer.unref();
+		// Don't prevent process exit
+		if (_pollTimer.unref) {
+			_pollTimer.unref();
+		}
 	}
 }
 
@@ -119,6 +128,10 @@ export function startNotificationPoller(): void {
  * Stop notification polling.
  */
 export function stopNotificationPoller(): void {
+	if (_initialPollTimer) {
+		clearTimeout(_initialPollTimer);
+		_initialPollTimer = null;
+	}
 	if (_pollTimer) {
 		clearInterval(_pollTimer);
 		_pollTimer = null;

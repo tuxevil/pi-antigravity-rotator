@@ -150,14 +150,6 @@ export interface ModelSpecConfig {
   isThinking: boolean;
 }
 
-// Per-model thinking/output spec used by the compat layer.
-// Operators can override defaults via the `modelSpecs` field in accounts.json.
-export interface ModelSpecConfig {
-  maxOutputTokens: number;
-  thinkingBudget: number; // -1 = adaptive (model decides), >=0 = fixed
-  isThinking: boolean;
-}
-
 // Per-model quota info for an account
 export interface ModelQuota {
   modelKey: string;

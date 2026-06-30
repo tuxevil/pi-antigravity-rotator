@@ -3,6 +3,7 @@
 import {
   createServer,
   type IncomingMessage,
+  type Server,
   type ServerResponse,
 } from "node:http";
 import { Readable } from "node:stream";
@@ -1456,7 +1457,7 @@ export function startProxy(
   rotator: AccountRotator,
   port: number,
   bindHost = "0.0.0.0",
-): void {
+): Server {
   startVersionChecker();
   startNotificationPoller();
   const sseClients = new Set<ServerResponse>();
@@ -1541,7 +1542,6 @@ export function startProxy(
     }
 
     if (method === "GET" && pathname === "/auth/antigravity/callback") {
-      if (!requireAdmin(req, res)) return;
       handleHostedCallback(req, res, rotator).catch((err) => {
         log(`Hosted callback error: ${err}`, rotator, "error");
         if (!res.headersSent) {
@@ -1624,46 +1624,46 @@ export function startProxy(
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/enable/")) {
+    if (method === "POST" && pathname.startsWith("/api/enable/")) {
       if (!requireAdmin(req, res)) return;
-      const email = decodeURIComponent(url.slice("/api/enable/".length));
+      const email = decodeURIComponent(pathname.slice("/api/enable/".length));
       serveEnableApi(res, rotator, email);
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/disable/")) {
+    if (method === "POST" && pathname.startsWith("/api/disable/")) {
       if (!requireAdmin(req, res)) return;
-      const email = decodeURIComponent(url.slice("/api/disable/".length));
+      const email = decodeURIComponent(pathname.slice("/api/disable/".length));
       serveDisableApi(res, rotator, email);
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/quarantine/")) {
+    if (method === "POST" && pathname.startsWith("/api/quarantine/")) {
       if (!requireAdmin(req, res)) return;
-      const email = decodeURIComponent(url.slice("/api/quarantine/".length));
+      const email = decodeURIComponent(pathname.slice("/api/quarantine/".length));
       serveQuarantineApi(res, rotator, email);
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/restore/")) {
+    if (method === "POST" && pathname.startsWith("/api/restore/")) {
       if (!requireAdmin(req, res)) return;
-      const email = decodeURIComponent(url.slice("/api/restore/".length));
+      const email = decodeURIComponent(pathname.slice("/api/restore/".length));
       serveRestoreApi(res, rotator, email);
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/remove-account/")) {
+    if (method === "POST" && pathname.startsWith("/api/remove-account/")) {
       if (!requireAdmin(req, res)) return;
       const email = decodeURIComponent(
-        url.slice("/api/remove-account/".length),
+        pathname.slice("/api/remove-account/".length),
       );
       serveRemoveAccountApi(res, rotator, email);
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/set-tier/")) {
+    if (method === "POST" && pathname.startsWith("/api/set-tier/")) {
       if (!requireAdmin(req, res)) return;
-      const rest = url.slice("/api/set-tier/".length);
+      const rest = pathname.slice("/api/set-tier/".length);
       const lastSlash = rest.lastIndexOf("/");
       if (lastSlash < 0) {
         res.writeHead(400, { "Content-Type": "application/json" });
@@ -1681,9 +1681,9 @@ export function startProxy(
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/clear-inflight/")) {
+    if (method === "POST" && pathname.startsWith("/api/clear-inflight/")) {
       if (!requireAdmin(req, res)) return;
-      const rest = url.slice("/api/clear-inflight/".length);
+      const rest = pathname.slice("/api/clear-inflight/".length);
       const firstSlash = rest.indexOf("/");
       const email = decodeURIComponent(
         firstSlash >= 0 ? rest.slice(0, firstSlash) : rest,
@@ -1696,9 +1696,9 @@ export function startProxy(
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/clear-breaker/")) {
+    if (method === "POST" && pathname.startsWith("/api/clear-breaker/")) {
       if (!requireAdmin(req, res)) return;
-      const rest = url.slice("/api/clear-breaker/".length);
+      const rest = pathname.slice("/api/clear-breaker/".length);
       const modelKey =
         rest && rest !== "all" ? decodeURIComponent(rest) : undefined;
       serveClearBreakerApi(res, rotator, modelKey);
@@ -1707,22 +1707,22 @@ export function startProxy(
 
     if (
       method === "POST" &&
-      (url === "/api/settings/fresh-window-starts/on" ||
-        url === "/api/settings/fresh-window-starts/off")
+      (pathname === "/api/settings/fresh-window-starts/on" ||
+        pathname === "/api/settings/fresh-window-starts/off")
     ) {
       if (!requireAdmin(req, res)) return;
       trackFeature("freshWindowToggle");
-      serveFreshWindowStartsApi(res, rotator, url.endsWith("/on"));
+      serveFreshWindowStartsApi(res, rotator, pathname.endsWith("/on"));
       return;
     }
 
     if (
       method === "POST" &&
-      url.startsWith("/api/account-fresh-window-starts/") &&
-      (url.endsWith("/on") || url.endsWith("/off"))
+      pathname.startsWith("/api/account-fresh-window-starts/") &&
+      (pathname.endsWith("/on") || pathname.endsWith("/off"))
     ) {
       if (!requireAdmin(req, res)) return;
-      const rest = url.slice("/api/account-fresh-window-starts/".length);
+      const rest = pathname.slice("/api/account-fresh-window-starts/".length);
       const lastSlash = rest.lastIndexOf("/");
       const email = decodeURIComponent(rest.slice(0, lastSlash));
       const enabled = rest.slice(lastSlash + 1) === "on";
@@ -1730,9 +1730,9 @@ export function startProxy(
       return;
     }
 
-    if (method === "POST" && url.startsWith("/api/kickstart/")) {
+    if (method === "POST" && pathname.startsWith("/api/kickstart/")) {
       if (!requireAdmin(req, res)) return;
-      const rest = url.slice("/api/kickstart/".length);
+      const rest = pathname.slice("/api/kickstart/".length);
       const firstSlash = rest.indexOf("/");
       if (firstSlash >= 0) {
         // /api/kickstart/:email/:modelKey
@@ -1749,11 +1749,11 @@ export function startProxy(
 
     if (
       method === "POST" &&
-      (url === "/api/settings/auto-warmup/on" ||
-        url === "/api/settings/auto-warmup/off")
+      (pathname === "/api/settings/auto-warmup/on" ||
+        pathname === "/api/settings/auto-warmup/off")
     ) {
       if (!requireAdmin(req, res)) return;
-      serveAutoWarmupApi(res, rotator, url.endsWith("/on"));
+      serveAutoWarmupApi(res, rotator, pathname.endsWith("/on"));
       return;
     }
 
@@ -1898,4 +1898,5 @@ export function startProxy(
     log(`Dashboard: http://localhost:${port}/dashboard`, rotator);
     log(`Hosted login: http://localhost:${port}/login`, rotator);
   });
+  return server;
 }

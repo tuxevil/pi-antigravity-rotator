@@ -143,6 +143,56 @@ describe("v2 routing and status", () => {
     );
   });
 
+  it("accepts plus as a first-class account tier", () => {
+    const rotator = new AccountRotator(makeConfig());
+    rotator.stopQuotaPolling();
+    const changed = rotator.setAccountTier("a@example.com", "plus");
+    assert.equal(changed, true);
+    assert.equal(rotator.getConfig().accounts[0].tier, "plus");
+    assert.equal(rotator.getStatus().accounts[0].tier, "plus");
+  });
+
+  it("debounces model assignment state writes on the request path", () => {
+    const rotator = new AccountRotator(makeConfig()) as any;
+    rotator.stopQuotaPolling();
+    rotator.modelState.set("gemini-3.1-pro", {
+      activeAccountIndex: 0,
+      quotaAtRotationStart: -1,
+      requestsOnActiveAccount: 0,
+    });
+    let saves = 0;
+    rotator.saveState = () => {
+      saves++;
+    };
+
+    rotator.countModelAssignment("gemini-3.1-pro");
+    assert.equal(
+      rotator.modelState.get("gemini-3.1-pro").requestsOnActiveAccount,
+      1,
+    );
+    assert.equal(saves, 0);
+
+    rotator.flushPendingStateSaveSync();
+    assert.equal(saves, 1);
+  });
+
+  it("debounces upstream-attempt state writes on the request path", () => {
+    const rotator = new AccountRotator(makeConfig()) as any;
+    rotator.stopQuotaPolling();
+    let saves = 0;
+    rotator.saveState = () => {
+      saves++;
+    };
+
+    rotator.recordUpstreamAttempt(rotator.accounts[0]);
+    assert.equal(rotator.accounts[0].dailyRequestCount, 1);
+    assert.equal(rotator.projectRequests.pa, 1);
+    assert.equal(saves, 0);
+
+    rotator.flushPendingStateSaveSync();
+    assert.equal(saves, 1);
+  });
+
   it("marks positive-quota accounts as exhausted once local daily safety budget is spent", () => {
     const rotator = new AccountRotator(makeConfig()) as any;
     rotator.stopQuotaPolling();

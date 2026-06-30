@@ -23,6 +23,12 @@ describe("validators", () => {
 		assert.equal(result.value?.email, validAccount.email);
 	});
 
+	it("accepts plus as a valid account tier", () => {
+		const result = validateAccountConfig({ ...validAccount, tier: "plus" });
+		assert.equal(result.ok, true);
+		assert.equal(result.value?.tier, "plus");
+	});
+
 	it("rejects invalid account config", () => {
 		const result = validateAccountConfig({ email: "", refreshToken: 123 });
 		assert.equal(result.ok, false);

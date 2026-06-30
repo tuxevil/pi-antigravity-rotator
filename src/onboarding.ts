@@ -203,6 +203,7 @@ export function startHostedLogin(
 interface CliLoginSession {
   verifier: string;
   challenge: string;
+  oauthState: string;
   authUrl: string;
   createdAt: number;
 }
@@ -221,11 +222,13 @@ function pruneCliSessions(): void {
 export function serveCliLogin(res: ServerResponse): void {
   pruneCliSessions();
   const { verifier, challenge } = generatePkce();
-  const authUrl = buildAuthUrl(verifier, challenge);
+  const oauthState = generateState();
+  const authUrl = buildAuthUrl(oauthState, challenge);
   const sessionId = generateState();
   cliLoginSessions.set(sessionId, {
     verifier,
     challenge,
+    oauthState,
     authUrl,
     createdAt: Date.now(),
   });
@@ -348,9 +351,11 @@ export async function handleCliLoginApi(
 
   // Parse the redirect URL to extract code
   let code: string | undefined;
+  let state: string | null;
   try {
     const url = new URL(redirectUrl.trim());
     code = url.searchParams.get("code") ?? undefined;
+    state = url.searchParams.get("state");
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(
@@ -369,6 +374,16 @@ export async function handleCliLoginApi(
       JSON.stringify({
         ok: false,
         error: "No authorization code found in the URL.",
+      }),
+    );
+    return;
+  }
+  if (state !== session.oauthState) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: "State mismatch - reload the login page and try again.",
       }),
     );
     return;

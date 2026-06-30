@@ -172,12 +172,12 @@ describe("admin token generation and persistence", () => {
     setPersistedAdminToken(null);
   });
 
-  it("OAuth callback authorization mirrors the rest of the admin surface", () => {
-    // No token: callback is open (legacy behaviour).
+  it("admin auth helper behavior remains explicit for callback-shaped URLs", () => {
+    // Route-level callback handling can intentionally bypass this helper, but
+    // the low-level helper should still be path-agnostic.
     setPersistedAdminToken(null);
     assert.equal(isAdminAuthorized(req("/auth/antigravity/callback")), true);
 
-    // With a token: callback requires the header.
     setPersistedAdminToken("secret-callback");
     assert.equal(isAdminAuthorized(req("/auth/antigravity/callback")), false);
     assert.equal(

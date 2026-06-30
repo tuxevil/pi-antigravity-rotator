@@ -35,14 +35,39 @@ switch (command) {
     break;
   }
   case "status": {
+    const { initDb, closeDb } = await import("./db-store.js");
+    const {
+      getConfiguredAdminToken,
+      readPersistedAdminToken,
+      setPersistedAdminToken,
+    } = await import("./admin-auth.js");
     try {
+      await initDb();
+      setPersistedAdminToken(readPersistedAdminToken());
+      const token = getConfiguredAdminToken();
       const port = 51200;
-      const res = await fetch(`http://localhost:${port}/api/status`);
+      const res = await fetch(`http://localhost:${port}/api/status`, {
+        headers: token ? { "X-Rotator-Admin-Token": token } : {},
+      });
+      if (res.status === 401) {
+        console.error(
+          "Rotator status is protected and the local admin token was rejected.",
+        );
+        process.exitCode = 1;
+        break;
+      }
+      if (!res.ok) {
+        console.error(`Rotator status returned HTTP ${res.status}`);
+        process.exitCode = 1;
+        break;
+      }
       const data = await res.json();
       console.log(JSON.stringify(data, null, 2));
     } catch {
       console.error("Rotator is not running or unreachable on port 51200");
-      process.exit(1);
+      process.exitCode = 1;
+    } finally {
+      await closeDb();
     }
     break;
   }

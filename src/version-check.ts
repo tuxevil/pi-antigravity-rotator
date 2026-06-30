@@ -26,6 +26,7 @@ let cachedInfo: UpdateInfo = {
 	updateAvailable: false,
 	checkedAt: 0,
 };
+let initialCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let checkTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
@@ -123,18 +124,26 @@ export function getUpdateInfo(): UpdateInfo {
  */
 export function startVersionChecker(): void {
 	// Initial delayed check
-	setTimeout(() => {
-		void checkForUpdate();
-	}, 10_000);
+	if (!initialCheckTimer) {
+		initialCheckTimer = setTimeout(() => {
+			initialCheckTimer = null;
+			void checkForUpdate();
+		}, 10_000);
+		if (initialCheckTimer.unref) {
+			initialCheckTimer.unref();
+		}
+	}
 
 	// Periodic check
-	checkTimer = setInterval(() => {
-		void checkForUpdate();
-	}, CHECK_INTERVAL_MS);
+	if (!checkTimer) {
+		checkTimer = setInterval(() => {
+			void checkForUpdate();
+		}, CHECK_INTERVAL_MS);
 
-	// Don't keep process alive just for version checking
-	if (checkTimer.unref) {
-		checkTimer.unref();
+		// Don't keep process alive just for version checking
+		if (checkTimer.unref) {
+			checkTimer.unref();
+		}
 	}
 }
 
@@ -142,6 +151,10 @@ export function startVersionChecker(): void {
  * Stop periodic version checking.
  */
 export function stopVersionChecker(): void {
+	if (initialCheckTimer) {
+		clearTimeout(initialCheckTimer);
+		initialCheckTimer = null;
+	}
 	if (checkTimer) {
 		clearInterval(checkTimer);
 		checkTimer = null;

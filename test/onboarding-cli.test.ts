@@ -42,6 +42,18 @@ function mockReqRaw(raw: string): any {
 
 const dummyRotator = {} as any;
 
+function extractSessionId(html: string): string {
+	const sessionMatch = html.match(/name="session" value="([^"]+)"/);
+	assert.ok(sessionMatch, "session hidden input not found in HTML");
+	return sessionMatch[1];
+}
+
+function extractAuthUrl(html: string): string {
+	const authMatch = html.match(/<a class="cta" href="([^"]+)"/);
+	assert.ok(authMatch, "OAuth CTA link not found in HTML");
+	return authMatch[1];
+}
+
 describe("serveCliLogin", () => {
 	it("serves a complete HTML document", () => {
 		const { res, state } = mockRes();
@@ -73,6 +85,16 @@ describe("serveCliLogin", () => {
 		serveCliLogin(res);
 		// The CTA link should contain an href pointing to the OAuth URL
 		assert.match(state.body, /<a class="cta" href="[^"]+"/);
+	});
+
+	it("uses independent values for the browser session and OAuth state", () => {
+		const { res, state } = mockRes();
+		serveCliLogin(res);
+		const sessionId = extractSessionId(state.body);
+		const authUrl = extractAuthUrl(state.body);
+		const oauthState = new URL(authUrl).searchParams.get("state");
+		assert.ok(oauthState);
+		assert.notEqual(oauthState, sessionId);
 	});
 
 	it("includes a textarea for pasting the redirect URL", () => {
@@ -130,9 +152,7 @@ describe("handleCliLoginApi", () => {
 		// First, create a real session via serveCliLogin
 		const { res: loginRes, state: loginState } = mockRes();
 		serveCliLogin(loginRes);
-		const sessionMatch = loginState.body.match(/name="session" value="([^"]+)"/);
-		assert.ok(sessionMatch, "session hidden input not found in HTML");
-		const sessionId = sessionMatch[1];
+		const sessionId = extractSessionId(loginState.body);
 
 		// Use a URL with no code parameter
 		const req = mockReq({
@@ -151,9 +171,7 @@ describe("handleCliLoginApi", () => {
 		// Create a valid session first
 		const { res: loginRes, state: loginState } = mockRes();
 		serveCliLogin(loginRes);
-		const sessionMatch = loginState.body.match(/name="session" value="([^"]+)"/);
-		assert.ok(sessionMatch);
-		const sessionId = sessionMatch[1];
+		const sessionId = extractSessionId(loginState.body);
 
 		const req = mockReq({
 			session: sessionId,
@@ -165,5 +183,23 @@ describe("handleCliLoginApi", () => {
 		const parsed = JSON.parse(state.body);
 		assert.equal(parsed.ok, false);
 		assert.match(parsed.error, /Could not parse the URL/);
+	});
+
+	it("returns 400 when the redirect URL has the wrong OAuth state", async () => {
+		const { res: loginRes, state: loginState } = mockRes();
+		serveCliLogin(loginRes);
+		const sessionId = extractSessionId(loginState.body);
+
+		const req = mockReq({
+			session: sessionId,
+			redirectUrl:
+				"http://localhost:51121/oauth-callback?code=abc&state=wrong-state",
+		});
+		const { res, state } = mockRes();
+		await handleCliLoginApi(req, res, dummyRotator);
+		assert.equal(state.statusCode, 400);
+		const parsed = JSON.parse(state.body);
+		assert.equal(parsed.ok, false);
+		assert.match(parsed.error, /State mismatch/);
 	});
 });

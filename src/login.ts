@@ -6,7 +6,7 @@
 
 import { createInterface } from "node:readline";
 import { addAccountToConfig, ensurePiAuthConfig, ensurePiModelsConfig, loadOrCreateAccountsConfig } from "./account-store.js";
-import { buildAuthUrl, discoverProject, exchangeAuthorizationCode, generatePkce, getOAuthClientConfig, getUserEmail } from "./oauth.js";
+import { buildAuthUrl, discoverProject, exchangeAuthorizationCode, generatePkce, generateState, getOAuthClientConfig, getUserEmail } from "./oauth.js";
 import type { AccountConfig } from "./types.js";
 import { getAccountsPath } from "./paths.js";
 
@@ -42,7 +42,8 @@ export async function runLogin(): Promise<void> {
 
 	const oauth = getOAuthClientConfig();
 	const { verifier, challenge } = generatePkce();
-	const authUrl = buildAuthUrl(verifier, challenge);
+	const state = generateState();
+	const authUrl = buildAuthUrl(state, challenge);
 
 	console.log("1. Open this URL in your browser:");
 	console.log();
@@ -66,7 +67,7 @@ export async function runLogin(): Promise<void> {
 		process.exit(1);
 	}
 
-	if (parsed.state && parsed.state !== verifier) {
+	if (parsed.state !== state) {
 		console.error("State mismatch - the URL does not match this login session.");
 		process.exit(1);
 	}

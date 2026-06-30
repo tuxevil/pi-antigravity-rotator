@@ -370,6 +370,10 @@ function renderAccounts(data) {
         "FREE</div>" +
         '<div class="tier-option" onclick="setAccountTier(\'' +
         jsString(a.email) +
+        "', 'plus')\">" +
+        "PLUS</div>" +
+        '<div class="tier-option" onclick="setAccountTier(\'' +
+        jsString(a.email) +
         "', 'pro')\">" +
         "PRO</div>" +
         '<div class="tier-option" onclick="setAccountTier(\'' +

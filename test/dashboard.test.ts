@@ -55,6 +55,12 @@ describe("dashboard", () => {
     assert.match(js, /function toggleMask\(\)/);
   });
 
+  it("includes a plus tier option in account controls", () => {
+    const js = readDashboardJs();
+    assert.match(js, /'plus'/);
+    assert.match(js, /PLUS<\/div>/);
+  });
+
   it("includes the v2 config editor controls", () => {
     const html = renderDashboard();
     const js = readDashboardJs();

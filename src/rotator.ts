@@ -876,7 +876,7 @@ export class AccountRotator {
     const state = this.modelState.get(modelKey);
     if (state) {
       state.requestsOnActiveAccount++;
-      this.saveState();
+      this.scheduleStateSave();
     }
   }
 
@@ -2165,7 +2165,7 @@ export class AccountRotator {
     account.dailyRequestCount++;
     this.projectRequests[account.config.projectId] =
       (this.projectRequests[account.config.projectId] ?? 0) + 1;
-    this.saveState();
+    this.scheduleStateSave();
   }
 
   getSafetyJitterMs(account: AccountRuntime): number {
@@ -2905,7 +2905,7 @@ export class AccountRotator {
   }
 
   setAccountTier(email: string, tier: string): boolean {
-    const validTiers = ["unknown", "free", "pro", "ultra"];
+    const validTiers = ["unknown", "free", "plus", "pro", "ultra"];
     if (!validTiers.includes(tier)) return false;
     const account = this.accounts.find((a) => a.config.email === email);
     if (!account) return false;

@@ -68,6 +68,7 @@ To donate a quota-enabled account safely:
 - **Safer 429 handling** -- On provider `429`, stops the current request and avoids cascade-burning sibling accounts
 - **Concurrency guardrails** -- Limits each account to one in-flight request by default to avoid bursty pressure
 - **Operator fresh-window controls** -- You can block new `fresh` window starts globally, then selectively allow specific accounts to override that policy
+- **Auto-Warmup & Kickstart** -- Automatically detects idle quota pools (100% quota with a full reset time) and sends a minimal request to kickstart the 5h/7d window
 - **Protective pause** -- Pauses all routing for several hours after serious ToS/abuse-style flags so the rest of the pool is not burned
 - **Token auto-refresh** -- Tokens are refreshed automatically before expiry; no manual management
 - **Endpoint cascade** -- Tries daily, autopush, and prod API endpoints for resilience

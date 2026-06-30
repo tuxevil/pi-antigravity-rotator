@@ -4,6 +4,17 @@
 
 ## [2.3.1] - 2026-06-30
 
+
+### Added
+- **Manual & Auto-Warmup (Kickstart) Timers**: Added ability to kickstart idle/fresh timers. A minimal request (`maxOutputTokens=1`) is sent to the cheapest model in the pool to start the 5h/7d reset window.
+- **Auto-Warmup Toggle**: Global operator toggle to automatically warm up idle pools during the quota polling cycle.
+- **Admin Endpoints**: Added `POST /api/kickstart/:email`, `POST /api/kickstart/:email/:modelKey`, and `POST /api/settings/auto-warmup/on|off`.
+- **Dashboard UI**: Added "Start Idle Timers" button on account cards when idle pools are detected, and a global "Enable/Disable Auto-Warmup" button in operator controls. Added telemetry cost estimates for `gemini-3.5-flash`.
+
+### Fixed
+- Included rolling idle pools (100% quota with a fresh resetTime) as valid kickstart targets.
+- Isolated tests from the production config directory (`PI_ROTATOR_DIR=/tmp/pi-rotator-test`) to prevent config corruption during `npm test`.
+
 ### Improved
 - **Accurate Quota Forecast**: Replaced the simple arithmetic average of pool quota with a weighted calculation based on each account's Tier capacity (Ultra/Pro/Plus/Free). The Dashboard's time remaining and percentage estimates are now mathematically accurate for mixed-tier deployments. (PR [#14](https://github.com/tuxevil/pi-antigravity-rotator/pull/14) by [@josenicomaia](https://github.com/josenicomaia))
 

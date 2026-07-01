@@ -253,6 +253,66 @@ describe("responses compat", () => {
 		}
 	});
 
+	it("preserves final assistant text when a Responses continuation has no new input", async () => {
+		const captures: Capture[] = [];
+		const upstream = await listenServer((req, res) => {
+			let body = "";
+			req.on("data", (chunk) => { body += chunk.toString(); });
+			req.on("end", () => {
+				captures.push({ url: req.url || "", headers: req.headers, body });
+				res.writeHead(200, { "Content-Type": "text/event-stream" });
+				if (captures.length === 1) {
+					res.end('data: {"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"exec_command","args":{"cmd":"write HANDOFF.md"}}}]}}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}}\n\n');
+					return;
+				}
+				if (captures.length === 2) {
+					res.end('data: {"response":{"candidates":[{"content":{"parts":[{"text":"HANDOFF.md escrito correctamente."}]}}],"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":1}}}\n\n');
+					return;
+				}
+				res.end('data: {"response":{"candidates":[{"content":{"parts":[{"text":"done"}]}}]}}\n\n');
+			});
+		});
+		endpointOverrides.splice(0, endpointOverrides.length, upstream.url);
+
+		try {
+			const rotator = createRotatorStub(createAccount());
+			const firstReq = requestStream("POST", "/v1/responses", {
+				model: "claude-sonnet-4-6",
+				input: "write the handoff",
+				tools: [{ type: "function", function: { name: "exec_command" } }],
+			});
+			const firstRes = responseStub();
+			await handleOpenAIResponsesCreate(firstReq, firstRes, rotator);
+			const firstPayload = JSON.parse(firstRes.body) as { id: string; output: Array<{ call_id: string }> };
+			const callId = firstPayload.output[0].call_id;
+
+			const secondReq = requestStream("POST", "/v1/responses", {
+				model: "claude-sonnet-4-6",
+				previous_response_id: firstPayload.id,
+				input: [{ type: "function_call_output", call_id: callId, output: "HANDOFF.md escrito." }],
+			});
+			const secondRes = responseStub();
+			await handleOpenAIResponsesCreate(secondReq, secondRes, rotator);
+			const secondPayload = JSON.parse(secondRes.body) as { id: string };
+
+			const thirdReq = requestStream("POST", "/v1/responses", {
+				model: "claude-sonnet-4-6",
+				previous_response_id: secondPayload.id,
+			});
+			const thirdRes = responseStub();
+			await handleOpenAIResponsesCreate(thirdReq, thirdRes, rotator);
+
+			const thirdBody = JSON.parse(captures[2].body) as {
+				request: { contents: Array<{ role: string; parts: unknown[] }> };
+			};
+			assert.match(captures[2].body, /HANDOFF\.md escrito correctamente/);
+			assert.equal(thirdBody.request.contents.at(-1)?.role, "user");
+			assert.doesNotMatch(captures[2].body, /"functionResponse"[^}]*"write HANDOFF\.md"/);
+		} finally {
+			await closeServer(upstream.server);
+		}
+	});
+
 	it("does not retain responses when store is false", async () => {
 		const upstream = await listenServer((req, res) => {
 			req.resume();

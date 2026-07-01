@@ -413,7 +413,8 @@ describe("compat adapters", () => {
 
 		const contents = (body.request as { contents: Array<{ role: string }> }).contents;
 		assert.notEqual(contents.at(-1)?.role, "model");
-		assert.doesNotMatch(JSON.stringify(body.request), /Pi is/);
+		assert.match(JSON.stringify(body.request), /Pi is/);
+		assert.match(JSON.stringify(body.request), /Continue from the previous assistant message/);
 	});
 
 	it("does not send Claude assistant prefill for trailing dangling tool calls", () => {

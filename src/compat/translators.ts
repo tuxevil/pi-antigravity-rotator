@@ -1016,7 +1016,23 @@ export function openAIToAntigravityBody(
 
   if (isClaude) {
     while (contents.at(-1)?.role === "model") {
-      contents.pop();
+      const lastContent = contents.at(-1);
+      const hasFunctionCall =
+        lastContent?.parts.some((p: any) => isRecord(p) && p.functionCall) ??
+        false;
+      if (hasFunctionCall) {
+        contents.pop();
+        continue;
+      }
+      contents.push({
+        role: "user",
+        parts: [
+          {
+            text: "Continue from the previous assistant message. Do not repeat completed tool calls unless new user input asks for them.",
+          },
+        ],
+      });
+      break;
     }
   }
 

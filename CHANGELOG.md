@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-07-05
+
+### Fixed
+- **Assistant History**: Preserve final Responses assistant history.
+- **Claude Formatting**: Prevent Claude assistant prefill payloads and fix orphan Claude tool results to comply with API formatting constraints.
+- **Resource Leaks**: Release compat streams on client disconnect to prevent memory leaks.
+- **Security Audit**: Addressed audit hardening findings and fixed audit issues around OAuth and admin routes.
+
+
 ## [2.3.1] - 2026-06-30
 
 

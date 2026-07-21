@@ -73,9 +73,9 @@ export function warnIfUsingFallbackOAuthCreds(env: NodeJS.ProcessEnv = process.e
 	if (missing.length === 0) return false;
 	if (warnedAboutFallback) return true;
 	warnedAboutFallback = true;
-	oauthLogger.log("warn",
-		`OAuth client credentials are not configured (missing env: ${missing.join(", ")}). ` +
-		`Set ${missing.join(" and ")} to your own registered OAuth client before using login.`,
+	oauthLogger.log(
+		"warn",
+		"OAuth client credentials are not configured. Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET to your own registered OAuth client before using login.",
 	);
 	return true;
 }

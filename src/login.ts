@@ -6,7 +6,7 @@
 
 import { createInterface } from "node:readline";
 import { addAccountToConfig, ensurePiAuthConfig, ensurePiModelsConfig, loadOrCreateAccountsConfig } from "./account-store.js";
-import { buildAuthUrl, discoverProject, exchangeAuthorizationCode, generatePkce, generateState, getOAuthClientConfig, getUserEmail } from "./oauth.js";
+import { buildAuthUrl, discoverProject, exchangeAuthorizationCode, generatePkce, generateState, getUserEmail } from "./oauth.js";
 import type { AccountConfig } from "./types.js";
 import { getAccountsPath } from "./paths.js";
 
@@ -40,7 +40,6 @@ export async function runLogin(): Promise<void> {
 	console.log("=== Pi Antigravity Rotator - Add Account ===");
 	console.log();
 
-	const oauth = getOAuthClientConfig();
 	const { verifier, challenge } = generatePkce();
 	const state = generateState();
 	const authUrl = buildAuthUrl(state, challenge);
@@ -50,7 +49,7 @@ export async function runLogin(): Promise<void> {
 	console.log(authUrl);
 	console.log();
 	console.log("2. Complete the Google sign-in.");
-	console.log(`3. Copy the FULL URL from your browser after it redirects to ${oauth.redirectUri}.`);
+	console.log("3. Copy the FULL URL from your browser after it redirects to the configured callback.");
 	console.log();
 
 	const redirectUrl = await askQuestion("Paste the redirect URL: ");

@@ -1394,10 +1394,10 @@ export async function handleOpenAIResponsesCreate(
   let converted: ResponsesConversionResult;
   try {
     converted = convertResponsesToChatRequest(validation.value);
-  } catch (err) {
+  } catch {
     return writeJson(res, 400, {
       error: {
-        message: err instanceof Error ? err.message : String(err),
+        message: "Invalid responses request",
         type: "invalid_request_error",
       },
     });

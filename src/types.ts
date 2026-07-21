@@ -83,6 +83,10 @@ export interface Config {
   modelAliases?: Record<string, string>;
 }
 
+export const DEFAULT_QUOTA_POLL_INTERVAL_MS = 300_000;
+export const MIN_QUOTA_POLL_INTERVAL_MS = 60_000;
+export const MAX_QUOTA_POLL_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 // ── Default model-id aliases ─────────────────────────────────────────
 // Translates operator-facing model names to Antigravity upstream names.
 // When the provider adds a new model, this is the only place that needs

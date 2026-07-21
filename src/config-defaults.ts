@@ -1,4 +1,21 @@
-import type { Config } from "./types.js";
+import {
+	DEFAULT_QUOTA_POLL_INTERVAL_MS,
+	MAX_QUOTA_POLL_INTERVAL_MS,
+	MIN_QUOTA_POLL_INTERVAL_MS,
+	type Config,
+} from "./types.js";
+
+function safeQuotaPollIntervalMs(value: number | undefined): number {
+	if (
+		value === undefined ||
+		!Number.isFinite(value) ||
+		value < MIN_QUOTA_POLL_INTERVAL_MS ||
+		value > MAX_QUOTA_POLL_INTERVAL_MS
+	) {
+		return DEFAULT_QUOTA_POLL_INTERVAL_MS;
+	}
+	return Math.floor(value);
+}
 
 export function applyConfigDefaults(config: Config): Config {
 	return {
@@ -7,7 +24,7 @@ export function applyConfigDefaults(config: Config): Config {
 		routingPolicy: config.routingPolicy || "timer-first",
 		requestsPerRotation: config.requestsPerRotation || 5,
 		rotateOnQuotaDrop: config.rotateOnQuotaDrop ?? 20,
-		quotaPollIntervalMs: config.quotaPollIntervalMs || 300000,
+		quotaPollIntervalMs: safeQuotaPollIntervalMs(config.quotaPollIntervalMs),
 		maxConcurrentRequestsPerAccount: config.maxConcurrentRequestsPerAccount ?? 1,
 		maxConcurrentRequestsPerProjectModel: config.maxConcurrentRequestsPerProjectModel ?? 1,
 		projectCircuitBreaker429Threshold: config.projectCircuitBreaker429Threshold ?? 3,
@@ -40,7 +57,7 @@ export function getDefaultConfig(): Config {
 		accounts: [],
 		requestsPerRotation: 5,
 		rotateOnQuotaDrop: 20,
-		quotaPollIntervalMs: 300000,
+		quotaPollIntervalMs: DEFAULT_QUOTA_POLL_INTERVAL_MS,
 		maxConcurrentRequestsPerAccount: 1,
 		maxConcurrentRequestsPerProjectModel: 1,
 		projectCircuitBreaker429Threshold: 3,

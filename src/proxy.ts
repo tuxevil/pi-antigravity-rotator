@@ -1090,6 +1090,19 @@ function log(
   rotator?.recordProxyEvent(msg, level);
 }
 
+function isGeminiGenerateContentPath(pathname: string): boolean {
+  const prefix = "/v1beta/models/";
+  if (!pathname.startsWith(prefix)) return false;
+
+  const separator = pathname.lastIndexOf(":");
+  if (separator <= prefix.length || separator === pathname.length - 1) {
+    return false;
+  }
+
+  const operation = pathname.slice(separator + 1);
+  return operation === "generateContent" || operation === "streamGenerateContent";
+}
+
 /**
  * Handle a proxied API request.
  */
@@ -1771,9 +1784,14 @@ export function startProxy(
           "Content-Type": "application/json",
         });
         res.end(JSON.stringify(result));
-      } catch (err) {
+      } catch {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, message: String(err) }));
+        res.end(
+          JSON.stringify({
+            ok: false,
+            message: "Self-update failed. Check the server logs and try again.",
+          }),
+        );
       }
       return;
     }
@@ -1858,12 +1876,7 @@ export function startProxy(
       return;
     }
 
-    if (
-      method === "POST" &&
-      /\/v1beta\/models\/.+:(generateContent|streamGenerateContent)$/.test(
-        pathname,
-      )
-    ) {
+    if (method === "POST" && isGeminiGenerateContentPath(pathname)) {
       handleGeminiGenerateContent(req, res, rotator).catch((err) => {
         log(`Gemini compat error: ${err}`, rotator, "error");
         if (!res.headersSent)

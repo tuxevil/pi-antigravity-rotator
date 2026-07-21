@@ -1,4 +1,9 @@
-import type { AccountConfig, Config } from "./types.js";
+import {
+	MAX_QUOTA_POLL_INTERVAL_MS,
+	MIN_QUOTA_POLL_INTERVAL_MS,
+	type AccountConfig,
+	type Config,
+} from "./types.js";
 
 export interface ValidationResult<T> {
 	ok: boolean;
@@ -67,7 +72,9 @@ export function validateConfig(value: unknown): ValidationResult<Config> {
 	}
 	if (value.requestsPerRotation !== undefined && !isPositiveNumber(value.requestsPerRotation)) errors.push("config.requestsPerRotation must be a positive number");
 	if (value.rotateOnQuotaDrop !== undefined && !isNonNegativeNumber(value.rotateOnQuotaDrop)) errors.push("config.rotateOnQuotaDrop must be a non-negative number");
-	if (value.quotaPollIntervalMs !== undefined && !isPositiveNumber(value.quotaPollIntervalMs)) errors.push("config.quotaPollIntervalMs must be a positive number");
+	if (value.quotaPollIntervalMs !== undefined && (!isPositiveNumber(value.quotaPollIntervalMs) || value.quotaPollIntervalMs < MIN_QUOTA_POLL_INTERVAL_MS || value.quotaPollIntervalMs > MAX_QUOTA_POLL_INTERVAL_MS)) {
+		errors.push(`config.quotaPollIntervalMs must be between ${MIN_QUOTA_POLL_INTERVAL_MS} and ${MAX_QUOTA_POLL_INTERVAL_MS} ms`);
+	}
 	if (value.proSlots !== undefined && !isPositiveNumber(value.proSlots)) errors.push("config.proSlots must be a positive number");
 	if (value.maxConcurrentRequestsPerAccount !== undefined && !isPositiveNumber(value.maxConcurrentRequestsPerAccount)) errors.push("config.maxConcurrentRequestsPerAccount must be a positive number");
 	if (value.maxConcurrentRequestsPerProjectModel !== undefined && !isPositiveNumber(value.maxConcurrentRequestsPerProjectModel)) errors.push("config.maxConcurrentRequestsPerProjectModel must be a positive number");

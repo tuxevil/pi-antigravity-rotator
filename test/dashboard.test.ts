@@ -100,11 +100,7 @@ describe("dashboard", () => {
       "/api/self-update",
     ];
     for (const endpoint of endpoints) {
-      assert.match(
-        js,
-        new RegExp(endpoint.replace(/\//g, "\\/")),
-        `missing endpoint: ${endpoint}`,
-      );
+      assert.ok(js.includes(endpoint), `missing endpoint: ${endpoint}`);
     }
   });
 

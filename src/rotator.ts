@@ -25,6 +25,9 @@ import {
   REQUEST_CLIENT_METADATA,
   ANTIGRAVITY_ENDPOINTS,
   QUOTA_MODEL_KEYS,
+  DEFAULT_QUOTA_POLL_INTERVAL_MS,
+  MAX_QUOTA_POLL_INTERVAL_MS,
+  MIN_QUOTA_POLL_INTERVAL_MS,
   resolveQuotaModelKey,
   resolveDisplayModelKey,
 } from "./types.js";
@@ -481,7 +484,13 @@ export class AccountRotator {
   // =========================================================================
 
   private startQuotaPolling(): void {
-    const intervalMs = this.config.quotaPollIntervalMs || 300_000;
+    const configuredIntervalMs = this.config.quotaPollIntervalMs;
+    const intervalMs =
+      Number.isFinite(configuredIntervalMs) &&
+      configuredIntervalMs >= MIN_QUOTA_POLL_INTERVAL_MS &&
+      configuredIntervalMs <= MAX_QUOTA_POLL_INTERVAL_MS
+        ? Math.floor(configuredIntervalMs)
+        : DEFAULT_QUOTA_POLL_INTERVAL_MS;
     this.log(`Quota polling every ${Math.round(intervalMs / 1000)}s`);
 
     // Initial poll (delayed 2s to allow token refresh first)

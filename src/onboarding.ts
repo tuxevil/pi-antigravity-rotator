@@ -453,12 +453,12 @@ export async function handleCliLoginApi(
         projectId: project.projectId,
       }),
     );
-  } catch (err) {
+  } catch {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: "Unable to complete login. Please try again.",
       }),
     );
   }

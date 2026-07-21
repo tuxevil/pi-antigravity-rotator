@@ -57,6 +57,17 @@ describe("validators", () => {
 		assert.equal(result.ok, true);
 	});
 
+	it("rejects quota polling intervals outside the safe bounds", () => {
+		for (const interval of [1, 86_400_000 + 1]) {
+			const result = validateConfig({
+				accounts: [],
+				quotaPollIntervalMs: interval,
+			});
+			assert.equal(result.ok, false);
+			assert.match(formatValidationErrors(result.errors), /quotaPollIntervalMs/);
+		}
+	});
+
 	it("rejects malformed config", () => {
 		const result = validateConfig({
 			proxyPort: -1,

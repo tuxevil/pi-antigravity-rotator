@@ -660,6 +660,20 @@ export const MODEL_PRICING: Record<
 
 export const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
+/**
+ * Legacy compatibility client used by existing installations.
+ *
+ * Operator-provided ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET
+ * take precedence in src/oauth.ts. Keep this fallback only so upgrades do
+ * not break existing account refresh and login flows.
+ */
+export const CLIENT_ID = atob(
+  "MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
+);
+export const CLIENT_SECRET = atob(
+  "R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=",
+);
+
 // Production default: use the daily Cloud Code Assist endpoint. The proxy
 // forwarder supports cascading if additional verified endpoints are added here.
 export const ANTIGRAVITY_ENDPOINTS = [

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { TOKEN_URL } from "./types.js";
+import { CLIENT_ID, CLIENT_SECRET, TOKEN_URL } from "./types.js";
 import { fetchWithRetry } from "./fetch-with-retry.js";
 
 export const DEFAULT_REDIRECT_URI = "http://localhost:51121/oauth-callback";
@@ -27,16 +27,8 @@ export interface TokenExchangeResult {
 export function getOAuthClientConfig(
 	env: NodeJS.ProcessEnv = process.env,
 ): OAuthClientConfig {
-	const clientId = env.ANTIGRAVITY_CLIENT_ID?.trim();
-	const clientSecret = env.ANTIGRAVITY_CLIENT_SECRET?.trim();
-	if (!clientId || !clientSecret) {
-		const missing: string[] = [];
-		if (!clientId) missing.push("ANTIGRAVITY_CLIENT_ID");
-		if (!clientSecret) missing.push("ANTIGRAVITY_CLIENT_SECRET");
-		throw new Error(
-			`Missing OAuth client credentials: set ${missing.join(" and ")} before starting OAuth login.`,
-		);
-	}
+	const clientId = env.ANTIGRAVITY_CLIENT_ID?.trim() || CLIENT_ID;
+	const clientSecret = env.ANTIGRAVITY_CLIENT_SECRET?.trim() || CLIENT_SECRET;
 	const redirectUri = env.ANTIGRAVITY_REDIRECT_URI?.trim() || DEFAULT_REDIRECT_URI;
 	try {
 		const redirectUrl = new URL(redirectUri);
@@ -57,21 +49,24 @@ export function getOAuthClientConfig(
 let warnedAboutFallback = false;
 
 /**
- * Check whether the operator has configured OAuth client credentials.
- * Credentials are deliberately not bundled in the published source. When
- * they are missing, OAuth login cannot start and the operator gets one warning.
+ * Check whether the rotator is using the legacy compatibility OAuth client.
+ * Operator-provided credentials always take precedence. The fallback remains
+ * available so existing installations do not break during upgrades.
  *
  * The warning is printed at most once per process to avoid log spam.
  */
 export function warnIfUsingFallbackOAuthCreds(env: NodeJS.ProcessEnv = process.env): boolean {
-	const missing: string[] = [];
-	if (!env.ANTIGRAVITY_CLIENT_ID?.trim()) missing.push("ANTIGRAVITY_CLIENT_ID");
-	if (!env.ANTIGRAVITY_CLIENT_SECRET?.trim()) missing.push("ANTIGRAVITY_CLIENT_SECRET");
-	if (missing.length === 0) return false;
+	const usingFallbackId = !env.ANTIGRAVITY_CLIENT_ID?.trim();
+	const usingFallbackSecret = !env.ANTIGRAVITY_CLIENT_SECRET?.trim();
+	if (!usingFallbackId && !usingFallbackSecret) return false;
 	if (warnedAboutFallback) return true;
 	warnedAboutFallback = true;
+	const missing: string[] = [];
+	if (usingFallbackId) missing.push("ANTIGRAVITY_CLIENT_ID");
+	if (usingFallbackSecret) missing.push("ANTIGRAVITY_CLIENT_SECRET");
 	console.warn(
-		"OAuth client credentials are not configured. Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET to your own registered OAuth client before using login.",
+		"Using the bundled legacy OAuth client credentials " +
+		`(missing env: ${missing.join(" and ")}). Set ${missing.join(" and ")} to your own registered OAuth client when convenient.`,
 	);
 	return true;
 }

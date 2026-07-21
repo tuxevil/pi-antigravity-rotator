@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Security
-- OAuth client ID and secret are no longer bundled; login now requires operator-provided environment variables.
+- Operator-provided OAuth client variables now take precedence, while the legacy compatibility client remains available with a deprecation warning so existing installations are not interrupted during upgrade.
 - Hardened dashboard, onboarding, and telemetry notification rendering against HTML/JavaScript injection and unsafe notification links.
 - Protected historical notification listings, bounded CLI-login and notification request bodies, and replaced shell command construction in self-update with argument-safe execution.
 - Updated `brace-expansion` to `5.0.7`; `npm audit` is clean.

@@ -82,16 +82,16 @@ To donate a quota-enabled account safely:
 
 Requirements for npm/source installs: Node.js 22 or newer. The published package runs the TypeScript sources through `tsx` at runtime, so `tsx` is intentionally listed as a production dependency. The Docker image uses Node 22.
 
-### OAuth client credentials (required for login)
+### OAuth client credentials (optional for existing installs)
 
-OAuth client credentials are intentionally not bundled with the project. Register your own Google OAuth client and configure it before running `login` or using the web-based account login:
+Existing installations continue to work with the legacy compatibility OAuth client. For new deployments, or when using hosted OAuth, register your own Google OAuth client and configure it before running `login` or using the web-based account login:
 
 ```bash
 export ANTIGRAVITY_CLIENT_ID="your-client-id"
 export ANTIGRAVITY_CLIENT_SECRET="your-client-secret"
 ```
 
-The default callback is `http://localhost:51121/oauth-callback`. For hosted login, also set `ANTIGRAVITY_REDIRECT_URI` to the HTTPS callback registered in your OAuth client. Keep the secret in an environment manager or deployment secret store; do not commit it to the repository.
+If either variable is missing, the rotator falls back to the legacy client and emits a one-time deprecation warning so an upgrade does not interrupt existing accounts. The operator-provided values always take precedence. The default callback is `http://localhost:51121/oauth-callback`. For hosted login, also set `ANTIGRAVITY_REDIRECT_URI` to the HTTPS callback registered in your OAuth client. Keep any secret in an environment manager or deployment secret store; do not commit it to the repository.
 
 ### Option A: Install from npm
 

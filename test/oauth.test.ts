@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { discoverProject, getOAuthClientConfig, warnIfUsingFallbackOAuthCreds } from "../src/oauth.js";
+import { CLIENT_ID, CLIENT_SECRET } from "../src/types.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -65,7 +66,7 @@ describe("oauth fallback credentials warning", () => {
 			const result = warnIfUsingFallbackOAuthCreds({});
 			assert.equal(result, true);
 			assert.equal(lines.length, 1);
-			assert.match(lines[0], /OAuth client credentials are not configured/);
+			assert.match(lines[0], /Using the bundled legacy OAuth client credentials/);
 			assert.match(lines[0], /ANTIGRAVITY_CLIENT_ID/);
 			assert.match(lines[0], /ANTIGRAVITY_CLIENT_SECRET/);
 		} finally {
@@ -73,11 +74,10 @@ describe("oauth fallback credentials warning", () => {
 		}
 	});
 
-	it("does not provide bundled OAuth credentials", () => {
-		assert.throws(
-			() => getOAuthClientConfig({}),
-			/Missing OAuth client credentials/,
-		);
+	it("uses the legacy client when env vars are absent", () => {
+		const config = getOAuthClientConfig({});
+		assert.equal(config.clientId, CLIENT_ID);
+		assert.equal(config.clientSecret, CLIENT_SECRET);
 	});
 
 	it("warns only once per process even if called repeatedly", () => {

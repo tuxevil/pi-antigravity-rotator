@@ -1,9 +1,24 @@
 import { describe, it, before, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { AccountRotator } from "../src/rotator.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Config } from "../src/types.js";
-import { initDb } from "../src/db-store.js";
-import { setPersistedAdminToken } from "../src/admin-auth.js";
+
+// Keep direct execution of this file from persisting its fixture accounts in
+// the operator's real config directory. `npm test` already sets this env var,
+// but `node --test test/v2-routing.test.ts` does not.
+if (!process.env.PI_ROTATOR_DIR) {
+  process.env.PI_ROTATOR_DIR = mkdtempSync(
+    join(tmpdir(), "pi-antigravity-v2-routing-"),
+  );
+}
+
+// These modules resolve their config paths during import, so load them only
+// after the isolated test directory has been selected above.
+const { AccountRotator } = await import("../src/rotator.js");
+const { initDb } = await import("../src/db-store.js");
+const { setPersistedAdminToken } = await import("../src/admin-auth.js");
 
 function makeConfig(): Config {
   return {

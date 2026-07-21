@@ -13,7 +13,7 @@ import { isTelemetryEnabled } from "./telemetry.js";
 const notifLogger = logger.child("notifications");
 
 // Same base URL as telemetry endpoint (just different path)
-const DEFAULT_TELEMETRY_BASE = "https://telemetry.tuxevil.com";
+const DEFAULT_TELEMETRY_BASE = "https://telemetry.tuxevil.com:3800";
 const TELEMETRY_BASE = process.env.PI_ROTATOR_TELEMETRY_URL?.trim()
 	? new URL(process.env.PI_ROTATOR_TELEMETRY_URL).origin
 	: DEFAULT_TELEMETRY_BASE;

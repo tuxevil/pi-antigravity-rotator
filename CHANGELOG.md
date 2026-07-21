@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-07-21
+
+### Fixed
+- **Telemetry**: Restored port `3800` to the telemetry and notification endpoint URL (`https://telemetry.tuxevil.com:3800`).
+
 ## [2.3.3] - 2026-07-21
 
 ### Changed

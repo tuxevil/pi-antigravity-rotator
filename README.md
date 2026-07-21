@@ -622,7 +622,7 @@ IP addresses are not part of the telemetry JSON payload and are not written to t
 Telemetry posts to:
 
 ```bash
-https://telemetry.tuxevil.com/v1/events
+https://telemetry.tuxevil.com:3800/v1/events
 ```
 
 ### Opt out

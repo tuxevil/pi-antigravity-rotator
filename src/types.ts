@@ -201,6 +201,16 @@ export const QUOTA_MODEL_KEYS: Record<
     ],
     display: "G3.5Flash",
   },
+  "gemini-3.6-flash": {
+    key: "gemini-3.6-flash",
+    altKeys: [
+      "gemini-3.6-flash-high",
+      "gemini-3.6-flash-medium",
+      "gemini-3.6-flash-low",
+      "gemini-3.6-flash-tiered",
+    ],
+    display: "G3.6Flash",
+  },
 };
 
 // Map request model names to quota model keys
@@ -219,6 +229,12 @@ export function resolveQuotaModelKey(requestModel: string): string | null {
     }
   }
   // Broad fallback matching
+  if (
+    lower.includes("gemini") &&
+    lower.includes("3.6") &&
+    lower.includes("flash")
+  )
+    return "gemini-3.6-flash";
   if (
     lower.includes("gemini") &&
     lower.includes("3.5") &&
@@ -256,6 +272,18 @@ export function resolveDisplayModelKey(requestModel: string): string {
     if (lower.includes("-low")) return "gemini-3.1-pro-low";
     if (lower.includes("-high")) return "gemini-3.1-pro-high";
     return "gemini-3.1-pro"; // unspecified variant
+  }
+  // Gemini 3.6 Flash — distinguish variants
+  if (
+    lower.includes("gemini") &&
+    lower.includes("3.6") &&
+    lower.includes("flash")
+  ) {
+    if (lower.includes("-low")) return "gemini-3.6-flash-low";
+    if (lower.includes("-medium")) return "gemini-3.6-flash-medium";
+    if (lower.includes("-tiered")) return "gemini-3.6-flash-tiered";
+    if (lower.includes("-high")) return "gemini-3.6-flash-high";
+    return "gemini-3.6-flash-high"; // unspecified variant
   }
   // Gemini 3.5 Flash — distinguish medium vs high
   if (
@@ -594,6 +622,30 @@ export const MODEL_PRICING: Record<
     cachingStoragePer1MPerHour: 1.0,
   },
   "gemini-3.5-flash-high": {
+    inputPer1M: 1.5,
+    outputPer1M: 9.0,
+    cachingPer1M: 0.15,
+    cachingStoragePer1MPerHour: 1.0,
+  },
+  "gemini-3.6-flash-high": {
+    inputPer1M: 1.5,
+    outputPer1M: 9.0,
+    cachingPer1M: 0.15,
+    cachingStoragePer1MPerHour: 1.0,
+  },
+  "gemini-3.6-flash-medium": {
+    inputPer1M: 1.5,
+    outputPer1M: 9.0,
+    cachingPer1M: 0.15,
+    cachingStoragePer1MPerHour: 1.0,
+  },
+  "gemini-3.6-flash-low": {
+    inputPer1M: 1.5,
+    outputPer1M: 9.0,
+    cachingPer1M: 0.15,
+    cachingStoragePer1MPerHour: 1.0,
+  },
+  "gemini-3.6-flash-tiered": {
     inputPer1M: 1.5,
     outputPer1M: 9.0,
     cachingPer1M: 0.15,

@@ -153,7 +153,7 @@ This package is not exclusive to Pi. It can be consumed by **any** agent or fron
 2. Add a new generic/OpenAI-compatible provider
 3. Set the API Base URL to: `http://127.0.0.1:51200/v1/`
 4. Set the API Key to: `antigravity` (or any string, the proxy doesn't validate it)
-5. You can now use any of the models (e.g. `gemini-3.5-flash-low`, `gemini-3.5-flash-high`, `gemini-3.1-pro-low`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`) directly in your agent.
+5. You can now use any of the models (e.g. `gemini-3.6-flash-high`, `gemini-3.6-flash-medium`, `gemini-3.6-flash-low`, `gemini-3.6-flash-tiered`, `gemini-3.5-flash-low`, `gemini-3.1-pro-low`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`) directly in your agent.
 
 ### Activation rule
 
@@ -483,7 +483,7 @@ Current adapter scope:
 - **Responses API compatibility**: Supports `POST /v1/responses` plus basic in-memory retrieve/delete/cancel/input-items endpoints for Codex-style agents.
 - **Developer and Model Role Support**: Fully supports the `"developer"` (mapped to system instructions) and `"model"` roles in chat message histories, validating and routing them correctly.
 - **Request Normalization**: Automatically normalizes loose inputs (non-array messages), legacy prompt/input fields (e.g. `prompt` strings/arrays or `input` structures), and raw native Antigravity requests (`request.contents`) into standard OpenAI/Anthropic format.
-- **Native Reasoning visibility**: Models with thinking capabilities (Gemini 3 Pro, Gemini 3.5 Flash, Claude Sonnet 4.6 Thinking) automatically expose their interleaved thinking blocks in real-time as OpenAI `reasoning_content` or Anthropic `thinking_delta` chunks.
+- **Native Reasoning visibility**: Models with thinking capabilities (Gemini 3 Pro, Gemini 3.5 Flash, Gemini 3.6 Flash, Claude Sonnet 4.6 Thinking) automatically expose their interleaved thinking blocks in real-time as OpenAI `reasoning_content` or Anthropic `thinking_delta` chunks.
 - Streaming mode is supported as compatibility SSE. The adapter buffers the upstream Antigravity stream, then emits one OpenAI/Anthropic-compatible final delta. Native token-by-token pass-through is not implemented yet.
 - Image input is supported when sent as base64 data URL (`OpenAI image_url.url = data:image/...;base64,...`) or Anthropic base64 source (`type=image`, `source.type=base64`).
 - **Tool/function calling is fully supported** (OpenAI `tools`/`tool_choice` format and Anthropic `tool_use`/`tool_result` via standard translation to Gemini `functionDeclarations`).
@@ -526,6 +526,7 @@ To connect Codex to your local rotator:
 
 3. **Select a Supported Model**:
    Configure Codex to target one of the following models supported by the rotator (which will be mapped to the best available Google Antigravity account/model under the hood):
+   - `gemini-3.6-flash-high` / `gemini-3.6-flash-medium` / `gemini-3.6-flash-low` / `gemini-3.6-flash-tiered` (Latest Flash family; all variants share the `gemini-3.6-flash` quota pool)
    - `gemini-3.5-flash` or `gemini-3.5-flash-high` / `gemini-3.5-flash-low` / `gemini-3.5-flash-medium` (Recommended for fast general reasoning)
    - `gemini-3.1-pro` or `gemini-pro-agent` / `gemini-3.1-pro-high` / `gemini-3.1-pro-low` (For deep reasoning)
    - `claude-sonnet-4-6` or `claude-opus-4-6-thinking` (Claude models via Vertex AI)
@@ -533,12 +534,12 @@ To connect Codex to your local rotator:
 
    Example Codex configuration entry:
    ```json
-   "codex.model": "gemini-3.5-flash-high"
+   "codex.model": "gemini-3.6-flash-high"
    ```
 
 ### Features Enabled for Codex Agents
 
-- **Native Reasoning Visibility**: If using models with thinking enabled (e.g., `gemini-3.5-flash-high`), interleaved reasoning/thinking blocks are streamed back in real-time as OpenAI `reasoning_content` chunks. This lets Codex inspect the model's inner thoughts before it acts.
+- **Native Reasoning Visibility**: If using models with thinking enabled (e.g., `gemini-3.6-flash-high` or `gemini-3.5-flash-high`), interleaved reasoning/thinking blocks are streamed back in real-time as OpenAI `reasoning_content` chunks. This lets Codex inspect the model's inner thoughts before it acts.
 - **Function / Tool Routing**: Function calls emitted by Codex are fully translated to Gemini `functionCalls` and returned back to Codex safely, enabling full agentic capabilities. Multi-turn tool conversations work correctly for all models including Claude (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`) — parallel tool calls are batched into a single turn and tool results are properly grouped to satisfy Claude's strict `tool_use`/`tool_result` ordering requirements.
 - **Strict Validation**: The rotator strictly validates the Responses input contract and rejects unsupported tools (e.g., `web_search`) proactively to ensure Codex doesn't hit unexpected runtime exceptions.
 

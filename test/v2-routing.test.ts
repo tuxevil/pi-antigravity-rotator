@@ -71,6 +71,32 @@ describe("v2 routing and status", () => {
     assert.equal(best?.config.email, "b@example.com");
   });
 
+  it("kickstarts Gemini 3.6 through the shared Gemini 3 upstream model", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: { model?: string } | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as { model?: string };
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+
+    try {
+      const rotator = new AccountRotator(makeConfig()) as any;
+      rotator.stopQuotaPolling();
+      rotator.accounts[0].accessToken = "test-access-token";
+      rotator.accounts[0].tokenExpires = Date.now() + 60_000;
+
+      const result = await rotator.kickstartTimerForAccount(
+        "a@example.com",
+        "gemini-3.6-flash",
+      );
+      assert.equal(result.ok, true);
+      assert.equal(result.upstreamModel, "gemini-3-flash");
+      assert.equal(requestBody?.model, "gemini-3-flash");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("surfaces admin exposure warnings in status when token is missing", () => {
     const rotator = new AccountRotator(makeConfig());
     rotator.stopQuotaPolling();

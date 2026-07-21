@@ -72,10 +72,11 @@ function projectModelKey(projectId: string, modelKey: string): string {
 }
 
 // Maps each quota pool key to the cheapest upstream model to use for kickstart warmup requests.
-// gemini-3.5-flash and gemini-3.1-pro share the same upstream pool, so both map to gemini-3-flash.
+// Gemini 3.6/3.5 Flash and Gemini 3.1 Pro share the same upstream pool, so all map to gemini-3-flash.
 const KICKSTART_MODEL_FOR_QUOTA_POOL: Record<string, string> = {
   "claude-opus-4-6-thinking": "gpt-oss-120b-medium",
   "gemini-3.5-flash": "gemini-3-flash",
+  "gemini-3.6-flash": "gemini-3-flash",
   "gemini-3.1-pro": "gemini-3-flash",
 };
 

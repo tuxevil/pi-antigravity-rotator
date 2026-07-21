@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { addAccountToConfig } from "./account-store.js";
+import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
 import {
   buildAuthUrl,
   discoverProject,
@@ -20,6 +21,16 @@ interface PendingSession {
 const pendingSessions = new Map<string, PendingSession>();
 const SESSION_TTL_MS = 15 * 60 * 1000;
 const SESSION_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_CLI_LOGIN_BODY_BYTES = 64 * 1024;
+
+function escapeHtml(value: unknown): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function prunePendingSessions(): void {
   const cutoff = Date.now() - SESSION_TTL_MS;
@@ -57,7 +68,7 @@ function renderPage(title: string, body: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
+<title>${escapeHtml(title)}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
   :root {
@@ -154,11 +165,11 @@ function renderPage(title: string, body: string): string {
 }
 
 export function serveLoginLanding(res: ServerResponse): void {
-  const oauth = getOAuthClientConfig();
   const hostedReady = isHostedOAuthConfigured();
+  const oauth = hostedReady ? getOAuthClientConfig() : null;
   const message = hostedReady
     ? `<p>This page starts the Antigravity sign-in flow and returns here automatically so the account can be added to this rotator.</p>
-<p class="mono">Configured callback: ${oauth.redirectUri}</p>
+<p class="mono">Configured callback: ${escapeHtml(oauth?.redirectUri)}</p>
 <div class="note">Signing in here grants this server a refresh token for the selected Google account. That allows the rotator to keep using that account until access is revoked.</div>
 <a class="cta" href="/auth/antigravity/start">Continue With Google</a>`
     : `<p>This server is not yet configured for hosted OAuth.</p>
@@ -223,7 +234,19 @@ export function serveCliLogin(res: ServerResponse): void {
   pruneCliSessions();
   const { verifier, challenge } = generatePkce();
   const oauthState = generateState();
-  const authUrl = buildAuthUrl(oauthState, challenge);
+  let authUrl: string;
+  try {
+    authUrl = buildAuthUrl(oauthState, challenge);
+  } catch (err) {
+    res.writeHead(503, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(
+      renderPage(
+        "OAuth Not Configured",
+        `<h1>OAuth Login Isn’t Ready</h1><p>${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`,
+      ),
+    );
+    return;
+  }
   const sessionId = generateState();
   cliLoginSessions.set(sessionId, {
     verifier,
@@ -242,14 +265,14 @@ export function serveCliLogin(res: ServerResponse): void {
 
 <h3 style="margin:24px 0 8px;font-size:18px;">Step 1 &mdash; Sign in with Google</h3>
 <p>Click the button below to open the Google sign-in page in a new tab:</p>
-<a class="cta" href="${authUrl}" target="_blank" rel="noopener" style="font-size:16px;">
+<a class="cta" href="${escapeHtml(authUrl)}" target="_blank" rel="noopener" style="font-size:16px;">
   Sign in with Google &nearr;
 </a>
 
 <h3 style="margin:24px 0 8px;font-size:18px;">Step 2 &mdash; Paste the redirect URL</h3>
 <p>After signing in, Google will redirect to <code>localhost</code> (which will fail — that's expected). Copy the <strong>full URL</strong> from your browser's address bar and paste it here:</p>
 <form id="pasteForm" style="margin-top:12px;">
-  <input type="hidden" name="session" value="${sessionId}" />
+  <input type="hidden" name="session" value="${escapeHtml(sessionId)}" />
   <textarea name="redirectUrl" rows="4" placeholder="Paste the redirect URL here (starts with http://localhost:51121/oauth-callback?...)" style="
     width:100%;font-family:'IBM Plex Mono',monospace;font-size:13px;
     padding:12px 14px;border-radius:12px;border:1px solid rgba(31,42,31,0.15);
@@ -284,9 +307,11 @@ document.getElementById('pasteForm').addEventListener('submit', async (e) => {
     const data = await res.json();
     if (data.ok) {
       resultDiv.innerHTML = '<div class="note" style="border-left-color:var(--accent);background:rgba(30,107,82,0.12);">' +
-        '<strong>' + data.email + '</strong> ' + (data.isNew ? 'added' : 'updated') + ' successfully.<br>' +
-        'Project: <span class="mono" style="padding:2px 6px;">' + data.projectId + '</span>' +
+        '<strong id="loginResultEmail"></strong> ' + (data.isNew ? 'added' : 'updated') + ' successfully.<br>' +
+        'Project: <span id="loginResultProject" class="mono" style="padding:2px 6px;"></span>' +
         '</div>';
+      document.getElementById('loginResultEmail').textContent = data.email || '';
+      document.getElementById('loginResultProject').textContent = data.projectId || '';
     } else {
       var errorDiv = document.createElement('div');
       errorDiv.className = 'note error';
@@ -318,17 +343,29 @@ export async function handleCliLoginApi(
 ): Promise<void> {
   let body: { session?: string; redirectUrl?: string };
   try {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
-    body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
+    const raw = await readLimitedBody(req, MAX_CLI_LOGIN_BODY_BYTES);
+    const parsed: unknown = JSON.parse(raw.toString("utf-8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Request body must be an object");
+    }
+    body = parsed as { session?: string; redirectUrl?: string };
+  } catch (err) {
+    res.writeHead(err instanceof PayloadTooLargeError ? 413 : 400, {
+      "Content-Type": "application/json",
+    });
     res.end(JSON.stringify({ ok: false, error: "Invalid JSON body" }));
     return;
   }
 
   const { session: sessionId, redirectUrl } = body;
-  if (!sessionId || !redirectUrl) {
+  if (
+    typeof sessionId !== "string" ||
+    typeof redirectUrl !== "string" ||
+    sessionId.length === 0 ||
+    redirectUrl.length === 0 ||
+    sessionId.length > 256 ||
+    redirectUrl.length > 8 * 1024
+  ) {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({ ok: false, error: "Missing session or redirectUrl" }),
@@ -442,7 +479,7 @@ export async function handleHostedCallback(
     res.end(
       renderPage(
         "Sign-In Cancelled",
-        `<h1>Sign-In Cancelled</h1><p>Google returned: ${error}</p>`,
+        `<h1>Sign-In Cancelled</h1><p>Google returned: ${escapeHtml(error)}</p>`,
       ),
     );
     return;
@@ -494,8 +531,8 @@ export async function handleHostedCallback(
       renderPage(
         "Account Connected",
         `<h1>Account Connected</h1>
-<p><strong>${entry.email}</strong> was ${isNew ? "added" : "updated"} successfully.</p>
-<p>Project: <span class="mono">${project.projectId}</span> via ${project.source}.</p>
+<p><strong>${escapeHtml(entry.email)}</strong> was ${isNew ? "added" : "updated"} successfully.</p>
+<p>Project: <span class="mono">${escapeHtml(project.projectId)}</span> via ${escapeHtml(project.source)}.</p>
 <p>The rotator can start using this account immediately.</p>
 <div class="note">If you ever want to stop sharing access, revoke this app's access from the Google account security settings.</div>`,
       ),
@@ -505,7 +542,7 @@ export async function handleHostedCallback(
     res.end(
       renderPage(
         "Sign-In Failed",
-        `<h1>Sign-In Failed</h1><p>${err instanceof Error ? err.message : String(err)}</p>`,
+        `<h1>Sign-In Failed</h1><p>${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`,
       ),
     );
   }

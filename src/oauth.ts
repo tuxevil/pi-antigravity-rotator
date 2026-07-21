@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { CLIENT_ID, CLIENT_SECRET, TOKEN_URL } from "./types.js";
+import { TOKEN_URL } from "./types.js";
 import { fetchWithRetry } from "./fetch-with-retry.js";
 import { logger } from "./logger.js";
 
@@ -27,38 +27,55 @@ export interface TokenExchangeResult {
 	expiresIn: number;
 }
 
-export function getOAuthClientConfig(): OAuthClientConfig {
+export function getOAuthClientConfig(
+	env: NodeJS.ProcessEnv = process.env,
+): OAuthClientConfig {
+	const clientId = env.ANTIGRAVITY_CLIENT_ID?.trim();
+	const clientSecret = env.ANTIGRAVITY_CLIENT_SECRET?.trim();
+	if (!clientId || !clientSecret) {
+		const missing: string[] = [];
+		if (!clientId) missing.push("ANTIGRAVITY_CLIENT_ID");
+		if (!clientSecret) missing.push("ANTIGRAVITY_CLIENT_SECRET");
+		throw new Error(
+			`Missing OAuth client credentials: set ${missing.join(" and ")} before starting OAuth login.`,
+		);
+	}
+	const redirectUri = env.ANTIGRAVITY_REDIRECT_URI?.trim() || DEFAULT_REDIRECT_URI;
+	try {
+		const redirectUrl = new URL(redirectUri);
+		if (redirectUrl.protocol !== "http:" && redirectUrl.protocol !== "https:") {
+			throw new Error("unsupported protocol");
+		}
+	} catch {
+		throw new Error("Invalid OAuth redirect URI: use an absolute http:// or https:// URL.");
+	}
+
 	return {
-		clientId: process.env.ANTIGRAVITY_CLIENT_ID || CLIENT_ID,
-		clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || CLIENT_SECRET,
-		redirectUri: process.env.ANTIGRAVITY_REDIRECT_URI || DEFAULT_REDIRECT_URI,
+		clientId,
+		clientSecret,
+		redirectUri,
 	};
 }
 
 let warnedAboutFallback = false;
 
 /**
- * Check whether the rotator is running on the hardcoded fallback OAuth
- * credentials (the public Antigravity IDE client shipped in types.ts). When
- * the operator has not provided ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET,
- * every Google OAuth call uses the bundled client, which may violate Google's
- * ToS for third-party usage of the official client.
+ * Check whether the operator has configured OAuth client credentials.
+ * Credentials are deliberately not bundled in the published source. When
+ * they are missing, OAuth login cannot start and the operator gets one warning.
  *
  * The warning is printed at most once per process to avoid log spam.
  */
 export function warnIfUsingFallbackOAuthCreds(env: NodeJS.ProcessEnv = process.env): boolean {
-	const usingFallbackId = !env.ANTIGRAVITY_CLIENT_ID?.trim();
-	const usingFallbackSecret = !env.ANTIGRAVITY_CLIENT_SECRET?.trim();
-	if (!usingFallbackId && !usingFallbackSecret) return false;
+	const missing: string[] = [];
+	if (!env.ANTIGRAVITY_CLIENT_ID?.trim()) missing.push("ANTIGRAVITY_CLIENT_ID");
+	if (!env.ANTIGRAVITY_CLIENT_SECRET?.trim()) missing.push("ANTIGRAVITY_CLIENT_SECRET");
+	if (missing.length === 0) return false;
 	if (warnedAboutFallback) return true;
 	warnedAboutFallback = true;
-	const missing: string[] = [];
-	if (usingFallbackId) missing.push("ANTIGRAVITY_CLIENT_ID");
-	if (usingFallbackSecret) missing.push("ANTIGRAVITY_CLIENT_SECRET");
 	oauthLogger.log("warn",
-		`Using the bundled fallback OAuth client credentials (missing env: ${missing.join(", ")}). ` +
-		`This identifies the rotator as the official Antigravity IDE client. ` +
-		`For self-hosted deployments, set ${missing.join(" and ")} to your own registered OAuth client.`,
+		`OAuth client credentials are not configured (missing env: ${missing.join(", ")}). ` +
+		`Set ${missing.join(" and ")} to your own registered OAuth client before using login.`,
 	);
 	return true;
 }

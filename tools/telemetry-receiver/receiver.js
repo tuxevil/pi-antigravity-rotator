@@ -38,6 +38,29 @@ const STATS_TOKEN = process.env.STATS_TOKEN || "";
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
+function isStatsAuthorized(req) {
+	return STATS_TOKEN.length > 0 &&
+		req.headers.authorization === "Bearer " + STATS_TOKEN;
+}
+
+function sendUnauthorized(res) {
+	res.writeHead(401, { "Content-Type": "application/json" });
+	res.end(JSON.stringify({ error: "Unauthorized" }));
+}
+
+function requireStatsAuth(req, res) {
+	if (!STATS_TOKEN) {
+		res.writeHead(403, { "Content-Type": "application/json" });
+		res.end(JSON.stringify({ error: "STATS_TOKEN not configured" }));
+		return false;
+	}
+	if (!isStatsAuthorized(req)) {
+		sendUnauthorized(res);
+		return false;
+	}
+	return true;
+}
+
 // ── Notifications Storage ────────────────────────────────────────────
 const NOTIFICATIONS_FILE = join(DATA_DIR, "notifications.json");
 
@@ -52,6 +75,40 @@ function loadNotifications() {
 
 function saveNotifications(notifications) {
 	writeFileSync(NOTIFICATIONS_FILE, JSON.stringify(notifications, null, 2), "utf-8");
+}
+
+const NOTIFICATION_TYPES = new Set(["info", "warning", "critical"]);
+const MAX_NOTIFICATION_STRING_LEN = 512;
+
+function isOptionalNotificationString(value) {
+	return value === undefined || value === null ||
+		(typeof value === "string" && value.length <= MAX_NOTIFICATION_STRING_LEN);
+}
+
+function isSafeNotificationUrl(value) {
+	if (value === undefined || value === null || value === "") return true;
+	if (typeof value !== "string" || value.length > MAX_NOTIFICATION_STRING_LEN) return false;
+	try {
+		const parsed = new URL(value, "http://localhost");
+		return parsed.protocol === "http:" || parsed.protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
+function isValidNotificationInput(data) {
+	if (typeof data !== "object" || data === null) return false;
+	if (data.id !== undefined && (typeof data.id !== "string" || data.id.length > MAX_NOTIFICATION_STRING_LEN)) return false;
+	if (typeof data.title !== "string" || data.title.length === 0 || data.title.length > MAX_NOTIFICATION_STRING_LEN) return false;
+	if (typeof data.message !== "string" || data.message.length === 0 || data.message.length > MAX_NOTIFICATION_STRING_LEN) return false;
+	if (data.type !== undefined && !NOTIFICATION_TYPES.has(data.type)) return false;
+	if (!isOptionalNotificationString(data.createdAt)) return false;
+	if (!isOptionalNotificationString(data.expiresAt)) return false;
+	if (!isOptionalNotificationString(data.minVersion)) return false;
+	if (!isOptionalNotificationString(data.maxVersion)) return false;
+	if (!isSafeNotificationUrl(data.actionUrl)) return false;
+	if (!isOptionalNotificationString(data.actionLabel)) return false;
+	return true;
 }
 
 /**
@@ -245,7 +302,7 @@ function sanitizeFlagData(flag) {
 function sanitizeTokensByModel(raw) {
 	if (typeof raw !== "object" || raw === null) return {};
 	const MAX_MODELS = 20;
-	const clean = {};
+	const clean = Object.create(null);
 	let count = 0;
 	for (const [model, data] of Object.entries(raw)) {
 		if (count >= MAX_MODELS) break;
@@ -278,7 +335,7 @@ const MODEL_PRICING = {
 
 function calculateSavings(tokensByModel) {
 	let totalUsd = 0;
-	const byModel = {};
+	const byModel = Object.create(null);
 	for (const [model, data] of Object.entries(tokensByModel)) {
 		const pricing = MODEL_PRICING[model];
 		if (!pricing) continue;
@@ -295,10 +352,17 @@ function calculateSavings(tokensByModel) {
 function parseQueryString(url) {
 	const idx = url.indexOf("?");
 	if (idx === -1) return {};
-	const params = {};
+	const params = Object.create(null);
 	for (const part of url.slice(idx + 1).split("&")) {
-		const [k, v] = part.split("=").map(decodeURIComponent);
-		if (k) params[k] = v ?? "";
+		const separator = part.indexOf("=");
+		const rawKey = separator === -1 ? part : part.slice(0, separator);
+		const rawValue = separator === -1 ? "" : part.slice(separator + 1);
+		try {
+			const k = decodeURIComponent(rawKey);
+			if (k) params[k] = decodeURIComponent(rawValue);
+		} catch {
+			// Ignore malformed query components.
+		}
 	}
 	return params;
 }
@@ -376,27 +440,27 @@ function computeInstallList(filters = {}) {
 	});
 
 	// Latest heartbeat snapshot per install
-	const latest = {}; // installId -> ev
+	const latest = Object.create(null); // installId -> ev
 	for (const { ev } of events) {
 		const prev = latest[ev.installId];
 		if (!prev || ev.ts >= prev.ts) latest[ev.installId] = ev;
 	}
 
 	// First seen per install
-	const firstSeen = {};
+	const firstSeen = Object.create(null);
 	for (const { ev } of events) {
 		if (!firstSeen[ev.installId] || ev.ts < firstSeen[ev.installId])
 			firstSeen[ev.installId] = ev.ts;
 	}
 
 	// Flag counts per install
-	const flagsByInstall = {};
+	const flagsByInstall = Object.create(null);
 	for (const { fl } of flagEvents) {
 		flagsByInstall[fl.installId] = (flagsByInstall[fl.installId] || 0) + 1;
 	}
 
 	// Total requests per install (max across all events — it's cumulative)
-	const maxRequests = {};
+	const maxRequests = Object.create(null);
 	for (const { ev } of events) {
 		const cur = maxRequests[ev.installId] || 0;
 		if ((ev.totalRequests || 0) > cur) maxRequests[ev.installId] = ev.totalRequests || 0;
@@ -461,18 +525,18 @@ function computeStats(filters = {}) {
 	let totalEvents = 0;
 	let totalBoots = 0;
 	let totalFlags = 0;
-	const versionCounts = {};
-	const osCounts = {};
-	const archCounts = {};
-	const modelCounts = {};
-	const healthCounts = {};
+	const versionCounts = Object.create(null);
+	const osCounts = Object.create(null);
+	const archCounts = Object.create(null);
+	const modelCounts = Object.create(null);
+	const healthCounts = Object.create(null);
 	let totalAccounts = 0;
 	let totalRequests = 0;
 	let featuresCount = { dashboard: 0, proAdvisor: 0, freshWindowToggle: 0, hostedLogin: 0 };
 
 	// tokensByModel is CUMULATIVE per install (each heartbeat sends total-since-boot).
 	// To avoid multi-counting, track the LATEST snapshot per installId and sum those.
-	const latestTokenSnapshotByInstall = {}; // installId → { ts, tokensByModel }
+	const latestTokenSnapshotByInstall = Object.create(null); // installId → { ts, tokensByModel }
 
 	for (const { ev } of events) {
 		totalEvents++;
@@ -501,7 +565,7 @@ function computeStats(filters = {}) {
 	}
 
 	// Aggregate latest token snapshot per install into global totals
-	const globalTokensByModel = {};
+	const globalTokensByModel = Object.create(null);
 	for (const { tokensByModel } of Object.values(latestTokenSnapshotByInstall)) {
 		for (const [model, data] of Object.entries(tokensByModel)) {
 			if (!globalTokensByModel[model]) globalTokensByModel[model] = { input: 0, output: 0, requests: 0 };
@@ -512,10 +576,10 @@ function computeStats(filters = {}) {
 	}
 
 	// Flag aggregates
-	const flagsByStatus = {};
-	const flagsByPattern = {};
-	const flagsByModel = {};
-	const flagsByTimerType = {};
+	const flagsByStatus = Object.create(null);
+	const flagsByPattern = Object.create(null);
+	const flagsByModel = Object.create(null);
+	const flagsByTimerType = Object.create(null);
 	let flagsOnProAccounts = 0;
 	let flagsOnFreeAccounts = 0;
 	let flagRequestsTotal = 0;
@@ -787,6 +851,21 @@ let _filterOptions={};
 function $(i){return document.getElementById(i)}
 function fmt(n){return n==null?'—':Number(n).toLocaleString()}
 function usd(n){return '$'+Number(n||0).toFixed(2)}
+function esc(s){
+  return String(s==null?'':s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+function jsString(s){
+  return esc(String(s==null?'':s)
+    .replace(/\\/g,'\\\\')
+    .replace(/'/g,"\\'")
+    .replace(/\r/g,'\\r')
+    .replace(/\n/g,'\\n'));
+}
 
 function mkChart(id,type,labels,datasets){
   if(charts[id])charts[id].destroy();
@@ -896,11 +975,11 @@ function render(d, filters={}){
     {l:'Unique Flag Incidents',v:fmt(d.flags?.uniqueIncidents||0),c:'red'},
     {l:'Avg Req/Flag',v:fmt(d.flags?.avgRequestsBeforeFlag||0),c:'red'},
     {l:'Period',v:d.period?.from||'—',sub:d.period?.to?'→ '+d.period.to:''},
-  ].map(k=>'<div class="kpi '+k.c+'"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div>'+(k.sub?'<div class="sub">'+k.sub+'</div>':'')+'</div>').join('');
+  ].map(k=>'<div class="kpi '+esc(k.c)+'"><div class="label">'+esc(k.l)+'</div><div class="value">'+esc(k.v)+'</div>'+(k.sub?'<div class="sub">'+esc(k.sub)+'</div>':'')+'</div>').join('');
 
   const sv=d.savings||{};
   $('savTotal').textContent=usd(sv.totalUsd);
-  const svRows=Object.entries(sv.byModel||{}).map(([m,v])=>'<tr><td class="mono">'+m+'</td><td>'+usd(v.inputUsd)+'</td><td>'+usd(v.outputUsd)+'</td><td><strong>'+usd(v.totalUsd)+'</strong></td></tr>').join('');
+  const svRows=Object.entries(sv.byModel||{}).map(([m,v])=>'<tr><td class="mono">'+esc(m)+'</td><td>'+usd(v.inputUsd)+'</td><td>'+usd(v.outputUsd)+'</td><td><strong>'+usd(v.totalUsd)+'</strong></td></tr>').join('');
   $('savTable').innerHTML=svRows?'<table><thead><tr><th>Model</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody>'+svRows+'</tbody></table>':'<div class="empty">No data yet</div>';
 
   const fl=d.flags||{};
@@ -909,13 +988,13 @@ function render(d, filters={}){
     {l:'On Pro Accounts',v:fmt(fl.onProAccounts||0)},
     {l:'On Free Accounts',v:fmt(fl.onFreeAccounts||0)},
     {l:'Avg Requests Before Flag',v:fmt(fl.avgRequestsBeforeFlag||0)},
-  ].map(k=>'<div class="flag-kpi"><div class="label">'+k.l+'</div><div class="value">'+k.v+'</div></div>').join('');
+  ].map(k=>'<div class="flag-kpi"><div class="label">'+esc(k.l)+'</div><div class="value">'+esc(k.v)+'</div></div>').join('');
   mkChart('cPatterns','bar',Object.keys(fl.byPattern||{}),[{label:'Count',data:Object.values(fl.byPattern||{}),backgroundColor:R}]);
   mkChart('cFlagModels','doughnut',Object.keys(fl.byModel||{}),[{data:Object.values(fl.byModel||{}),backgroundColor:C}]);
   mkChart('cTimerType','doughnut',Object.keys(fl.byTimerType||{}),[{data:Object.values(fl.byTimerType||{}),backgroundColor:['#63b3ed','#f6e05e','#68d391']}]);
 
   const tk=d.tokensByModel||{};
-  $('tokTable').innerHTML=Object.keys(tk).length?'<table><thead><tr><th>Model</th><th>Input Tokens</th><th>Output Tokens</th><th>Requests</th></tr></thead><tbody>'+Object.entries(tk).map(([m,v])=>'<tr><td class="mono">'+m+'</td><td>'+fmt(v.input)+'</td><td>'+fmt(v.output)+'</td><td>'+fmt(v.requests)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No token data yet</div>';
+  $('tokTable').innerHTML=Object.keys(tk).length?'<table><thead><tr><th>Model</th><th>Input Tokens</th><th>Output Tokens</th><th>Requests</th></tr></thead><tbody>'+Object.entries(tk).map(([m,v])=>'<tr><td class="mono">'+esc(m)+'</td><td>'+fmt(v.input)+'</td><td>'+fmt(v.output)+'</td><td>'+fmt(v.requests)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No token data yet</div>';
 
   mkChart('cVersions','bar',Object.keys(d.versions||{}),[{label:'Events',data:Object.values(d.versions||{}),backgroundColor:'#63b3ed'}]);
   mkChart('cOS','doughnut',Object.keys(d.os||{}),[{data:Object.values(d.os||{}),backgroundColor:C}]);
@@ -1007,22 +1086,22 @@ function renderInstallList() {
     '</tr></thead><tbody>';
   rows.forEach(function(r) {
     var hc=HC[r.routingHealthState]||'#718096';
-    var shortId=r.installId.slice(0,8)+'…';
+    var shortId=esc(r.installId.slice(0,8)+'…');
     var ls=r.lastSeen?new Date(r.lastSeen).toLocaleString():'—';
     var fc=r.flagEvents>0?'#fc8181':'#718096';
     var pf='';
     if(r.proCount>0||r.freeCount>0)
       pf='<span style="color:#68d391;font-size:10px">P:'+r.proCount+'</span> <span style="color:#718096;font-size:10px">F:'+r.freeCount+'</span>';
-    html+='<tr class="install-row" onclick="drillDown(&apos;'+r.installId+'&apos;)">'+
-      '<td><div class="install-id"><strong>'+shortId+'</strong>'+r.installId.slice(8)+'</div></td>'+
+    html+='<tr class="install-row" onclick="drillDown(&apos;'+jsString(r.installId)+'&apos;)">'+
+      '<td><div class="install-id"><strong>'+shortId+'</strong>'+esc(r.installId.slice(8))+'</div></td>'+
       '<td style="font-family:monospace;font-weight:700">'+fmt(r.totalRequests)+'</td>'+
-      '<td>'+r.accountCount+(pf?'<br>'+pf:'')+'</td>'+
+      '<td>'+esc(r.accountCount)+(pf?'<br>'+pf:'')+'</td>'+
       '<td style="color:#68d391;font-family:monospace;font-weight:700">'+usd(r.savingsUsd)+'</td>'+
-      '<td style="color:'+fc+';font-weight:700;font-family:monospace">'+r.flagEvents+'</td>'+
+      '<td style="color:'+fc+';font-weight:700;font-family:monospace">'+esc(r.flagEvents)+'</td>'+
       '<td><span class="health-dot" style="background:'+hc+'"></span><span style="font-size:11px;color:'+hc+'">'+escI(r.routingHealthState||'?')+'</span></td>'+
       '<td style="font-size:11px"><span style="color:#63b3ed">v'+escI(r.version)+'</span> <span style="color:#718096">'+escI(r.os)+'/'+escI(r.arch)+'</span></td>'+
-      '<td style="font-size:11px;color:#718096;font-family:monospace">'+ls+'</td>'+
-      '<td><button class="sort-btn" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();drillDown(&apos;'+r.installId+'&apos;)">Filter &#8594;</button></td>'+
+      '<td style="font-size:11px;color:#718096;font-family:monospace">'+esc(ls)+'</td>'+
+      '<td><button class="sort-btn" style="padding:3px 8px;font-size:10px" onclick="event.stopPropagation();drillDown(&apos;'+jsString(r.installId)+'&apos;)">Filter &#8594;</button></td>'+
       '</tr>';
   });
   html+='</tbody></table>';
@@ -1242,7 +1321,9 @@ async function loadAll() {
 async function refreshList() {
   try {
     // Load all notifications from the file (we'll load the full list including expired)
-    var r = await fetch('/v1/notifications?all=true');
+    var r = await fetch('/v1/notifications?all=true', {
+      headers: { 'Authorization': 'Bearer ' + _token }
+    });
     if (!r.ok) { showErr('Failed to load notifications'); return; }
     _notifications = await r.json();
     renderTable();
@@ -1260,7 +1341,8 @@ function renderTable() {
   for (var i = 0; i < _notifications.length; i++) {
     var n = _notifications[i];
     var isExpired = n.expiresAt && n.expiresAt < now;
-    var typeClass = 'type-' + (n.type || 'info');
+    var type = ['info','warning','critical'].includes(n.type) ? n.type : 'info';
+    var typeClass = 'type-' + type;
     var verTarget = '';
     if (n.minVersion || n.maxVersion) {
       verTarget = (n.minVersion ? '\u2265' + n.minVersion : '') + (n.minVersion && n.maxVersion ? ' ' : '') + (n.maxVersion ? '\u2264' + n.maxVersion : '');
@@ -1271,10 +1353,10 @@ function renderTable() {
       + '<td><span class="type-badge ' + typeClass + '">' + esc(n.type || 'info') + '</span></td>'
       + '<td><strong>' + esc(n.title) + '</strong></td>'
       + '<td style="max-width:280px;white-space:pre-wrap;word-break:break-word;font-size:11px;color:#a0aec0">' + esc(n.message).slice(0, 120) + (n.message.length > 120 ? '\u2026' : '') + '</td>'
-      + '<td class="mono">' + verTarget + '</td>'
+      + '<td class="mono">' + esc(verTarget) + '</td>'
       + '<td><span class="' + (isExpired ? 'status-expired' : 'status-active') + '">' + (isExpired ? 'Expired' : 'Active') + '</span></td>'
-      + '<td class="mono">' + (n.createdAt ? n.createdAt.slice(0, 16) : '\u2014') + '</td>'
-      + '<td style="white-space:nowrap"><button class="btn-edit" onclick="editNotif(' + i + ')">Edit</button> <button class="btn-danger" onclick="deleteNotif(\\'' + esc(n.id) + '\\')">Delete</button></td>'
+      + '<td class="mono">' + esc(n.createdAt ? n.createdAt.slice(0, 16) : '\u2014') + '</td>'
+      + '<td style="white-space:nowrap"><button class="btn-edit" onclick="editNotif(' + i + ')">Edit</button> <button class="btn-danger" onclick="deleteNotif(\\'' + jsString(n.id) + '\\')">Delete</button></td>'
       + '</tr>';
   }
   html += '</tbody></table>';
@@ -1412,15 +1494,21 @@ function readBody(req) {
 	return new Promise((resolve, reject) => {
 		const chunks = [];
 		let size = 0;
+		let rejected = false;
 		req.on("data", (chunk) => {
+			if (rejected) return;
 			size += chunk.length;
 			if (size > MAX_BODY_BYTES) {
+				rejected = true;
 				req.destroy();
 				reject(new Error("Payload too large"));
+				return;
 			}
 			chunks.push(chunk);
 		});
-		req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+		req.on("end", () => {
+			if (!rejected) resolve(Buffer.concat(chunks).toString("utf-8"));
+		});
 		req.on("error", reject);
 	});
 }
@@ -1461,6 +1549,7 @@ const server = createServer(async (req, res) => {
 			const q = parseQueryString(url);
 			if (q.all === "true") {
 				// Return ALL notifications (for admin management UI)
+				if (!requireStatsAuth(req, res)) return;
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify(loadNotifications()));
 			} else {
@@ -1478,23 +1567,13 @@ const server = createServer(async (req, res) => {
 
 	// POST /v1/notifications — Create/update notification (auth required)
 	if (method === "POST" && url === "/v1/notifications") {
-		if (!STATS_TOKEN) {
-			res.writeHead(403, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "STATS_TOKEN not configured" }));
-			return;
-		}
-		const auth = req.headers.authorization || "";
-		if (auth !== `Bearer ${STATS_TOKEN}`) {
-			res.writeHead(401, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "Unauthorized" }));
-			return;
-		}
+		if (!requireStatsAuth(req, res)) return;
 		try {
 			const body = await readBody(req);
 			const data = JSON.parse(body);
-			if (!data.title || !data.message) {
+			if (!isValidNotificationInput(data)) {
 				res.writeHead(400, { "Content-Type": "application/json" });
-				res.end(JSON.stringify({ error: "title and message are required" }));
+				res.end(JSON.stringify({ error: "Invalid notification fields" }));
 				return;
 			}
 			const notifications = loadNotifications();
@@ -1529,17 +1608,7 @@ const server = createServer(async (req, res) => {
 
 	// DELETE /v1/notifications/:id — Remove notification (auth required)
 	if (method === "DELETE" && url.startsWith("/v1/notifications/")) {
-		if (!STATS_TOKEN) {
-			res.writeHead(403, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "STATS_TOKEN not configured" }));
-			return;
-		}
-		const auth = req.headers.authorization || "";
-		if (auth !== `Bearer ${STATS_TOKEN}`) {
-			res.writeHead(401, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "Unauthorized" }));
-			return;
-		}
+		if (!requireStatsAuth(req, res)) return;
 		try {
 			const id = decodeURIComponent(url.slice("/v1/notifications/".length));
 			const notifications = loadNotifications();
@@ -1568,17 +1637,7 @@ const server = createServer(async (req, res) => {
 
 	// Installs list (protected)
 	if (method === "GET" && url.startsWith("/v1/installs")) {
-		if (!STATS_TOKEN) {
-			res.writeHead(403, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "STATS_TOKEN not configured" }));
-			return;
-		}
-		const auth = req.headers.authorization || "";
-		if (auth !== `Bearer ${STATS_TOKEN}`) {
-			res.writeHead(401, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "Unauthorized" }));
-			return;
-		}
+		if (!requireStatsAuth(req, res)) return;
 		try {
 			const q = parseQueryString(url);
 			const filters = {};
@@ -1598,17 +1657,7 @@ const server = createServer(async (req, res) => {
 
 	// Stats (protected)
 	if (method === "GET" && url.startsWith("/v1/stats")) {
-		if (!STATS_TOKEN) {
-			res.writeHead(403, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "STATS_TOKEN not configured" }));
-			return;
-		}
-		const auth = req.headers.authorization || "";
-		if (auth !== `Bearer ${STATS_TOKEN}`) {
-			res.writeHead(401, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ error: "Unauthorized" }));
-			return;
-		}
+		if (!requireStatsAuth(req, res)) return;
 		try {
 			const q = parseQueryString(url);
 			const filters = {};

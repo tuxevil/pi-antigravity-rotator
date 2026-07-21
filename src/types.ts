@@ -602,13 +602,6 @@ export const MODEL_PRICING: Record<
   "gpt-oss-120b-medium": { inputPer1M: 2.0, outputPer1M: 10.0 },
 };
 
-// Antigravity OAuth constants (same as pi-mono)
-export const CLIENT_ID = atob(
-  "MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
-);
-export const CLIENT_SECRET = atob(
-  "R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=",
-);
 export const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 // Production default: use the daily Cloud Code Assist endpoint. The proxy

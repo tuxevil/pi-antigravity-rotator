@@ -85,4 +85,9 @@ describe("telemetry receiver", () => {
 		assert.equal(line.flagHttpStatus, 403);
 		assert.deepEqual(line.flagPatternsMatched, ["violat", "blocked_401"]);
 	});
+
+	it("does not expose historical notifications without the admin token", async () => {
+		const res = await fetch(`http://127.0.0.1:${port}/v1/notifications?all=true`);
+		assert.equal(res.status, 401);
+	});
 });

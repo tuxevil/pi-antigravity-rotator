@@ -1,7 +1,7 @@
 // Version check and self-update functionality
 // Polls npm registry periodically to detect new releases
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -172,13 +172,14 @@ export function performSelfUpdate(): { ok: boolean; from: string; to: string; me
 	try {
 		// Detect install method: check if we're running from a global npm install
 		const isGlobal = isGlobalInstall();
-		const cmd = isGlobal
-			? `npm install -g ${PACKAGE_NAME}@latest`
-			: `npm install ${PACKAGE_NAME}@latest`;
+		const args = isGlobal
+			? ["install", "-g", `${PACKAGE_NAME}@latest`]
+			: ["install", `${PACKAGE_NAME}@latest`];
+		const cmd = ["npm", ...args].join(" ");
 
 		versionLogger.log("info", `Self-update: running "${cmd}"`);
 
-		const output = execSync(cmd, {
+		const output = execFileSync("npm", args, {
 			encoding: "utf-8",
 			timeout: 120_000, // 2 minute timeout
 			stdio: ["pipe", "pipe", "pipe"],
@@ -211,7 +212,10 @@ export function performSelfUpdate(): { ok: boolean; from: string; to: string; me
 function isGlobalInstall(): boolean {
 	try {
 		// Check if we're in the global npm prefix
-		const globalPrefix = execSync("npm prefix -g", { encoding: "utf-8", timeout: 5000 }).trim();
+		const globalPrefix = execFileSync("npm", ["prefix", "-g"], {
+			encoding: "utf-8",
+			timeout: 5000,
+		}).trim();
 		const thisDir = dirname(fileURLToPath(import.meta.url));
 		return thisDir.startsWith(globalPrefix);
 	} catch {

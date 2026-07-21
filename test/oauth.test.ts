@@ -66,12 +66,19 @@ describe("oauth fallback credentials warning", () => {
 			const result = warnIfUsingFallbackOAuthCreds({});
 			assert.equal(result, true);
 			assert.equal(lines.length, 1);
-			assert.match(lines[0], /bundled fallback OAuth client credentials/);
+			assert.match(lines[0], /OAuth client credentials are not configured/);
 			assert.match(lines[0], /ANTIGRAVITY_CLIENT_ID/);
 			assert.match(lines[0], /ANTIGRAVITY_CLIENT_SECRET/);
 		} finally {
 			(logger as unknown as { writer: (line: string) => void }).writer = originalWriter;
 		}
+	});
+
+	it("does not provide bundled OAuth credentials", () => {
+		assert.throws(
+			() => getOAuthClientConfig({}),
+			/Missing OAuth client credentials/,
+		);
 	});
 
 	it("warns only once per process even if called repeatedly", () => {
@@ -106,5 +113,16 @@ describe("oauth fallback credentials warning", () => {
 			if (originalSecret === undefined) delete process.env.ANTIGRAVITY_CLIENT_SECRET;
 			else process.env.ANTIGRAVITY_CLIENT_SECRET = originalSecret;
 		}
+	});
+
+	it("rejects non-HTTP redirect URIs", () => {
+		assert.throws(
+			() => getOAuthClientConfig({
+				ANTIGRAVITY_CLIENT_ID: "env-id",
+				ANTIGRAVITY_CLIENT_SECRET: "env-secret",
+				ANTIGRAVITY_REDIRECT_URI: "javascript:alert(1)",
+			}),
+			/Invalid OAuth redirect URI/,
+		);
 	});
 });

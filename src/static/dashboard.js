@@ -58,7 +58,7 @@ function renderQuotaBars(account) {
             "')\">" +
             "Clear</button>"
           : '<button class="btn-clear-flight" title="No in-flight requests for ' +
-            q.displayName +
+            escapeHtml(q.displayName) +
             '" disabled>Clear</button>';
       var idle = isIdleForKickstart(q, now);
       var kickstartBtn = "";
@@ -766,8 +766,11 @@ function jumpToAccount(email) {
   // Switch to grid first
   switchView("grid");
   setTimeout(function () {
-    var target = document.querySelector(
-      '[data-account-email="' + email.replace(/"/g, '\"') + '"]',
+    var target = Array.prototype.find.call(
+      document.querySelectorAll("[data-account-email]"),
+      function (element) {
+        return element.getAttribute("data-account-email") === email;
+      },
     );
     if (target) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1444,7 +1447,7 @@ function renderTokenChart(tokenUsage) {
         '" fill="' +
         getModelColor(model) +
         '" rx="2" opacity="0.85"><title>' +
-        model +
+        escapeHtml(model) +
         ": " +
         formatTokenCount(modelTokens) +
         " tokens (" +
@@ -1460,7 +1463,7 @@ function renderTokenChart(tokenUsage) {
       '" y="' +
       (chartHeight + 14) +
       '" text-anchor="middle" fill="#888" font-size="9" font-family="JetBrains Mono,monospace">' +
-      lbl +
+      escapeHtml(lbl) +
       "</text>";
   });
 
@@ -1527,7 +1530,7 @@ function renderTokenChart(tokenUsage) {
         getModelColor(m) +
         '"></div>' +
         '<span style="color:var(--text-dim)">' +
-        m +
+        escapeHtml(m) +
         savingsLabel +
         "</span></div>"
       );
@@ -1630,7 +1633,7 @@ function renderHeatmap(tokenUsage) {
   days.forEach(function (d) {
     html +=
       '<th style="color:var(--text-dim);font-weight:500;text-align:left;white-space:nowrap;overflow:visible">' +
-      d.label +
+      escapeHtml(d.label) +
       "</th>";
   });
   html += "</tr>";
@@ -1645,11 +1648,11 @@ function renderHeatmap(tokenUsage) {
       var val = cellMap[day + "|" + hour] || 0;
       html +=
         '<td title="' +
-        day +
+        escapeHtml(day) +
         " " +
         String(hour).padStart(2, "0") +
         ":00 · " +
-        val +
+        escapeHtml(val) +
         ' req" style="height:14px;border-radius:2px;background:' +
         colorFor(val) +
         ';border:1px solid rgba(255,255,255,0.05)"></td>';
@@ -1850,7 +1853,7 @@ function renderForecastPanel(data) {
       '<td style="padding:4px 8px"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' +
       color +
       ';margin-right:6px"></span>' +
-      displayName +
+      escapeHtml(displayName) +
       "</td>" +
       '<td style="padding:4px 8px;min-width:120px">' +
       bar +
@@ -2007,7 +2010,7 @@ function renderRequestLog(log) {
       '<td style="padding:3px 6px;color:' +
       statusColor +
       ';font-weight:700">' +
-      r.statusCode +
+      escapeHtml(r.statusCode) +
       "</td>" +
       '<td style="padding:3px 6px">' +
       formatMs(r.ttfbMs) +
@@ -2016,7 +2019,7 @@ function renderRequestLog(log) {
       formatMs(r.totalMs) +
       "</td>" +
       '<td style="padding:3px 6px">' +
-      tokens +
+      escapeHtml(tokens) +
       "</td>" +
       "</tr>";
   });
@@ -2076,17 +2079,23 @@ function renderRecentEvents(events) {
     "</div>";
   var rows = list
     .map(function (event) {
+      var eventLevel = ["info", "warn", "error"].includes(event.level)
+        ? event.level
+        : "info";
+      var eventSource = ["rotator", "proxy"].includes(event.source)
+        ? event.source
+        : "unknown";
       return (
         '<div class="event-item level-' +
-        (event.level || "info") +
+        eventLevel +
         '">' +
         '<div class="event-time">' +
         formatTime(event.timestamp) +
         "</div>" +
         '<div class="event-source ' +
-        event.source +
+        eventSource +
         '">' +
-        escapeHtml(event.source) +
+        escapeHtml(eventSource) +
         "</div>" +
         '<div class="event-message">' +
         maskEventMessage(event.message) +
@@ -2152,6 +2161,17 @@ function escapeHtml(text) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function safeActionUrl(value) {
+  if (!value) return "";
+  try {
+    var url = new URL(String(value), window.location.origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    return url.href;
+  } catch (_) {
+    return "";
+  }
 }
 
 function jsString(text) {
@@ -2810,8 +2830,12 @@ function renderNotifications(notifications) {
     // Check if user dismissed this notification
     if (localStorage.getItem("notif-dismissed-" + n.id)) continue;
     visibleCount++;
-    var icon = NOTIF_ICONS[n.type] || NOTIF_ICONS.info;
-    var typeClass = "notif-" + (n.type || "info");
+    var type = ["info", "warning", "critical"].includes(n.type)
+      ? n.type
+      : "info";
+    var icon = NOTIF_ICONS[type] || NOTIF_ICONS.info;
+    var typeClass = "notif-" + type;
+    var actionUrl = safeActionUrl(n.actionUrl);
     html +=
       '<div class="notif-banner ' +
       typeClass +
@@ -2822,11 +2846,11 @@ function renderNotifications(notifications) {
     html += '<div class="notif-content">';
     html += '<div class="notif-title">' + escapeHtml(n.title) + "</div>";
     html += '<div class="notif-msg">' + escapeHtml(n.message) + "</div>";
-    if (n.actionUrl) {
+    if (actionUrl) {
       html += '<div class="notif-actions">';
       html +=
         '<a class="notif-action-btn" href="' +
-        escapeHtml(n.actionUrl) +
+        escapeHtml(actionUrl) +
         '" target="_blank">' +
         escapeHtml(n.actionLabel || "Learn More") +
         "</a>";
@@ -2835,7 +2859,7 @@ function renderNotifications(notifications) {
     html += "</div>";
     html +=
       '<button class="notif-dismiss" onclick="dismissNotification(\'' +
-      escapeHtml(n.id) +
+      jsString(n.id) +
       '\')" title="Dismiss">&times;</button>';
     html += "</div>";
   }

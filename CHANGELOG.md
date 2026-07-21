@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Security
+- OAuth client ID and secret are no longer bundled; login now requires operator-provided environment variables.
+- Hardened dashboard, onboarding, and telemetry notification rendering against HTML/JavaScript injection and unsafe notification links.
+- Protected historical notification listings, bounded CLI-login and notification request bodies, and replaced shell command construction in self-update with argument-safe execution.
+- Updated `brace-expansion` to `5.0.7`; `npm audit` is clean.
+
 ## [2.3.4] - 2026-07-21
 
 ### Fixed

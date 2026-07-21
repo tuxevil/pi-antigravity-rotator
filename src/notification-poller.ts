@@ -14,9 +14,24 @@ const notifLogger = logger.child("notifications");
 
 // Same base URL as telemetry endpoint (just different path)
 const DEFAULT_TELEMETRY_BASE = "https://telemetry.tuxevil.com:3800";
-const TELEMETRY_BASE = process.env.PI_ROTATOR_TELEMETRY_URL?.trim()
-	? new URL(process.env.PI_ROTATOR_TELEMETRY_URL).origin
-	: DEFAULT_TELEMETRY_BASE;
+
+export function resolveTelemetryBase(raw: string | undefined): string {
+	const candidate = raw?.trim();
+	if (!candidate) return DEFAULT_TELEMETRY_BASE;
+	try {
+		const url = new URL(candidate);
+		if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("unsupported protocol");
+		return url.origin;
+	} catch {
+		notifLogger.log(
+			"warn",
+			"Ignoring invalid PI_ROTATOR_TELEMETRY_URL for notifications; using the default HTTPS endpoint.",
+		);
+		return DEFAULT_TELEMETRY_BASE;
+	}
+}
+
+const TELEMETRY_BASE = resolveTelemetryBase(process.env.PI_ROTATOR_TELEMETRY_URL);
 const NOTIFICATIONS_URL = `${TELEMETRY_BASE}/v1/notifications`;
 
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes

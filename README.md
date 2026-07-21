@@ -82,6 +82,17 @@ To donate a quota-enabled account safely:
 
 Requirements for npm/source installs: Node.js 22 or newer. The published package runs the TypeScript sources through `tsx` at runtime, so `tsx` is intentionally listed as a production dependency. The Docker image uses Node 22.
 
+### OAuth client credentials (required for login)
+
+OAuth client credentials are intentionally not bundled with the project. Register your own Google OAuth client and configure it before running `login` or using the web-based account login:
+
+```bash
+export ANTIGRAVITY_CLIENT_ID="your-client-id"
+export ANTIGRAVITY_CLIENT_SECRET="your-client-secret"
+```
+
+The default callback is `http://localhost:51121/oauth-callback`. For hosted login, also set `ANTIGRAVITY_REDIRECT_URI` to the HTTPS callback registered in your OAuth client. Keep the secret in an environment manager or deployment secret store; do not commit it to the repository.
+
 ### Option A: Install from npm
 
 ```bash
@@ -615,7 +626,7 @@ Flag data is the most valuable signal. It lets us study what behavior patterns l
 - ❌ Request/response bodies
 - ❌ Error message text (only which known keywords matched)
 
-IP addresses are not part of the telemetry JSON payload and are not written to telemetry event files. The receiver and network path can still observe the source IP for transport and in-memory rate limiting, and the default telemetry endpoint uses plain HTTP. Set `PI_ROTATOR_TELEMETRY=off` to disable telemetry, or set `PI_ROTATOR_TELEMETRY_URL` to an HTTPS endpoint you control.
+IP addresses are not part of the telemetry JSON payload and are not written to telemetry event files. The receiver and network path can still observe the source IP for transport and in-memory rate limiting. The default endpoint uses HTTPS; if you explicitly configure an `http://` endpoint, the rotator warns about the exposure. Set `PI_ROTATOR_TELEMETRY=off` to disable telemetry, or set `PI_ROTATOR_TELEMETRY_URL` to an HTTPS endpoint you control.
 
 ### Endpoint
 

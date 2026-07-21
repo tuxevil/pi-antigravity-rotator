@@ -30,7 +30,24 @@ const telemetryLogger = logger.child("telemetry");
 // Can be overridden via PI_ROTATOR_TELEMETRY_URL.
 // HTTPS is preferred to avoid leaking the operator's IP in plaintext.
 const DEFAULT_TELEMETRY_ENDPOINT = "https://telemetry.tuxevil.com:3800/v1/events";
-const TELEMETRY_ENDPOINT = process.env.PI_ROTATOR_TELEMETRY_URL?.trim() || DEFAULT_TELEMETRY_ENDPOINT;
+
+export function resolveTelemetryEndpoint(raw: string | undefined): string {
+	const candidate = raw?.trim();
+	if (!candidate) return DEFAULT_TELEMETRY_ENDPOINT;
+	try {
+		const url = new URL(candidate);
+		if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("unsupported protocol");
+		return candidate;
+	} catch {
+		telemetryLogger.log(
+			"warn",
+			"Ignoring invalid PI_ROTATOR_TELEMETRY_URL; using the default HTTPS endpoint.",
+		);
+		return DEFAULT_TELEMETRY_ENDPOINT;
+	}
+}
+
+const TELEMETRY_ENDPOINT = resolveTelemetryEndpoint(process.env.PI_ROTATOR_TELEMETRY_URL);
 
 const HEARTBEAT_INTERVAL_MS = 1 * 60 * 60 * 1000; // 1 hour
 const SEND_TIMEOUT_MS = 5000;

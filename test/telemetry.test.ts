@@ -6,10 +6,12 @@ import {
 	trackFeature,
 	getFeaturesSnapshot,
 	warnIfInsecureTelemetryEndpoint,
+	resolveTelemetryEndpoint,
 	FLAG_PATTERNS,
 } from "../src/telemetry.js";
 import { logger } from "../src/logger.js";
 import type { TelemetryPayload, FlagEventData, FlagTelemetryPayload } from "../src/telemetry.js";
+import { resolveTelemetryBase } from "../src/notification-poller.js";
 
 describe("telemetry", () => {
 	const originalEnv = process.env.PI_ROTATOR_TELEMETRY;
@@ -46,6 +48,30 @@ describe("telemetry", () => {
 		it("is case-insensitive", () => {
 			process.env.PI_ROTATOR_TELEMETRY = "OFF";
 			assert.equal(isTelemetryEnabled(), false);
+		});
+	});
+
+	describe("resolveTelemetryEndpoint()", () => {
+		it("accepts HTTP(S) overrides", () => {
+			assert.equal(
+				resolveTelemetryEndpoint("https://telemetry.example.test/v1/events"),
+				"https://telemetry.example.test/v1/events",
+			);
+			assert.equal(
+				resolveTelemetryEndpoint("http://localhost:3800/v1/events"),
+				"http://localhost:3800/v1/events",
+			);
+		});
+
+		it("falls back for invalid or unsupported overrides", () => {
+			assert.match(
+				resolveTelemetryEndpoint("javascript:alert(1)"),
+				/^https:\/\/telemetry\.tuxevil\.com:3800\/v1\/events$/,
+			);
+			assert.match(
+				resolveTelemetryEndpoint("not a URL"),
+				/^https:\/\/telemetry\.tuxevil\.com:3800\/v1\/events$/,
+			);
 		});
 	});
 
@@ -320,5 +346,21 @@ describe("warnIfInsecureTelemetryEndpoint", () => {
 		} finally {
 			restoreLog(originalWriter);
 		}
+	});
+});
+
+describe("resolveTelemetryBase", () => {
+	it("normalizes HTTP(S) overrides to their origin", () => {
+		assert.equal(
+			resolveTelemetryBase("https://telemetry.example.test/v1/events"),
+			"https://telemetry.example.test",
+		);
+	});
+
+	it("falls back instead of throwing for invalid overrides", () => {
+		assert.equal(
+			resolveTelemetryBase("file:///tmp/telemetry"),
+			"https://telemetry.tuxevil.com:3800",
+		);
 	});
 });

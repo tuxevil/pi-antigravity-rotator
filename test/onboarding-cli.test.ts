@@ -1,7 +1,7 @@
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { serveCliLogin, handleCliLoginApi } from "../src/onboarding.js";
+import { serveCliLogin, serveLoginLanding, handleCliLoginApi } from "../src/onboarding.js";
 
 function mockRes() {
 	const state = { body: "", statusCode: 200, headers: {} as Record<string, string> };
@@ -42,6 +42,25 @@ function mockReqRaw(raw: string): any {
 
 const dummyRotator = {} as any;
 
+const originalOAuthEnv = {
+	clientId: process.env.ANTIGRAVITY_CLIENT_ID,
+	clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET,
+	redirectUri: process.env.ANTIGRAVITY_REDIRECT_URI,
+};
+process.env.ANTIGRAVITY_CLIENT_ID = "test-client-id";
+process.env.ANTIGRAVITY_CLIENT_SECRET = "test-client-secret";
+
+process.env.ANTIGRAVITY_REDIRECT_URI = "https://example.test/callback";
+
+after(() => {
+  if (originalOAuthEnv.clientId === undefined) delete process.env.ANTIGRAVITY_CLIENT_ID;
+  else process.env.ANTIGRAVITY_CLIENT_ID = originalOAuthEnv.clientId;
+  if (originalOAuthEnv.clientSecret === undefined) delete process.env.ANTIGRAVITY_CLIENT_SECRET;
+  else process.env.ANTIGRAVITY_CLIENT_SECRET = originalOAuthEnv.clientSecret;
+  if (originalOAuthEnv.redirectUri === undefined) delete process.env.ANTIGRAVITY_REDIRECT_URI;
+  else process.env.ANTIGRAVITY_REDIRECT_URI = originalOAuthEnv.redirectUri;
+});
+
 function extractSessionId(html: string): string {
 	const sessionMatch = html.match(/name="session" value="([^"]+)"/);
 	assert.ok(sessionMatch, "session hidden input not found in HTML");
@@ -51,7 +70,7 @@ function extractSessionId(html: string): string {
 function extractAuthUrl(html: string): string {
 	const authMatch = html.match(/<a class="cta" href="([^"]+)"/);
 	assert.ok(authMatch, "OAuth CTA link not found in HTML");
-	return authMatch[1];
+	return authMatch[1].replace(/&amp;/g, "&");
 }
 
 describe("serveCliLogin", () => {
@@ -201,5 +220,16 @@ describe("handleCliLoginApi", () => {
 		const parsed = JSON.parse(state.body);
 		assert.equal(parsed.ok, false);
 		assert.match(parsed.error, /State mismatch/);
+	});
+});
+
+describe("serveLoginLanding", () => {
+	it("escapes operator-controlled redirect URIs before rendering HTML", () => {
+		process.env.ANTIGRAVITY_REDIRECT_URI = "https://example.test/<img src=x onerror=alert(1)>";
+		const { res, state } = mockRes();
+		serveLoginLanding(res);
+		assert.doesNotMatch(state.body, /<img src=x onerror=alert\(1\)>/);
+		assert.match(state.body, /&lt;img src=x onerror=alert\(1\)&gt;/);
+		process.env.ANTIGRAVITY_REDIRECT_URI = "https://example.test/callback";
 	});
 });

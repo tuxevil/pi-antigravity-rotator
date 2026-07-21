@@ -116,6 +116,13 @@ describe("dashboard", () => {
     assert.match(js, /function maskEmail\(/);
   });
 
+  it("validates notification links and escapes notification IDs in handlers", () => {
+    const js = readDashboardJs();
+    assert.match(js, /function safeActionUrl\(/);
+    assert.match(js, /safeActionUrl\(n\.actionUrl\)/);
+    assert.match(js, /jsString\(n\.id\)/);
+  });
+
   it("escapeHtml correctly escapes the five HTML-sensitive characters", () => {
     const js = readDashboardJs();
     const match = js.match(/function escapeHtml\([^)]*\)\s*{[\s\S]*?\n\s*\}/);

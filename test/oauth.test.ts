@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { discoverProject, getOAuthClientConfig, warnIfUsingFallbackOAuthCreds } from "../src/oauth.js";
-import { logger } from "../src/logger.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -60,8 +59,8 @@ describe("oauth fallback credentials warning", () => {
 
 	it("returns true and logs when env vars are missing", () => {
 		const lines: string[] = [];
-		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
-		(logger as unknown as { writer: (line: string) => void }).writer = (line) => lines.push(line);
+		const originalWarn = console.warn;
+		console.warn = (line?: unknown) => lines.push(String(line));
 		try {
 			const result = warnIfUsingFallbackOAuthCreds({});
 			assert.equal(result, true);
@@ -70,7 +69,7 @@ describe("oauth fallback credentials warning", () => {
 			assert.match(lines[0], /ANTIGRAVITY_CLIENT_ID/);
 			assert.match(lines[0], /ANTIGRAVITY_CLIENT_SECRET/);
 		} finally {
-			(logger as unknown as { writer: (line: string) => void }).writer = originalWriter;
+			console.warn = originalWarn;
 		}
 	});
 
@@ -83,8 +82,8 @@ describe("oauth fallback credentials warning", () => {
 
 	it("warns only once per process even if called repeatedly", () => {
 		const lines: string[] = [];
-		const originalWriter = (logger as unknown as { writer: (line: string) => void }).writer;
-		(logger as unknown as { writer: (line: string) => void }).writer = (line) => lines.push(line);
+		const originalWarn = console.warn;
+		console.warn = (line?: unknown) => lines.push(String(line));
 		try {
 			warnIfUsingFallbackOAuthCreds({});
 			const firstCallLines = lines.length;
@@ -94,7 +93,7 @@ describe("oauth fallback credentials warning", () => {
 			// Still returns true because fallback is in use
 			assert.equal(warnIfUsingFallbackOAuthCreds({}), true);
 		} finally {
-			(logger as unknown as { writer: (line: string) => void }).writer = originalWriter;
+			console.warn = originalWarn;
 		}
 	});
 

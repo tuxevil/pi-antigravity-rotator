@@ -1,9 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { TOKEN_URL } from "./types.js";
 import { fetchWithRetry } from "./fetch-with-retry.js";
-import { logger } from "./logger.js";
-
-const oauthLogger = logger.child("oauth");
 
 export const DEFAULT_REDIRECT_URI = "http://localhost:51121/oauth-callback";
 export const SCOPES = [
@@ -73,8 +70,7 @@ export function warnIfUsingFallbackOAuthCreds(env: NodeJS.ProcessEnv = process.e
 	if (missing.length === 0) return false;
 	if (warnedAboutFallback) return true;
 	warnedAboutFallback = true;
-	oauthLogger.log(
-		"warn",
+	console.warn(
 		"OAuth client credentials are not configured. Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET to your own registered OAuth client before using login.",
 	);
 	return true;

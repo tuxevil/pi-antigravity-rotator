@@ -2,11 +2,19 @@
 
 ## [Unreleased]
 
-### Security
-- Operator-provided OAuth client variables now take precedence, while the legacy compatibility client remains available with a deprecation warning so existing installations are not interrupted during upgrade.
-- Hardened dashboard, onboarding, and telemetry notification rendering against HTML/JavaScript injection and unsafe notification links.
-- Protected historical notification listings, bounded CLI-login and notification request bodies, and replaced shell command construction in self-update with argument-safe execution.
-- Updated `brace-expansion` to `5.0.7`; `npm audit` is clean.
+## [2.3.5] - 2026-07-21
+
+### Added
+- **Gemini 3.6 Flash**: Added model discovery, routing, pricing, dashboard, and quota support while keeping the shared Gemini Flash pool behavior.
+- **Security policy**: Added repository security guidance and hardened dashboard, onboarding, telemetry, and notification handling.
+
+### Changed
+- **OAuth compatibility**: Operator-provided OAuth credentials take precedence, while the legacy fallback remains available with a deprecation warning so existing installations are not interrupted.
+
+### Fixed
+- **Test isolation**: Routing fixtures no longer write to the operator's real account configuration directory.
+- **Security hardening**: Removed OAuth credentials from utility scripts, eliminated clear-text OAuth logging, and addressed remaining CodeQL/security findings.
+- **Dependency security**: Updated `brace-expansion` to `5.0.7`; `npm audit` is clean.
 
 ## [2.3.4] - 2026-07-21
 

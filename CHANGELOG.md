@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-07-21
+
+### Changed
+- **Telemetry**: Updated telemetry and notification polling endpoint URL to `https://telemetry.tuxevil.com`.
+
 ## [2.3.2] - 2026-07-05
 
 ### Fixed

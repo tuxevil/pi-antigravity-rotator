@@ -5,7 +5,7 @@
 ## [2.3.5] - 2026-07-21
 
 ### Added
-- **Gemini 3.6 Flash**: Added model discovery, routing, pricing, dashboard, and quota support while keeping the shared Gemini Flash pool behavior.
+- **Gemini 3.6 Flash**: Added model discovery, routing, pricing, dashboard, and quota support while keeping the shared Gemini Flash pool behavior. ([PR #18](https://github.com/tuxevil/pi-antigravity-rotator/pull/18) by [@CyR1en](https://github.com/CyR1en))
 - **Security policy**: Added repository security guidance and hardened dashboard, onboarding, telemetry, and notification handling.
 
 ### Changed

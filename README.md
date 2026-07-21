@@ -494,6 +494,7 @@ Current adapter scope:
 
 Thanks to these amazing people who have contributed to the project:
 
+- **[@CyR1en](https://github.com/CyR1en)** (Ethan Bacurio) — Added the Gemini 3.6 Flash model family, shared quota-pool routing, pricing, dashboard support, and regression coverage. ([PR #18](https://github.com/tuxevil/pi-antigravity-rotator/pull/18))
 - **[@josenicomaia](https://github.com/josenicomaia)** (José Nicodemos Maia Neto) — Modularized the compatibility layer architecture, added multimodal tool response support, and fixed streaming pass-through for tool executions. ([PR #8](https://github.com/tuxevil/pi-antigravity-rotator/pull/8), [PR #9](https://github.com/tuxevil/pi-antigravity-rotator/pull/9), [PR #11](https://github.com/tuxevil/pi-antigravity-rotator/pull/11))
 - **[@yashyadav711](https://github.com/yashyadav711)** (Yash) — Fixed Draft-2020-12 inline JSON-Schema union type mapping for Gemini tools support. ([PR #10](https://github.com/tuxevil/pi-antigravity-rotator/pull/10))
 - **[@javargasm](https://github.com/javargasm)** (Jeisson Alexander Vargas Marroquin) — Anthropic tool-use compatibility layer (`tool_use`/`tool_result` content block conversion), JSON schema round-trip fixes, and compat test suite expansion. ([PR #3](https://github.com/tuxevil/pi-antigravity-rotator/pull/3), [PR #7](https://github.com/tuxevil/pi-antigravity-rotator/pull/7))

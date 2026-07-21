@@ -13,7 +13,7 @@ import { isTelemetryEnabled } from "./telemetry.js";
 const notifLogger = logger.child("notifications");
 
 // Same base URL as telemetry endpoint (just different path)
-const DEFAULT_TELEMETRY_BASE = "https://telemetry.tuxevil.com:3800";
+const DEFAULT_TELEMETRY_BASE = "https://telemetry.tuxevil.com";
 
 export function resolveTelemetryBase(raw: string | undefined): string {
 	const candidate = raw?.trim();

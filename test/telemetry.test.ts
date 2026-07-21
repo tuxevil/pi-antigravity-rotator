@@ -66,11 +66,11 @@ describe("telemetry", () => {
 		it("falls back for invalid or unsupported overrides", () => {
 			assert.match(
 				resolveTelemetryEndpoint("javascript:alert(1)"),
-				/^https:\/\/telemetry\.tuxevil\.com:3800\/v1\/events$/,
+				/^https:\/\/telemetry\.tuxevil\.com\/v1\/events$/,
 			);
 			assert.match(
 				resolveTelemetryEndpoint("not a URL"),
-				/^https:\/\/telemetry\.tuxevil\.com:3800\/v1\/events$/,
+				/^https:\/\/telemetry\.tuxevil\.com\/v1\/events$/,
 			);
 		});
 	});
@@ -360,7 +360,7 @@ describe("resolveTelemetryBase", () => {
 	it("falls back instead of throwing for invalid overrides", () => {
 		assert.equal(
 			resolveTelemetryBase("file:///tmp/telemetry"),
-			"https://telemetry.tuxevil.com:3800",
+			"https://telemetry.tuxevil.com",
 		);
 	});
 });

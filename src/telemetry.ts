@@ -29,7 +29,7 @@ const telemetryLogger = logger.child("telemetry");
 // Update this URL to your VPS before publishing to npm.
 // Can be overridden via PI_ROTATOR_TELEMETRY_URL.
 // HTTPS is preferred to avoid leaking the operator's IP in plaintext.
-const DEFAULT_TELEMETRY_ENDPOINT = "https://telemetry.tuxevil.com:3800/v1/events";
+const DEFAULT_TELEMETRY_ENDPOINT = "https://telemetry.tuxevil.com/v1/events";
 
 export function resolveTelemetryEndpoint(raw: string | undefined): string {
 	const candidate = raw?.trim();

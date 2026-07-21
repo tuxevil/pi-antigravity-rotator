@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.3.6] - 2026-07-21
+
+### Fixed
+- **Telemetry**: Fixed telemetry and notification polling endpoint URL by removing port `:3800` from `https://telemetry.tuxevil.com`.
+
 ## [2.3.5] - 2026-07-21
 
 ### Added

@@ -164,6 +164,23 @@ describe("dashboard", () => {
     assert.doesNotMatch(html, /GOCSPX-[A-Za-z0-9_-]{20,}/);
   });
 
+  it("does not embed OAuth credentials in utility scripts", () => {
+    const scripts = [
+      "query_models.js",
+      "test_generate.js",
+      "test_loop.js",
+      "scripts/query_models.js",
+      "scripts/test_generate.js",
+      "scripts/test_loop.js",
+    ];
+    for (const script of scripts) {
+      const source = readFileSync(join(__dirname, "..", script), "utf-8");
+      assert.doesNotMatch(source, /CLIENT_(?:ID|SECRET)\s*=\s*atob\(/, script);
+      assert.match(source, /process\.env\.ANTIGRAVITY_CLIENT_ID/, script);
+      assert.match(source, /process\.env\.ANTIGRAVITY_CLIENT_SECRET/, script);
+    }
+  });
+
   it("does not inline any obvious secret keys (refreshToken, accessToken)", () => {
     const html = renderDashboard();
     assert.doesNotMatch(html, /refreshToken\s*[:=]\s*["']1\/\//);

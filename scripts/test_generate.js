@@ -1,8 +1,9 @@
 import fs from "node:fs";
 
 async function main() {
-    const CLIENT_ID = atob("MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==");
-    const CLIENT_SECRET = atob("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=");
+    const CLIENT_ID = process.env.ANTIGRAVITY_CLIENT_ID;
+    const CLIENT_SECRET = process.env.ANTIGRAVITY_CLIENT_SECRET;
+    if (!CLIENT_ID || !CLIENT_SECRET) throw new Error("Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET before running this script.");
     const accounts = JSON.parse(fs.readFileSync("/root/.pi-antigravity-rotator/accounts.json", "utf8")).accounts;
     const account = accounts[0];
 

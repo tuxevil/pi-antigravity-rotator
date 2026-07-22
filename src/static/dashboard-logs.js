@@ -39,6 +39,13 @@ function formatDuration(ms) {
   var d = Math.floor(h / 24);
   return d + "d " + (h % 24) + "h " + (m % 60) + "m";
 }
+
+function formatCost(usd) {
+  if (usd === undefined || usd === null || usd <= 0) return "$0.00";
+  if (usd < 0.001) return "$" + usd.toFixed(5);
+  if (usd < 0.01) return "$" + usd.toFixed(4);
+  return "$" + usd.toFixed(3);
+}
 function refreshHeaderStats() {
   fetch("/api/status", { headers: authHeaders() })
     .then(function(r) { return r.json(); })
@@ -98,6 +105,7 @@ function updateSummaryCards(logs, total) {
   var promptEl = document.getElementById("statLogPromptTokens");
   var compEl = document.getElementById("statLogCompletionTokens");
   var latEl = document.getElementById("statLogAvgLatency");
+  var costEl = document.getElementById("statLogCost");
 
   if (reqEl) reqEl.textContent = total.toLocaleString();
 
@@ -105,10 +113,12 @@ function updateSummaryCards(logs, total) {
   var totalComp = 0;
   var totalDur = 0;
   var countDur = 0;
+  var totalCost = 0;
 
   logs.forEach(function(l) {
     totalPrompt += (l.promptTokens || 0);
     totalComp += (l.completionTokens || 0);
+    totalCost += (l.cost || 0);
     if (l.durationMs) {
       totalDur += l.durationMs;
       countDur++;
@@ -118,9 +128,10 @@ function updateSummaryCards(logs, total) {
   if (promptEl) promptEl.textContent = totalPrompt.toLocaleString();
   if (compEl) compEl.textContent = totalComp.toLocaleString();
   if (latEl) latEl.textContent = countDur > 0 ? Math.round(totalDur / countDur) + "ms" : "--";
+  if (costEl) costEl.textContent = formatCost(totalCost);
 }
 
-var ALL_COLS = ["time", "key", "model", "type", "status", "tokens", "duration", "ttfb", "ip"];
+var ALL_COLS = ["time", "key", "model", "type", "status", "tokens", "cost", "duration", "ttfb", "ip"];
 var columnState = {};
 
 function loadColumnState() {
@@ -204,7 +215,17 @@ function renderLogs(logs) {
     var ts = l.createdAt ? new Date(l.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "-";
     var duration = l.durationMs ? (l.durationMs + "ms") : "-";
     var ttfb = l.ttfbMs ? (l.ttfbMs + "ms") : "-";
-    var keyDisplay = l.apiKeyHash ? l.apiKeyHash.slice(0, 10) + "..." : "unauthenticated";
+
+    var keyDisplay = "unauthenticated";
+    if (l.keyAlias) {
+      keyDisplay = l.keyAlias;
+    } else if (l.keyName) {
+      keyDisplay = l.keyName;
+    } else if (l.apiKeyHash) {
+      keyDisplay = l.apiKeyHash.slice(0, 10) + "...";
+    }
+
+    var costDisplay = formatCost(l.cost);
 
     var typeBadgeClass = "badge-model";
     if (l.callType === "anthropic") typeBadgeClass = "badge-cooldown";
@@ -212,11 +233,12 @@ function renderLogs(logs) {
 
     return '<tr class="log-row" onclick="toggleExpand(\'' + l.requestId + '\')">' +
       '<td class="col-time" style="font-size:0.8rem;color:var(--text-dim)">' + ts + '</td>' +
-      '<td class="col-key"><span class="mono" style="font-size:0.78rem">' + escapeHtml(keyDisplay) + '</span></td>' +
+      '<td class="col-key"><span class="mono" style="font-size:0.78rem;font-weight:600;color:var(--accent)" title="' + escapeHtml(l.apiKeyHash || "") + '">' + escapeHtml(keyDisplay) + '</span></td>' +
       '<td class="col-model"><span class="model-chip">' + escapeHtml(l.model) + '</span></td>' +
       '<td class="col-type"><span class="badge ' + typeBadgeClass + '" style="font-size:9px">' + escapeHtml(l.callType || "native") + '</span></td>' +
       '<td class="col-status">' + statusBadge + '</td>' +
       '<td class="col-tokens mono" style="font-size:0.82rem">' + l.promptTokens + ' <span style="color:var(--text-dim)">/</span> <span style="color:var(--green)">' + l.completionTokens + '</span></td>' +
+      '<td class="col-cost mono" style="font-size:0.82rem;color:#3b82f6">' + costDisplay + '</td>' +
       '<td class="col-duration mono" style="font-size:0.82rem">' + duration + '</td>' +
       '<td class="col-ttfb mono" style="font-size:0.82rem;color:var(--text-dim)">' + ttfb + '</td>' +
       '<td class="col-ip" style="font-size:0.78rem;color:var(--text-dim)">' + (l.requesterIp || "-") + '</td>' +
@@ -226,6 +248,8 @@ function renderLogs(logs) {
         '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:0.82rem">' +
           '<div><strong>Request ID:</strong> <span class="mono">' + escapeHtml(l.requestId) + '</span></div>' +
           '<div><strong>Account Email:</strong> <span class="mono">' + escapeHtml(l.accountEmail || "unknown") + '</span></div>' +
+          '<div><strong>Est. Cost:</strong> <span class="mono" style="color:#3b82f6">' + costDisplay + '</span></div>' +
+          '<div><strong>Key Hash:</strong> <span class="mono">' + escapeHtml(l.apiKeyHash || "none") + '</span></div>' +
         '</div>' +
         (l.metadata && Object.keys(l.metadata).length > 0 ? '<div style="margin-bottom:8px;font-size:0.82rem"><strong>Metadata:</strong> <span class="mono">' + escapeHtml(JSON.stringify(l.metadata)) + '</span></div>' : '') +
         (l.requestMessages ? '<details style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600;color:var(--accent);margin-bottom:6px">📩 Request Payload (Messages)</summary><pre class="log-payload">' + escapeHtml(JSON.stringify(l.requestMessages, null, 2)) + '</pre></details>' : '') +
@@ -294,20 +318,24 @@ function renderByKeySummary(byKey) {
   if (!byKey || byKey.length === 0) { container.innerHTML = ""; return; }
   
   var html = '<div class="list-panel" style="margin-bottom:20px">' +
-    '<div class="list-toolbar"><span class="list-toolbar-label">Spend Summary by Virtual Key</span></div>' +
+    '<div class="list-toolbar"><span class="list-toolbar-label">Spend Summary by Virtual Key / Agent</span></div>' +
     '<div style="overflow-x:auto">' +
     '<table class="compact-table"><thead><tr>' +
-      '<th>Key Hash</th><th>Total Requests</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>Avg Duration</th><th>Last Active</th>' +
+      '<th>Key / Agent</th><th>Total Requests</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>Est. Cost</th><th>Avg Duration</th><th>Last Active</th>' +
     '</tr></thead><tbody>';
 
   html += byKey.map(function(k) {
     var avgDur = k.avgDurationMs ? Math.round(k.avgDurationMs) + "ms" : "-";
     var lastSeen = k.lastSeen ? new Date(k.lastSeen).toLocaleString() : "-";
+    var keyName = k.keyAlias || k.keyName || (k.apiKeyHash ? k.apiKeyHash.slice(0, 14) + "..." : "unauthenticated");
+    var costStr = formatCost(k.totalCost);
+
     return '<tr>' +
-      '<td><span class="mono" style="color:var(--accent)">' + escapeHtml(k.apiKeyHash.slice(0, 14) + "...") + '</span></td>' +
+      '<td><strong style="color:var(--accent)" title="' + escapeHtml(k.apiKeyHash) + '">' + escapeHtml(keyName) + '</strong></td>' +
       '<td><strong>' + k.totalRequests.toLocaleString() + '</strong></td>' +
       '<td class="mono">' + k.totalPromptTokens.toLocaleString() + '</td>' +
       '<td class="mono" style="color:var(--green)">' + k.totalCompletionTokens.toLocaleString() + '</td>' +
+      '<td class="mono" style="color:#3b82f6">' + costStr + '</td>' +
       '<td class="mono">' + avgDur + '</td>' +
       '<td style="font-size:0.8rem;color:var(--text-dim)">' + lastSeen + '</td>' +
     '</tr>';

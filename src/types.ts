@@ -717,6 +717,8 @@ export interface VirtualKey {
 export interface SpendLog {
   requestId: string;
   apiKeyHash?: string | null;
+  keyAlias?: string | null;
+  keyName?: string | null;
   model: string;
   accountEmail?: string | null;
   callType: string;
@@ -724,6 +726,7 @@ export interface SpendLog {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cost?: number;
   startTime: string;
   endTime: string;
   ttfbMs?: number | null;

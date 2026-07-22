@@ -990,6 +990,17 @@ const DASHBOARD_LOGS_HTML = renderAppShell({
 
   <div class="summary-card">
     <div class="summary-card-header">
+      <span>Est. Cost</span>
+      <div class="summary-card-icon" style="background:rgba(59,130,246,0.1);color:#3b82f6">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      </div>
+    </div>
+    <div class="summary-card-value" id="statLogCost" style="color:#3b82f6">$0.00</div>
+    <div class="summary-card-sub">Estimated USD cost</div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-card-header">
       <span>Avg Latency</span>
       <div class="summary-card-icon" style="background:rgba(251,191,36,0.1);color:var(--yellow)">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -1050,6 +1061,7 @@ const DASHBOARD_LOGS_HTML = renderAppShell({
         <label class="col-picker-item"><input type="checkbox" data-col="type" checked onchange="toggleColumn('type')"> Call Type</label>
         <label class="col-picker-item"><input type="checkbox" data-col="status" checked onchange="toggleColumn('status')"> Status</label>
         <label class="col-picker-item"><input type="checkbox" data-col="tokens" checked onchange="toggleColumn('tokens')"> Tokens (In / Out)</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="cost" checked onchange="toggleColumn('cost')"> Est. Cost</label>
         <label class="col-picker-item"><input type="checkbox" data-col="duration" checked onchange="toggleColumn('duration')"> Duration</label>
         <label class="col-picker-item"><input type="checkbox" data-col="ttfb" checked onchange="toggleColumn('ttfb')"> TTFB</label>
         <label class="col-picker-item"><input type="checkbox" data-col="ip" checked onchange="toggleColumn('ip')"> IP Address</label>
@@ -1069,6 +1081,7 @@ const DASHBOARD_LOGS_HTML = renderAppShell({
           <th class="col-type">Call Type</th>
           <th class="col-status">Status</th>
           <th class="col-tokens">Tokens (In / Out)</th>
+          <th class="col-cost">Est. Cost</th>
           <th class="col-duration">Duration</th>
           <th class="col-ttfb">TTFB</th>
           <th class="col-ip">IP</th>

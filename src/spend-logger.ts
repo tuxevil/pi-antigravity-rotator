@@ -1,5 +1,5 @@
 import randomBytes from "node:crypto";
-import type { SpendLog, DailySpend } from "./types.js";
+import { MODEL_PRICING, type SpendLog, type DailySpend } from "./types.js";
 import { isDbConfigured, queryDb } from "./db-store.js";
 
 const FLUSH_INTERVAL_MS = 5_000;
@@ -169,6 +169,30 @@ export async function flushSpendLogs(): Promise<void> {
   }
 }
 
+export function calculateCost(model: string, promptTokens: number, completionTokens: number): number {
+  let pricing = MODEL_PRICING[model];
+  if (!pricing) {
+    const lower = model.toLowerCase();
+    if (lower.includes("opus")) {
+      pricing = MODEL_PRICING["claude-opus-4-6-thinking"];
+    } else if (lower.includes("sonnet")) {
+      pricing = MODEL_PRICING["claude-sonnet-4-6"];
+    } else if (lower.includes("3.6-flash")) {
+      pricing = MODEL_PRICING["gemini-3.6-flash-high"];
+    } else if (lower.includes("3.5-flash")) {
+      pricing = MODEL_PRICING["gemini-3.5-flash-high"];
+    } else if (lower.includes("flash")) {
+      pricing = MODEL_PRICING["gemini-3-flash"];
+    } else if (lower.includes("pro")) {
+      pricing = MODEL_PRICING["gemini-3.1-pro"];
+    }
+  }
+  if (!pricing) return 0;
+  const inputCost = (promptTokens / 1_000_000) * pricing.inputPer1M;
+  const outputCost = (completionTokens / 1_000_000) * pricing.outputPer1M;
+  return Number((inputCost + outputCost).toFixed(6));
+}
+
 // ── Dashboard Query API Functions ────────────────────────────────────
 
 export interface GetSpendLogsOptions {
@@ -191,16 +215,19 @@ export async function getSpendLogs(
   const params: unknown[] = [];
 
   if (options.apiKeyHash) {
-    params.push(options.apiKeyHash);
-    conditions.push(`api_key_hash = $${params.length}`);
+    const searchVal = `%${options.apiKeyHash}%`;
+    params.push(options.apiKeyHash, searchVal);
+    conditions.push(
+      `(l.api_key_hash = $${params.length - 1} OR k.key_alias ILIKE $${params.length} OR k.key_name ILIKE $${params.length})`,
+    );
   }
   if (options.model) {
     params.push(options.model);
-    conditions.push(`model = $${params.length}`);
+    conditions.push(`l.model = $${params.length}`);
   }
   if (options.status) {
     params.push(options.status);
-    conditions.push(`status = $${params.length}`);
+    conditions.push(`l.status = $${params.length}`);
   }
 
   const whereClause =
@@ -208,43 +235,56 @@ export async function getSpendLogs(
 
   try {
     const countRes = await queryDb<{ count: string }>(
-      `SELECT COUNT(*)::text as count FROM rotator_spend_logs ${whereClause}`,
+      `SELECT COUNT(*)::text as count
+       FROM rotator_spend_logs l
+       LEFT JOIN rotator_virtual_keys k ON l.api_key_hash = k.token_hash
+       ${whereClause}`,
       params,
     );
     const total = parseInt(countRes.rows[0]?.count || "0", 10);
 
     const queryParams = [...params, limit, offset];
     const logsRes = await queryDb(
-      `SELECT * FROM rotator_spend_logs
+      `SELECT l.*, k.key_alias, k.key_name
+       FROM rotator_spend_logs l
+       LEFT JOIN rotator_virtual_keys k ON l.api_key_hash = k.token_hash
        ${whereClause}
-       ORDER BY created_at DESC
+       ORDER BY l.created_at DESC
        LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
       queryParams,
     );
 
-    const logs: SpendLog[] = logsRes.rows.map((row) => ({
-      requestId: String(row.request_id),
-      apiKeyHash: row.api_key_hash ? String(row.api_key_hash) : null,
-      model: String(row.model),
-      accountEmail: row.account_email ? String(row.account_email) : null,
-      callType: String(row.call_type),
-      status: (row.status as "success" | "failure") || "success",
-      promptTokens: Number(row.prompt_tokens || 0),
-      completionTokens: Number(row.completion_tokens || 0),
-      totalTokens: Number(row.total_tokens || 0),
-      startTime: new Date(row.start_time as string | Date).toISOString(),
-      endTime: new Date(row.end_time as string | Date).toISOString(),
-      ttfbMs: row.ttfb_ms !== null ? Number(row.ttfb_ms) : null,
-      durationMs: Number(row.duration_ms || 0),
-      requestMessages: row.request_messages || null,
-      responseContent: row.response_content || null,
-      metadata:
-        row.metadata && typeof row.metadata === "object"
-          ? (row.metadata as Record<string, unknown>)
-          : {},
-      requesterIp: row.requester_ip ? String(row.requester_ip) : null,
-      createdAt: new Date(row.created_at as string | Date).toISOString(),
-    }));
+    const logs: SpendLog[] = logsRes.rows.map((row) => {
+      const model = String(row.model);
+      const promptTokens = Number(row.prompt_tokens || 0);
+      const completionTokens = Number(row.completion_tokens || 0);
+      return {
+        requestId: String(row.request_id),
+        apiKeyHash: row.api_key_hash ? String(row.api_key_hash) : null,
+        keyAlias: row.key_alias ? String(row.key_alias) : null,
+        keyName: row.key_name ? String(row.key_name) : null,
+        model,
+        accountEmail: row.account_email ? String(row.account_email) : null,
+        callType: String(row.call_type),
+        status: (row.status as "success" | "failure") || "success",
+        promptTokens,
+        completionTokens,
+        totalTokens: Number(row.total_tokens || 0),
+        cost: calculateCost(model, promptTokens, completionTokens),
+        startTime: new Date(row.start_time as string | Date).toISOString(),
+        endTime: new Date(row.end_time as string | Date).toISOString(),
+        ttfbMs: row.ttfb_ms !== null ? Number(row.ttfb_ms) : null,
+        durationMs: Number(row.duration_ms || 0),
+        requestMessages: row.request_messages || null,
+        responseContent: row.response_content || null,
+        metadata:
+          row.metadata && typeof row.metadata === "object"
+            ? (row.metadata as Record<string, unknown>)
+            : {},
+        requesterIp: row.requester_ip ? String(row.requester_ip) : null,
+        createdAt: new Date(row.created_at as string | Date).toISOString(),
+      };
+    });
 
     return { logs, total };
   } catch (err) {
@@ -306,11 +346,14 @@ export async function getDailySpendSummary(options: {
 
 export interface SpendByKey {
   apiKeyHash: string;
+  keyAlias?: string | null;
+  keyName?: string | null;
   totalRequests: number;
   totalPromptTokens: number;
   totalCompletionTokens: number;
   totalDurationMs: number;
   avgDurationMs: number;
+  totalCost: number;
   firstSeen: string | null;
   lastSeen: string | null;
 }
@@ -326,11 +369,11 @@ export async function getSpendByKey(options: {
 
   if (options.startDate) {
     params.push(options.startDate);
-    conditions.push(`date >= $${params.length}::date`);
+    conditions.push(`d.date >= $${params.length}::date`);
   }
   if (options.endDate) {
     params.push(options.endDate);
-    conditions.push(`date <= $${params.length}::date`);
+    conditions.push(`d.date <= $${params.length}::date`);
   }
 
   const whereClause =
@@ -339,20 +382,62 @@ export async function getSpendByKey(options: {
   try {
     const res = await queryDb(
       `SELECT
-        api_key_hash,
-        SUM(total_requests)::int as total_requests,
-        SUM(prompt_tokens)::bigint as total_prompt_tokens,
-        SUM(completion_tokens)::bigint as total_completion_tokens,
-        SUM(total_duration_ms)::bigint as total_duration_ms,
-        SUM(total_duration_ms)::float / NULLIF(SUM(total_requests), 0) as avg_duration_ms
-      FROM rotator_daily_spend
+        d.api_key_hash,
+        k.key_alias,
+        k.key_name,
+        d.model,
+        SUM(d.total_requests)::int as total_requests,
+        SUM(d.prompt_tokens)::bigint as total_prompt_tokens,
+        SUM(d.completion_tokens)::bigint as total_completion_tokens,
+        SUM(d.total_duration_ms)::bigint as total_duration_ms
+      FROM rotator_daily_spend d
+      LEFT JOIN rotator_virtual_keys k ON d.api_key_hash = k.token_hash
       ${whereClause}
-      GROUP BY api_key_hash
-      ORDER BY total_prompt_tokens + total_completion_tokens DESC`,
+      GROUP BY d.api_key_hash, k.key_alias, k.key_name, d.model`,
       params,
     );
 
-    const keyHashes = res.rows.map((r) => String(r.api_key_hash));
+    const map = new Map<
+      string,
+      {
+        apiKeyHash: string;
+        keyAlias: string | null;
+        keyName: string | null;
+        totalRequests: number;
+        totalPromptTokens: number;
+        totalCompletionTokens: number;
+        totalDurationMs: number;
+        totalCost: number;
+      }
+    >();
+
+    for (const row of res.rows) {
+      const hash = String(row.api_key_hash);
+      const prompt = Number(row.total_prompt_tokens || 0);
+      const completion = Number(row.total_completion_tokens || 0);
+      const cost = calculateCost(String(row.model), prompt, completion);
+
+      const existing = map.get(hash) || {
+        apiKeyHash: hash,
+        keyAlias: row.key_alias ? String(row.key_alias) : null,
+        keyName: row.key_name ? String(row.key_name) : null,
+        totalRequests: 0,
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalDurationMs: 0,
+        totalCost: 0,
+      };
+
+      existing.totalRequests += Number(row.total_requests || 0);
+      existing.totalPromptTokens += prompt;
+      existing.totalCompletionTokens += completion;
+      existing.totalDurationMs += Number(row.total_duration_ms || 0);
+      existing.totalCost += cost;
+
+      map.set(hash, existing);
+    }
+
+    const keyHashes = Array.from(map.keys());
     const lastSeenRes =
       keyHashes.length > 0
         ? await queryDb(
@@ -372,20 +457,26 @@ export async function getSpendByKey(options: {
       });
     }
 
-    return res.rows.map((row) => {
-      const hash = String(row.api_key_hash);
-      const fl = firstLastMap.get(hash) || { firstSeen: null, lastSeen: null };
+    const resultList: SpendByKey[] = Array.from(map.values()).map((item) => {
+      const fl = firstLastMap.get(item.apiKeyHash) || { firstSeen: null, lastSeen: null };
+      const avgDurationMs = item.totalRequests > 0 ? item.totalDurationMs / item.totalRequests : 0;
       return {
-        apiKeyHash: hash,
-        totalRequests: Number(row.total_requests || 0),
-        totalPromptTokens: Number(row.total_prompt_tokens || 0),
-        totalCompletionTokens: Number(row.total_completion_tokens || 0),
-        totalDurationMs: Number(row.total_duration_ms || 0),
-        avgDurationMs: Number(row.avg_duration_ms || 0),
+        apiKeyHash: item.apiKeyHash,
+        keyAlias: item.keyAlias,
+        keyName: item.keyName,
+        totalRequests: item.totalRequests,
+        totalPromptTokens: item.totalPromptTokens,
+        totalCompletionTokens: item.totalCompletionTokens,
+        totalDurationMs: item.totalDurationMs,
+        avgDurationMs,
+        totalCost: Number(item.totalCost.toFixed(6)),
         firstSeen: fl.firstSeen,
         lastSeen: fl.lastSeen,
       };
     });
+
+    resultList.sort((a, b) => b.totalPromptTokens + b.totalCompletionTokens - (a.totalPromptTokens + a.totalCompletionTokens));
+    return resultList;
   } catch (err) {
     console.error("Failed to get spend by key:", err);
     return [];

@@ -1711,6 +1711,7 @@
   .compact-table.hide-col-type .col-type,
   .compact-table.hide-col-status .col-status,
   .compact-table.hide-col-tokens .col-tokens,
+  .compact-table.hide-col-cost .col-cost,
   .compact-table.hide-col-duration .col-duration,
   .compact-table.hide-col-ttfb .col-ttfb,
   .compact-table.hide-col-ip .col-ip {

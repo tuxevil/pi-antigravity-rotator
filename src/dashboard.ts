@@ -538,6 +538,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 </div>
 
+<div style="display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap">
+  <a href="/dashboard" style="padding:5px 14px;background:var(--accent);color:#fff;border-radius:4px;text-decoration:none;font-size:0.85rem;font-weight:500">Dashboard</a>
+  <a href="/dashboard/keys" style="padding:5px 14px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);text-decoration:none;font-size:0.85rem">Virtual Keys</a>
+  <a href="/dashboard/logs" style="padding:5px 14px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);text-decoration:none;font-size:0.85rem">Spend Logs</a>
+</div>
+
 <div class="view-toggle-bar">
   <button class="view-tab active" id="viewTabGrid" onclick="switchView('grid')">⊞ Grid</button>
   <button class="view-tab" id="viewTabList" onclick="switchView('list')">☰ List</button>

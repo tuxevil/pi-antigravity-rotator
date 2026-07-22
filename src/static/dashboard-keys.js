@@ -213,7 +213,7 @@ function showGenerateModal() {
   document.getElementById("modalTitle").textContent = "Generate Virtual Key";
   var sub = document.getElementById("modalSubtitle");
   if (sub) sub.textContent = "Configure key access and model restrictions";
-  document.getElementById("keyModal").style.display = "flex";
+  document.getElementById("keyModal").classList.add("open");
 }
 
 function showEditModal(hash) {
@@ -236,11 +236,11 @@ function showEditModal(hash) {
   document.getElementById("modalTitle").textContent = "Edit Virtual Key";
   var sub = document.getElementById("modalSubtitle");
   if (sub) sub.textContent = "Updating model restrictions for alias: " + k.keyAlias;
-  document.getElementById("keyModal").style.display = "flex";
+  document.getElementById("keyModal").classList.add("open");
 }
 
 function hideModal() {
-  document.getElementById("keyModal").style.display = "none";
+  document.getElementById("keyModal").classList.remove("open");
 }
 
 function submitKeyForm() {

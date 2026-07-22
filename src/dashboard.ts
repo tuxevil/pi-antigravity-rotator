@@ -840,7 +840,7 @@ const DASHBOARD_KEYS_HTML = renderAppShell({
 </div>
 
 <div id="keyModal" class="modal" onclick="if(event.target===this) hideModal()">
-  <div class="modal-card">
+  <div class="modal-card" onclick="event.stopPropagation()" style="max-width:640px;display:flex;flex-direction:column;max-height:90vh;overflow:hidden">
     <div class="modal-header">
       <div class="modal-title-group">
         <div class="modal-icon">
@@ -854,7 +854,7 @@ const DASHBOARD_KEYS_HTML = renderAppShell({
       <button class="modal-close-btn" onclick="hideModal()" type="button" aria-label="Close">&times;</button>
     </div>
 
-    <div class="modal-body">
+    <div class="modal-body" style="overflow-y:auto;flex:1">
       <div class="form-grid">
         <div class="form-group">
           <label class="form-label" for="keyFormAlias">Key Alias <span class="req">*</span></label>

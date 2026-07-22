@@ -538,11 +538,22 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 </div>
 
-<div style="display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap">
+<div id="topNav" style="display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap">
   <a href="/dashboard" style="padding:5px 14px;background:var(--accent);color:#fff;border-radius:4px;text-decoration:none;font-size:0.85rem;font-weight:500">Dashboard</a>
-  <a href="/dashboard/keys" style="padding:5px 14px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);text-decoration:none;font-size:0.85rem">Virtual Keys</a>
-  <a href="/dashboard/logs" style="padding:5px 14px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);text-decoration:none;font-size:0.85rem">Spend Logs</a>
+  <a id="navKeys" href="/dashboard/keys" style="padding:5px 14px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);text-decoration:none;font-size:0.85rem">Virtual Keys</a>
+  <a id="navLogs" href="/dashboard/logs" style="padding:5px 14px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);text-decoration:none;font-size:0.85rem">Spend Logs</a>
 </div>
+<script>
+(function(){
+  var t = new URLSearchParams(window.location.search).get("token") || localStorage.getItem("rotatorAdminToken");
+  if (t) {
+    var nk = document.getElementById("navKeys");
+    var nl = document.getElementById("navLogs");
+    if (nk) nk.href += "?token=" + encodeURIComponent(t);
+    if (nl) nl.href += "?token=" + encodeURIComponent(t);
+  }
+})();
+</script>
 
 <div class="view-toggle-bar">
   <button class="view-tab active" id="viewTabGrid" onclick="switchView('grid')">⊞ Grid</button>
@@ -741,10 +752,23 @@ td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
 </head>
 <body>
 <div class="nav-bar">
-  <a href="/dashboard">&#8592; Dashboard</a>
+  <a id="navDashBack" href="/dashboard">&#8592; Dashboard</a>
   <a href="/dashboard/keys" class="active">Virtual Keys</a>
-  <a href="/dashboard/logs">Spend Logs</a>
+  <a id="navLogsSub" href="/dashboard/logs">Spend Logs</a>
 </div>
+<script>
+(function(){
+  var t = new URLSearchParams(window.location.search).get("token") || localStorage.getItem("rotatorAdminToken");
+  if (t) {
+    var nd = document.getElementById("navDashBack");
+    var nl = document.getElementById("navLogsSub");
+    var nk = document.querySelector(".nav-bar a.active");
+    if (nd) nd.href += "?token=" + encodeURIComponent(t);
+    if (nl) nl.href += "?token=" + encodeURIComponent(t);
+    if (nk) nk.href += "?token=" + encodeURIComponent(t);
+  }
+})();
+</script>
 
 <h2>Virtual Keys</h2>
 <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0; flex-wrap:wrap; gap:12px">
@@ -818,10 +842,23 @@ td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
 </head>
 <body>
 <div class="nav-bar">
-  <a href="/dashboard">&#8592; Dashboard</a>
-  <a href="/dashboard/keys">Virtual Keys</a>
+  <a id="navDashBack2" href="/dashboard">&#8592; Dashboard</a>
+  <a id="navKeysSub" href="/dashboard/keys">Virtual Keys</a>
   <a href="/dashboard/logs" class="active">Spend Logs</a>
 </div>
+<script>
+(function(){
+  var t = new URLSearchParams(window.location.search).get("token") || localStorage.getItem("rotatorAdminToken");
+  if (t) {
+    var nd = document.getElementById("navDashBack2");
+    var nk = document.getElementById("navKeysSub");
+    var nl = document.querySelector(".nav-bar a.active");
+    if (nd) nd.href += "?token=" + encodeURIComponent(t);
+    if (nk) nk.href += "?token=" + encodeURIComponent(t);
+    if (nl) nl.href += "?token=" + encodeURIComponent(t);
+  }
+})();
+</script>
 
 <h2>Spend Logs &amp; Usage</h2>
 

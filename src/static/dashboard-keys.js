@@ -16,6 +16,24 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
+function getCheckedModels() {
+  var cbs = document.querySelectorAll(".modelCb:checked");
+  return Array.from(cbs).map(function(c) { return c.value; });
+}
+
+function setCheckedModels(models) {
+  var cbs = document.querySelectorAll(".modelCb");
+  cbs.forEach(function(c) { c.checked = models.length === 0 || models.indexOf(c.value) >= 0; });
+}
+
+function selectAllModels() {
+  document.querySelectorAll(".modelCb").forEach(function(c) { c.checked = true; });
+}
+
+function selectNoModels() {
+  document.querySelectorAll(".modelCb").forEach(function(c) { c.checked = false; });
+}
+
 function loadKeys() {
   fetch("/api/keys", { headers: authHeaders() })
     .then(function(r) { return r.json(); })
@@ -56,12 +74,14 @@ function renderKeys() {
 function showGenerateModal() {
   editingKey = null;
   document.getElementById("keyFormAlias").value = "";
-  document.getElementById("keyFormUserId").value = "";
-  document.getElementById("keyFormModels").value = "";
   document.getElementById("keyFormAlias").disabled = false;
+  document.getElementById("keyFormUserId").value = "";
+  document.getElementById("keyFormUserId").disabled = false;
+  selectNoModels();
   document.getElementById("keyFormError").textContent = "";
   document.getElementById("generatedKeyResult").style.display = "none";
   document.getElementById("submitKeyBtn").textContent = "Generate";
+  document.getElementById("modelCheckboxes").style.display = "";
   document.getElementById("modalTitle").textContent = "Generate Virtual Key";
   document.getElementById("keyModal").style.display = "flex";
 }
@@ -78,10 +98,11 @@ function showEditModal(hash) {
   document.getElementById("keyFormAlias").disabled = true;
   document.getElementById("keyFormUserId").value = k.userId || "";
   document.getElementById("keyFormUserId").disabled = true;
-  document.getElementById("keyFormModels").value = (k.models && k.models.length > 0) ? k.models.join(", ") : "";
+  setCheckedModels(k.models || []);
   document.getElementById("keyFormError").textContent = "";
   document.getElementById("generatedKeyResult").style.display = "none";
   document.getElementById("submitKeyBtn").textContent = "Update";
+  document.getElementById("modelCheckboxes").style.display = "";
   document.getElementById("modalTitle").textContent = "Edit Virtual Key — " + escapeHtml(k.keyAlias);
   document.getElementById("keyModal").style.display = "flex";
 }
@@ -102,18 +123,17 @@ function submitKeyForm() {
     return;
   }
   var userId = document.getElementById("keyFormUserId").value.trim() || null;
-  var modelsRaw = document.getElementById("keyFormModels").value.trim();
-  var models = modelsRaw ? modelsRaw.split(",").map(function(s) { return s.trim(); }).filter(Boolean) : [];
+  var models = getCheckedModels();
 
-  var body = { alias: alias, userId: userId, models: models };
   document.getElementById("keyFormError").textContent = "";
 
-  fetch("/api/keys/generate", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) })
+  fetch("/api/keys/generate", { method: "POST", headers: authHeaders(), body: JSON.stringify({ alias: alias, userId: userId, models: models }) })
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (!d.ok) { document.getElementById("keyFormError").textContent = d.error; return; }
       document.getElementById("generatedRawKey").textContent = d.rawKey;
       document.getElementById("generatedKeyResult").style.display = "block";
+      document.getElementById("modelCheckboxes").style.display = "none";
       loadKeys();
     })
     .catch(function(e) { document.getElementById("keyFormError").textContent = e.message; });
@@ -121,8 +141,7 @@ function submitKeyForm() {
 
 function submitEditKey() {
   if (!editingKey) return;
-  var modelsRaw = document.getElementById("keyFormModels").value.trim();
-  var models = modelsRaw ? modelsRaw.split(",").map(function(s) { return s.trim(); }).filter(Boolean) : null;
+  var models = getCheckedModels();
 
   document.getElementById("keyFormError").textContent = "";
 

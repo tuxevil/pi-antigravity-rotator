@@ -792,8 +792,30 @@ td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
     <input id="keyFormAlias" placeholder="e.g. cursor-agent" autofocus>
     <label>User ID (optional)</label>
     <input id="keyFormUserId" placeholder="e.g. seba">
-    <label>Models (comma-separated, empty = all)</label>
-    <input id="keyFormModels" placeholder="e.g. gemini-3.5-flash-high, claude-sonnet-4-6">
+    <label>Models</label>
+    <div style="display:flex; gap:6px; margin-bottom:6px">
+      <button class="btn-secondary btn-sm" onclick="selectAllModels()" type="button">All</button>
+      <button class="btn-secondary btn-sm" onclick="selectNoModels()" type="button">None</button>
+    </div>
+    <div id="modelCheckboxes" style="max-height:220px; overflow-y:auto; padding:8px; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.85rem">
+      <label style="grid-column:1/-1;font-weight:bold;color:var(--text-dim);font-size:0.75rem;padding-top:4px">Gemini 3.1 Pro</label>
+      <label><input type="checkbox" value="gemini-3.1-pro-low" class="modelCb"> gemini-3.1-pro-low</label>
+      <label><input type="checkbox" value="gemini-3.1-pro-high" class="modelCb"> gemini-3.1-pro-high</label>
+      <label style="grid-column:1/-1;font-weight:bold;color:var(--text-dim);font-size:0.75rem;padding-top:4px">Gemini 3.5 Flash</label>
+      <label><input type="checkbox" value="gemini-3.5-flash-medium" class="modelCb"> gemini-3.5-flash-medium</label>
+      <label><input type="checkbox" value="gemini-3.5-flash-high" class="modelCb"> gemini-3.5-flash-high</label>
+      <label><input type="checkbox" value="gemini-3-flash" class="modelCb"> gemini-3-flash</label>
+      <label style="grid-column:1/-1;font-weight:bold;color:var(--text-dim);font-size:0.75rem;padding-top:4px">Gemini 3.6 Flash</label>
+      <label><input type="checkbox" value="gemini-3.6-flash-low" class="modelCb"> gemini-3.6-flash-low</label>
+      <label><input type="checkbox" value="gemini-3.6-flash-medium" class="modelCb"> gemini-3.6-flash-medium</label>
+      <label><input type="checkbox" value="gemini-3.6-flash-high" class="modelCb"> gemini-3.6-flash-high</label>
+      <label><input type="checkbox" value="gemini-3.6-flash-tiered" class="modelCb"> gemini-3.6-flash-tiered</label>
+      <label style="grid-column:1/-1;font-weight:bold;color:var(--text-dim);font-size:0.75rem;padding-top:4px">Claude</label>
+      <label><input type="checkbox" value="claude-sonnet-4-6" class="modelCb"> claude-sonnet-4-6</label>
+      <label><input type="checkbox" value="claude-opus-4-6-thinking" class="modelCb"> claude-opus-4-6-thinking</label>
+      <label style="grid-column:1/-1;font-weight:bold;color:var(--text-dim);font-size:0.75rem;padding-top:4px">GPT-OSS</label>
+      <label><input type="checkbox" value="gpt-oss-120b-medium" class="modelCb"> gpt-oss-120b-medium</label>
+    </div>
     <div id="keyFormError" style="color:var(--red); margin:8px 0; font-size:0.85rem"></div>
     <div id="generatedKeyResult" class="generated-key-box" style="display:none">
       <strong style="color:var(--accent)">&#9888; Save this key now — it won't be shown again!</strong>

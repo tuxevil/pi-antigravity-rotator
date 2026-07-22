@@ -2046,7 +2046,16 @@ export class AccountRotator {
     let totalUsd = 0;
     const byModel: TokenUsageData["savings"]["byModel"] = {};
     for (const [model, totals] of Object.entries(modelTotals)) {
-      const pricing = MODEL_PRICING[model];
+      let pricing = MODEL_PRICING[model];
+      if (!pricing) {
+        const lower = model.toLowerCase();
+        if (lower.includes("opus")) pricing = MODEL_PRICING["claude-opus-4-6-thinking"];
+        else if (lower.includes("sonnet")) pricing = MODEL_PRICING["claude-sonnet-4-6"];
+        else if (lower.includes("3.6-flash")) pricing = MODEL_PRICING["gemini-3.6-flash-high"];
+        else if (lower.includes("3.5-flash")) pricing = MODEL_PRICING["gemini-3.5-flash-high"];
+        else if (lower.includes("flash")) pricing = MODEL_PRICING["gemini-3-flash"];
+        else if (lower.includes("pro")) pricing = MODEL_PRICING["gemini-3.1-pro"];
+      }
       if (!pricing) continue;
       const inputUsd = (totals.input / 1_000_000) * pricing.inputPer1M;
       const outputUsd = (totals.output / 1_000_000) * pricing.outputPer1M;

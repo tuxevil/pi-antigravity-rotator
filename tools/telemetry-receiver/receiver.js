@@ -330,14 +330,31 @@ const MODEL_PRICING = {
 	"gemini-3.5-flash-low":     { inputPer1M: 1.50,  outputPer1M: 9.00 },
 	"gemini-3.5-flash-medium":  { inputPer1M: 1.50,  outputPer1M: 9.00 },
 	"gemini-3.5-flash-high":    { inputPer1M: 1.50,  outputPer1M: 9.00 },
+	"gemini-3.6-flash":         { inputPer1M: 1.50,  outputPer1M: 7.50 },
+	"gemini-3.6-flash-high":    { inputPer1M: 1.50,  outputPer1M: 7.50 },
+	"gemini-3.6-flash-medium":  { inputPer1M: 1.50,  outputPer1M: 7.50 },
+	"gemini-3.6-flash-low":     { inputPer1M: 1.50,  outputPer1M: 7.50 },
+	"gemini-3.6-flash-tiered":  { inputPer1M: 1.50,  outputPer1M: 7.50 },
 	"gpt-oss-120b-medium":      { inputPer1M: 2.00,  outputPer1M: 10.00 },
 };
+
+function getModelPricing(model) {
+	if (MODEL_PRICING[model]) return MODEL_PRICING[model];
+	const lower = (model || "").toLowerCase();
+	if (lower.includes("opus")) return MODEL_PRICING["claude-opus-4-6-thinking"];
+	if (lower.includes("sonnet")) return MODEL_PRICING["claude-sonnet-4-6"];
+	if (lower.includes("3.6-flash")) return MODEL_PRICING["gemini-3.6-flash-high"];
+	if (lower.includes("3.5-flash")) return MODEL_PRICING["gemini-3.5-flash-high"];
+	if (lower.includes("flash")) return MODEL_PRICING["gemini-3-flash"];
+	if (lower.includes("pro")) return MODEL_PRICING["gemini-3.1-pro"];
+	return null;
+}
 
 function calculateSavings(tokensByModel) {
 	let totalUsd = 0;
 	const byModel = Object.create(null);
 	for (const [model, data] of Object.entries(tokensByModel)) {
-		const pricing = MODEL_PRICING[model];
+		const pricing = getModelPricing(model);
 		if (!pricing) continue;
 		const inputUsd = (data.input / 1_000_000) * pricing.inputPer1M;
 		const outputUsd = (data.output / 1_000_000) * pricing.outputPer1M;

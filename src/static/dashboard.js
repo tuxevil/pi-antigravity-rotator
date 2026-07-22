@@ -1034,6 +1034,7 @@ var MODEL_PRICING_CLIENT = {
   "gemini-3.5-flash-low": { input: 1.5, output: 9.0 },
   "gemini-3.5-flash-medium": { input: 1.5, output: 9.0 },
   "gemini-3.5-flash-high": { input: 1.5, output: 9.0 },
+  "gemini-3.6-flash": { input: 1.5, output: 7.5 },
   "gemini-3.6-flash-high": { input: 1.5, output: 7.5 },
   "gemini-3.6-flash-medium": { input: 1.5, output: 7.5 },
   "gemini-3.6-flash-low": { input: 1.5, output: 7.5 },
@@ -1041,13 +1042,25 @@ var MODEL_PRICING_CLIENT = {
   "gpt-oss-120b-medium": { input: 2.0, output: 10.0 },
 };
 
+function getModelPricingClient(m) {
+  if (MODEL_PRICING_CLIENT[m]) return MODEL_PRICING_CLIENT[m];
+  var lower = (m || "").toLowerCase();
+  if (lower.indexOf("opus") !== -1) return MODEL_PRICING_CLIENT["claude-opus-4-6-thinking"];
+  if (lower.indexOf("sonnet") !== -1) return MODEL_PRICING_CLIENT["claude-sonnet-4-6"];
+  if (lower.indexOf("3.6-flash") !== -1) return MODEL_PRICING_CLIENT["gemini-3.6-flash-high"];
+  if (lower.indexOf("3.5-flash") !== -1) return MODEL_PRICING_CLIENT["gemini-3.5-flash-high"];
+  if (lower.indexOf("flash") !== -1) return MODEL_PRICING_CLIENT["gemini-3-flash"];
+  if (lower.indexOf("pro") !== -1) return MODEL_PRICING_CLIENT["gemini-3.1-pro"];
+  return null;
+}
+
 function calcSavingsFromBuckets(buckets) {
   var byModel = {};
   var totalUsd = 0;
   (buckets || []).forEach(function (b) {
     Object.keys(b.byModel || {}).forEach(function (m) {
       var d = b.byModel[m];
-      var p = MODEL_PRICING_CLIENT[m];
+      var p = getModelPricingClient(m);
       if (!p) return;
       var usd =
         (d.inputTokens / 1e6) * p.input + (d.outputTokens / 1e6) * p.output;

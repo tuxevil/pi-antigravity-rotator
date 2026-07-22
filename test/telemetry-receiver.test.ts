@@ -90,4 +90,43 @@ describe("telemetry receiver", () => {
 		const res = await fetch(`http://127.0.0.1:${port}/v1/notifications?all=true`);
 		assert.equal(res.status, 401);
 	});
+
+	it("calculates estimated savings for gemini 3.6 flash models in /v1/stats", async () => {
+		const payload = {
+			event: "heartbeat",
+			installId: "savings-test-install",
+			version: "2.3.6",
+			nodeVersion: process.version,
+			os: process.platform,
+			arch: process.arch,
+			ts: new Date().toISOString(),
+			accountCount: 1,
+			modelsUsed: ["gemini-3.6-flash-high", "gemini-3.6-flash"],
+			totalRequests: 15,
+			uptimeSeconds: 100,
+			routingHealthState: "healthy",
+			tokensByModel: {
+				"gemini-3.6-flash-high": { input: 1_000_000, output: 1_000_000, requests: 10 },
+				"gemini-3.6-flash": { input: 1_000_000, output: 1_000_000, requests: 5 },
+			},
+		};
+
+		const postRes = await fetch(`http://127.0.0.1:${port}/v1/events`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		});
+		assert.equal(postRes.status, 202);
+
+		const statsRes = await fetch(`http://127.0.0.1:${port}/v1/stats`, {
+			headers: { Authorization: "Bearer secret-token" },
+		});
+		assert.equal(statsRes.status, 200);
+		const stats = (await statsRes.json()) as any;
+		assert.ok(stats.savings);
+		assert.ok(stats.savings.byModel["gemini-3.6-flash-high"]);
+		assert.ok(stats.savings.byModel["gemini-3.6-flash"]);
+		assert.equal(stats.savings.byModel["gemini-3.6-flash-high"].totalUsd, 9.00);
+		assert.equal(stats.savings.byModel["gemini-3.6-flash"].totalUsd, 9.00);
+	});
 });

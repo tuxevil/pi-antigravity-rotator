@@ -631,6 +631,12 @@ export const MODEL_PRICING: Record<
     cachingPer1M: 0.15,
     cachingStoragePer1MPerHour: 1.0,
   },
+  "gemini-3.6-flash": {
+    inputPer1M: 1.5,
+    outputPer1M: 7.5,
+    cachingPer1M: 0.15,
+    cachingStoragePer1MPerHour: 1.0,
+  },
   "gemini-3.6-flash-high": {
     inputPer1M: 1.5,
     outputPer1M: 7.5,

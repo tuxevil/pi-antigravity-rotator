@@ -246,8 +246,14 @@ function renderByKeySummary(byKey) {
   container.innerHTML = html;
 }
 
-document.addEventListener("DOMContentLoaded", function() {
+function initLogsPage() {
   loadLogs(0);
   refreshHeaderStats();
   setInterval(refreshHeaderStats, 10000);
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initLogsPage);
+} else {
+  initLogsPage();
+}

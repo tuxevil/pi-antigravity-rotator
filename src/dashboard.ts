@@ -839,7 +839,7 @@ const DASHBOARD_KEYS_HTML = renderAppShell({
   </div>
 </div>
 
-<div id="keyModal" class="modal-backdrop">
+<div id="keyModal" class="modal" onclick="if(event.target===this) hideModal()">
   <div class="modal-card">
     <div class="modal-header">
       <div class="modal-title-group">

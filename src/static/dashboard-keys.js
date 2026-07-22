@@ -320,7 +320,7 @@ function deleteKey(hash) {
     });
 }
 
-document.addEventListener("DOMContentLoaded", function() {
+function initKeysPage() {
   loadKeys();
   refreshHeaderStats();
   setInterval(refreshHeaderStats, 10000);
@@ -331,4 +331,10 @@ document.addEventListener("DOMContentLoaded", function() {
       if (e.target === modal) hideModal();
     });
   }
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initKeysPage);
+} else {
+  initKeysPage();
+}

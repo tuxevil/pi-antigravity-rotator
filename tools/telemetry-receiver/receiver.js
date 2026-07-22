@@ -878,10 +878,10 @@ function esc(s){
 }
 function jsString(s){
   return esc(String(s==null?'':s)
-    .replace(/\\/g,'\\\\')
-    .replace(/'/g,"\\'")
-    .replace(/\r/g,'\\r')
-    .replace(/\n/g,'\\n'));
+    .replace(/\\\\/g,'\\\\\\\\')
+    .replace(/'/g,"\\\\'")
+    .replace(/\\r/g,'\\\\r')
+    .replace(/\\n/g,'\\\\n'));
 }
 
 function mkChart(id,type,labels,datasets){

@@ -3,9 +3,18 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Config } from "./types.js";
 import type { AccountRotator } from "./rotator.js";
+import { readLimitedBody } from "./body-limit.js";
+import {
+  generateVirtualKey,
+  listVirtualKeys,
+  getVirtualKeyByHash,
+  updateVirtualKey,
+  deleteVirtualKey,
+} from "./virtual-keys.js";
+import { getSpendLogs, getDailySpendSummary } from "./spend-logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -230,6 +239,197 @@ export function serveAutoWarmupApi(
   const changed = rotator.setAutoWarmup(enabled);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ ok: true, changed, autoWarmupEnabled: enabled }));
+}
+
+// ── Virtual Keys & Spend Logging REST API ────────────────────────────
+
+export async function serveGenerateVirtualKeyApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  try {
+    const rawBody = await readLimitedBody(req);
+    const parsed = rawBody.length > 0 ? JSON.parse(rawBody.toString("utf-8")) : {};
+    if (!parsed.alias || typeof parsed.alias !== "string") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Field 'alias' is required" }));
+      return;
+    }
+    const created = await generateVirtualKey({
+      alias: parsed.alias,
+      userId: parsed.userId,
+      models: parsed.models,
+      metadata: parsed.metadata,
+      createdBy: parsed.createdBy || "admin",
+    });
+    res.writeHead(201, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, ...created }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
+export async function serveListVirtualKeysApi(
+  res: ServerResponse,
+): Promise<void> {
+  try {
+    const keys = await listVirtualKeys();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, keys }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
+export async function serveGetVirtualKeyApi(
+  res: ServerResponse,
+  tokenHash: string,
+): Promise<void> {
+  try {
+    const key = await getVirtualKeyByHash(tokenHash);
+    if (!key) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Virtual key not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, key }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
+export async function serveUpdateVirtualKeyApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+  tokenHash: string,
+): Promise<void> {
+  try {
+    const rawBody = await readLimitedBody(req);
+    const updates = rawBody.length > 0 ? JSON.parse(rawBody.toString("utf-8")) : {};
+    const updated = await updateVirtualKey(tokenHash, updates);
+    if (!updated) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Virtual key not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, key: updated }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
+export async function serveDeleteVirtualKeyApi(
+  res: ServerResponse,
+  tokenHash: string,
+): Promise<void> {
+  try {
+    const deleted = await deleteVirtualKey(tokenHash);
+    if (!deleted) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Virtual key not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, message: "Virtual key deleted" }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
+export async function serveGetSpendLogsApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  try {
+    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const keyHash = url.searchParams.get("keyHash") || undefined;
+    const model = url.searchParams.get("model") || undefined;
+    const status = url.searchParams.get("status") || undefined;
+    const limit = url.searchParams.has("limit")
+      ? parseInt(url.searchParams.get("limit")!, 10)
+      : 50;
+    const offset = url.searchParams.has("offset")
+      ? parseInt(url.searchParams.get("offset")!, 10)
+      : 0;
+
+    const result = await getSpendLogs({
+      apiKeyHash: keyHash,
+      model,
+      status,
+      limit,
+      offset,
+    });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, ...result }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
+export async function serveGetSpendSummaryApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  try {
+    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const keyHash = url.searchParams.get("keyHash") || undefined;
+    const startDate = url.searchParams.get("startDate") || undefined;
+    const endDate = url.searchParams.get("endDate") || undefined;
+
+    const summary = await getDailySpendSummary({
+      apiKeyHash: keyHash,
+      startDate,
+      endDate,
+    });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, summary }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
 }
 
 const DASHBOARD_HTML = `<!DOCTYPE html>

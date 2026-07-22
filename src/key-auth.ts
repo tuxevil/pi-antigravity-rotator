@@ -1,0 +1,159 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { VirtualKey } from "./types.js";
+import {
+  hasAnyVirtualKeys,
+  lookupVirtualKey,
+  touchVirtualKeyLastActive,
+} from "./virtual-keys.js";
+import { isDbConfigured } from "./db-store.js";
+
+export interface KeyAuthResult {
+  authenticated: boolean;
+  key: VirtualKey | null;
+  rawKey?: string;
+  error?: string;
+  statusCode?: number;
+}
+
+/**
+ * Extracts virtual key raw string from headers or query parameters.
+ */
+export function extractVirtualKey(req: IncomingMessage): string | null {
+  // 1. Authorization: Bearer rk-...
+  const authHeader = req.headers["authorization"];
+  if (authHeader) {
+    const parts = authHeader.split(" ");
+    if (parts.length === 2 && /^bearer$/i.test(parts[0])) {
+      const val = parts[1].trim();
+      if (val.startsWith("rk-")) return val;
+    }
+  }
+
+  // 2. Custom headers: x-rotator-key, x-api-key
+  const rotatorKeyHeader =
+    req.headers["x-rotator-key"] || req.headers["x-api-key"];
+  if (typeof rotatorKeyHeader === "string") {
+    const val = rotatorKeyHeader.trim();
+    if (val.startsWith("rk-")) return val;
+  }
+
+  // 3. Query string: ?rotator_key=rk-... or ?key=rk-...
+  if (req.url && req.url.includes("rk-")) {
+    try {
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const param =
+        parsedUrl.searchParams.get("rotator_key") ||
+        parsedUrl.searchParams.get("key") ||
+        parsedUrl.searchParams.get("api_key");
+      if (param && param.startsWith("rk-")) return param.trim();
+    } catch {
+      // Ignore URL parse error
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Validates request authentication against virtual keys.
+ *
+ * Rules:
+ * - If DB is not configured OR no virtual keys exist in DB, auth is not enforced.
+ * - If keys exist, valid key is mandatory for proxy routes.
+ * - Key must not be blocked.
+ * - If targetModel is provided and key has model scope, targetModel must be allowed.
+ */
+export async function authenticateVirtualKey(
+  req: IncomingMessage,
+  targetModel?: string,
+): Promise<KeyAuthResult> {
+  const isEnforced = isDbConfigured() && (await hasAnyVirtualKeys());
+
+  const rawKey = extractVirtualKey(req);
+
+  if (!isEnforced) {
+    // If a key was sent anyway, try looking it up to associate spend log with key if valid
+    let key: VirtualKey | null = null;
+    if (rawKey) {
+      key = await lookupVirtualKey(rawKey);
+    }
+    return { authenticated: true, key, rawKey: rawKey || undefined };
+  }
+
+  if (!rawKey) {
+    return {
+      authenticated: false,
+      key: null,
+      error: "Virtual API Key required. Pass header 'Authorization: Bearer rk-...' or 'x-rotator-key: rk-...'",
+      statusCode: 401,
+    };
+  }
+
+  const key = await lookupVirtualKey(rawKey);
+  if (!key) {
+    return {
+      authenticated: false,
+      key: null,
+      error: "Invalid Virtual API Key",
+      statusCode: 401,
+    };
+  }
+
+  if (key.blocked) {
+    return {
+      authenticated: false,
+      key,
+      rawKey,
+      error: "Virtual API Key is blocked/disabled",
+      statusCode: 403,
+    };
+  }
+
+  // Model access restrictions
+  if (
+    targetModel &&
+    key.models &&
+    key.models.length > 0 &&
+    !key.models.includes("*")
+  ) {
+    const normalizedTarget = targetModel.toLowerCase();
+    const isAllowed = key.models.some(
+      (m) =>
+        m.toLowerCase() === normalizedTarget ||
+        normalizedTarget.includes(m.toLowerCase()),
+    );
+
+    if (!isAllowed) {
+      return {
+        authenticated: false,
+        key,
+        rawKey,
+        error: `Model '${targetModel}' is not allowed for this Virtual Key`,
+        statusCode: 403,
+      };
+    }
+  }
+
+  touchVirtualKeyLastActive(key.tokenHash);
+  return { authenticated: true, key, rawKey };
+}
+
+/**
+ * Helper to write HTTP error response for failed auth.
+ */
+export function sendAuthErrorResponse(
+  res: ServerResponse,
+  authResult: KeyAuthResult,
+): void {
+  const statusCode = authResult.statusCode || 401;
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(
+    JSON.stringify({
+      error: {
+        message: authResult.error || "Authentication failed",
+        type: statusCode === 403 ? "permission_error" : "authentication_error",
+        code: statusCode === 403 ? "forbidden" : "invalid_api_key",
+      },
+    }),
+  );
+}

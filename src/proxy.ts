@@ -36,6 +36,13 @@ import {
   serveClearBreakerApi,
   serveKickstartApi,
   serveAutoWarmupApi,
+  serveGenerateVirtualKeyApi,
+  serveListVirtualKeysApi,
+  serveGetVirtualKeyApi,
+  serveUpdateVirtualKeyApi,
+  serveDeleteVirtualKeyApi,
+  serveGetSpendLogsApi,
+  serveGetSpendSummaryApi,
   serveStaticCss,
   serveStaticJs,
 } from "./dashboard.js";
@@ -76,6 +83,9 @@ import {
   classifyRateLimitReason,
   parseRetryAfterMs,
 } from "./rate-limit-parser.js";
+import { authenticateVirtualKey, sendAuthErrorResponse } from "./key-auth.js";
+import { logSpend } from "./spend-logger.js";
+import { hashKey } from "./virtual-keys.js";
 
 const proxyLogger = logger.child("proxy");
 
@@ -1149,6 +1159,13 @@ async function handleProxyRequest(
     return;
   }
 
+  const auth = await authenticateVirtualKey(req, body.model);
+  if (!auth.authenticated) {
+    sendAuthErrorResponse(res, auth);
+    return;
+  }
+  const apiKeyHash = auth.key?.tokenHash || (auth.rawKey ? hashKey(auth.rawKey) : null);
+
   const proxyLog = (
     msg: string,
     level: "info" | "warn" | "error" = "info",
@@ -1401,6 +1418,24 @@ async function handleProxyRequest(
           totalMs,
           inputTokens: usage?.inputTokens ?? 0,
           outputTokens: usage?.outputTokens ?? 0,
+        });
+        logSpend({
+          requestId,
+          apiKeyHash,
+          model: displayModelKey,
+          accountEmail: label,
+          callType: "native",
+          status: response.status >= 200 && response.status < 300 ? "success" : "failure",
+          promptTokens: usage?.inputTokens ?? 0,
+          completionTokens: usage?.outputTokens ?? 0,
+          totalTokens: (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
+          startTime: new Date(requestStartMs).toISOString(),
+          endTime: new Date().toISOString(),
+          ttfbMs,
+          durationMs: totalMs,
+          requestMessages: body.request || body,
+          responseContent: null,
+          requesterIp: req.socket?.remoteAddress || null,
         });
         if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
           rotator.recordTokenUsage(
@@ -1793,6 +1828,48 @@ export function startProxy(
           }),
         );
       }
+      return;
+    }
+
+    // ── Virtual Keys & Spend Logs API routes ──
+    if (method === "POST" && pathname === "/api/keys/generate") {
+      if (!requireAdmin(req, res)) return;
+      void serveGenerateVirtualKeyApi(req, res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/keys") {
+      if (!requireAdmin(req, res)) return;
+      void serveListVirtualKeysApi(res);
+      return;
+    }
+
+    if (pathname.startsWith("/api/keys/")) {
+      if (!requireAdmin(req, res)) return;
+      const hash = decodeURIComponent(pathname.slice("/api/keys/".length));
+      if (method === "GET") {
+        void serveGetVirtualKeyApi(res, hash);
+        return;
+      }
+      if (method === "PUT") {
+        void serveUpdateVirtualKeyApi(req, res, hash);
+        return;
+      }
+      if (method === "DELETE") {
+        void serveDeleteVirtualKeyApi(res, hash);
+        return;
+      }
+    }
+
+    if (method === "GET" && pathname === "/api/spend/logs") {
+      if (!requireAdmin(req, res)) return;
+      void serveGetSpendLogsApi(req, res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/spend/summary") {
+      if (!requireAdmin(req, res)) return;
+      void serveGetSpendSummaryApi(req, res);
       return;
     }
 

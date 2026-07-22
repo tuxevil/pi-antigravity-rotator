@@ -698,3 +698,52 @@ export const REQUEST_CLIENT_METADATA =
     platform: "MACOS",
     pluginType: "GEMINI",
   });
+
+// ── Virtual Keys & Spend Logging ─────────────────────────────────────
+
+export interface VirtualKey {
+  tokenHash: string;
+  keyName: string;
+  keyAlias: string;
+  userId?: string | null;
+  models?: string[];
+  metadata?: Record<string, unknown>;
+  blocked: boolean;
+  lastActive?: string | null;
+  createdAt: string;
+  createdBy?: string | null;
+}
+
+export interface SpendLog {
+  requestId: string;
+  apiKeyHash?: string | null;
+  model: string;
+  accountEmail?: string | null;
+  callType: string;
+  status: "success" | "failure";
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  startTime: string;
+  endTime: string;
+  ttfbMs?: number | null;
+  durationMs: number;
+  requestMessages?: unknown;
+  responseContent?: unknown;
+  metadata?: Record<string, unknown>;
+  requesterIp?: string | null;
+  createdAt?: string;
+}
+
+export interface DailySpend {
+  apiKeyHash?: string | null;
+  model: string;
+  date: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  totalDurationMs: number;
+}
+

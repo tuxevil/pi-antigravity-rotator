@@ -1,5 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
+import { authenticateVirtualKey, sendAuthErrorResponse } from "./key-auth.js";
+import { logSpend } from "./spend-logger.js";
+import { hashKey } from "./virtual-keys.js";
 import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
 import { logger, redactSensitive } from "./logger.js";
 import type { AccountRotator } from "./rotator.js";
@@ -271,6 +274,11 @@ function recordCompatOutcome(
   statusCode: number,
   completion?: CompatCompletion,
   totalMs = Date.now() - context.requestStartMs,
+  options?: {
+    callType?: string;
+    apiKeyHash?: string | null;
+    requesterIp?: string | null;
+  },
 ): void {
   const ttfbMs = completion?.firstByteMs ?? totalMs;
   rotator.recordLatency(body.displayModel || body.model, ttfbMs, totalMs);
@@ -283,12 +291,35 @@ function recordCompatOutcome(
     inputTokens: completion?.inputTokens ?? 0,
     outputTokens: completion?.outputTokens ?? 0,
   });
+  logSpend({
+    requestId: context.requestId,
+    apiKeyHash: options?.apiKeyHash || null,
+    model: context.displayModelKey,
+    accountEmail: context.label,
+    callType: options?.callType || "compat",
+    status: statusCode >= 200 && statusCode < 300 ? "success" : "failure",
+    promptTokens: completion?.inputTokens ?? 0,
+    completionTokens: completion?.outputTokens ?? 0,
+    totalTokens: (completion?.inputTokens ?? 0) + (completion?.outputTokens ?? 0),
+    startTime: new Date(context.requestStartMs).toISOString(),
+    endTime: new Date().toISOString(),
+    ttfbMs,
+    durationMs: totalMs,
+    requestMessages: body.request || body,
+    responseContent: completion?.text ? { text: completion.text } : null,
+    requesterIp: options?.requesterIp || null,
+  });
 }
 
 function recordCompatFailure(
   rotator: AccountRotator,
   body: RequestBody,
   outcome: RotationOutcome<unknown>,
+  options?: {
+    callType?: string;
+    apiKeyHash?: string | null;
+    requesterIp?: string | null;
+  },
 ): void {
   if (outcome.ok || !outcome.context) return;
   recordCompatOutcome(
@@ -298,6 +329,7 @@ function recordCompatFailure(
     outcome.status,
     undefined,
     outcome.totalMs,
+    options,
   );
 }
 
@@ -958,6 +990,11 @@ async function completeResponsesViaRotator(
   body: RequestBody,
   responseId: string,
   previousResponseId: string | null,
+  options?: {
+    callType?: string;
+    apiKeyHash?: string | null;
+    requesterIp?: string | null;
+  },
 ): Promise<{
   completion: CompatCompletion;
   status: number;
@@ -987,12 +1024,20 @@ async function completeResponsesViaRotator(
           completion.outputTokens,
         );
       }
-      recordCompatOutcome(rotator, body, context, response.status, completion);
+      recordCompatOutcome(
+        rotator,
+        body,
+        context,
+        response.status,
+        completion,
+        undefined,
+        options,
+      );
       return completion;
     },
   );
   if (!outcome.ok) {
-    recordCompatFailure(rotator, body, outcome);
+    recordCompatFailure(rotator, body, outcome, options);
     return {
       completion: { text: "", inputTokens: 0, outputTokens: 0 },
       status: outcome.status,
@@ -1011,6 +1056,11 @@ async function completeViaRotator(
   rotator: AccountRotator,
   body: RequestBody,
   streamMode: "none" | "openai" | "anthropic",
+  options?: {
+    callType?: string;
+    apiKeyHash?: string | null;
+    requesterIp?: string | null;
+  },
 ): Promise<{
   completion: CompatCompletion;
   status: number;
@@ -1039,6 +1089,8 @@ async function completeViaRotator(
           context,
           response.status,
           completion,
+          undefined,
+          options,
         );
         return completion;
       } else {
@@ -1062,13 +1114,15 @@ async function completeViaRotator(
           context,
           response.status,
           completion,
+          undefined,
+          options,
         );
         return completion;
       }
     },
   );
   if (!outcome.ok) {
-    recordCompatFailure(rotator, body, outcome);
+    recordCompatFailure(rotator, body, outcome, options);
     if (outcome.status === 404) {
       compatLogger.warn(
         `Compat upstream 404 endpoint=${outcome.endpoint || "unknown"} ${summarizeCompatRequest(body)} error=${(outcome.errorText || "").slice(0, 300)}`,
@@ -1271,6 +1325,13 @@ export async function handleGeminiGenerateContent(
       error: { message: "Model path is required", status: "INVALID_ARGUMENT" },
     });
 
+  const auth = await authenticateVirtualKey(req, model);
+  if (!auth.authenticated) {
+    sendAuthErrorResponse(res, auth);
+    return;
+  }
+  const apiKeyHash = auth.key?.tokenHash || (auth.rawKey ? hashKey(auth.rawKey) : null);
+
   const body: RequestBody = {
     model,
     project: "",
@@ -1281,7 +1342,11 @@ export async function handleGeminiGenerateContent(
       tools: parsed.tools,
     },
   };
-  const result = await completeViaRotator(req, res, rotator, body, "none");
+  const result = await completeViaRotator(req, res, rotator, body, "none", {
+    callType: "gemini",
+    apiKeyHash,
+    requesterIp: req.socket?.remoteAddress || null,
+  });
   if (result.status !== 200) {
     return writeJson(res, result.status, {
       error: {
@@ -1338,6 +1403,13 @@ export async function handleOpenAIChatCompletions(
       },
     });
 
+  const auth = await authenticateVirtualKey(req, validation.value.model);
+  if (!auth.authenticated) {
+    sendAuthErrorResponse(res, auth);
+    return;
+  }
+  const apiKeyHash = auth.key?.tokenHash || (auth.rawKey ? hashKey(auth.rawKey) : null);
+
   const started = Date.now();
   const streamMode = validation.value.stream ? "openai" : "none";
   const result = await completeViaRotator(
@@ -1346,6 +1418,11 @@ export async function handleOpenAIChatCompletions(
     rotator,
     openAIToAntigravityBody(validation.value),
     streamMode,
+    {
+      callType: "chat_completion",
+      apiKeyHash,
+      requesterIp: req.socket?.remoteAddress || null,
+    },
   );
   if (result.status !== 200) {
     compatLogger.warn(
@@ -1423,6 +1500,13 @@ export async function handleOpenAIResponsesCreate(
       },
     });
 
+  const auth = await authenticateVirtualKey(req, validation.value.model);
+  if (!auth.authenticated) {
+    sendAuthErrorResponse(res, auth);
+    return;
+  }
+  const apiKeyHash = auth.key?.tokenHash || (auth.rawKey ? hashKey(auth.rawKey) : null);
+
   let converted: ResponsesConversionResult;
   try {
     converted = convertResponsesToChatRequest(validation.value);
@@ -1469,6 +1553,11 @@ export async function handleOpenAIResponsesCreate(
       requestBody,
       responseId,
       converted.previousResponseId,
+      {
+        callType: "responses",
+        apiKeyHash,
+        requesterIp: req.socket?.remoteAddress || null,
+      },
     );
     if (result.status !== 200) {
       responsesStore.delete(responseId);
@@ -1506,6 +1595,11 @@ export async function handleOpenAIResponsesCreate(
     rotator,
     requestBody,
     "none",
+    {
+      callType: "responses",
+      apiKeyHash,
+      requesterIp: req.socket?.remoteAddress || null,
+    },
   );
   if (result.status !== 200) {
     responsesStore.delete(responseId);
@@ -1637,6 +1731,13 @@ export async function handleAnthropicMessages(
       },
     });
 
+  const auth = await authenticateVirtualKey(req, validation.value.model);
+  if (!auth.authenticated) {
+    sendAuthErrorResponse(res, auth);
+    return;
+  }
+  const apiKeyHash = auth.key?.tokenHash || (auth.rawKey ? hashKey(auth.rawKey) : null);
+
   const started = Date.now();
   const streamMode = validation.value.stream ? "anthropic" : "none";
   const result = await completeViaRotator(
@@ -1645,6 +1746,11 @@ export async function handleAnthropicMessages(
     rotator,
     anthropicToAntigravityBody(validation.value),
     streamMode,
+    {
+      callType: "anthropic",
+      apiKeyHash,
+      requesterIp: req.socket?.remoteAddress || null,
+    },
   );
   if (result.status !== 200) {
     compatLogger.warn(

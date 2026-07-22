@@ -145,6 +145,20 @@ export class PostgresSettingsRepository implements ISettingsRepository {
     this.initialized = true;
   }
 
+  getPool(): pg.Pool | null {
+    return this.pool;
+  }
+
+  async query<R extends pg.QueryResultRow = pg.QueryResultRow>(
+    text: string,
+    params?: unknown[],
+  ): Promise<pg.QueryResult<R>> {
+    if (!this.pool) {
+      throw new Error("Database pool is not initialized");
+    }
+    return this.pool.query<R>(text, params);
+  }
+
   get(key: string): string | null {
     return this.cache.get(key) ?? null;
   }

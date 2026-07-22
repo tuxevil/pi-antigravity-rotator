@@ -55,6 +55,24 @@ export async function initDb(): Promise<void> {
   initialized = true;
 }
 
+export function getDbPool() {
+  if (repository instanceof PostgresSettingsRepository) {
+    return repository.getPool();
+  }
+  return null;
+}
+
+export async function queryDb<R extends import("pg").QueryResultRow = import("pg").QueryResultRow>(
+  text: string,
+  params?: unknown[],
+): Promise<import("pg").QueryResult<R>> {
+  assertInitialized();
+  if (repository instanceof PostgresSettingsRepository) {
+    return repository.query<R>(text, params);
+  }
+  throw new Error("PostgreSQL database is not configured");
+}
+
 export async function closeDb(): Promise<void> {
   await repository.close();
   initialized = false;

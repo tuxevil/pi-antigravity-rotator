@@ -1383,52 +1383,62 @@
     background: rgba(124, 92, 252, 0.08);
   }
 
-  .list-table {
+  .list-table,
+  .compact-table {
     width: 100%;
     border-collapse: collapse;
   }
 
-  .list-table th {
-    font-size: 10px;
+  .list-table th,
+  .compact-table th {
+    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-dim);
-    padding: 8px 14px;
+    padding: 12px 16px;
     text-align: left;
     border-bottom: 1px solid var(--border);
     background: rgba(255,255,255,0.02);
     white-space: nowrap;
-    cursor: pointer;
     user-select: none;
   }
 
-  .list-table th:hover { color: var(--text); }
+  .list-table th:hover,
+  .compact-table th:hover { color: var(--text); }
 
-  .list-table th .sort-arrow {
+  .list-table th .sort-arrow,
+  .compact-table th .sort-arrow {
     display: inline-block;
     margin-left: 4px;
     opacity: 0.4;
     font-size: 9px;
   }
 
-  .list-table th.sort-active .sort-arrow { opacity: 1; color: var(--accent); }
+  .list-table th.sort-active .sort-arrow,
+  .compact-table th.sort-active .sort-arrow { opacity: 1; color: var(--accent); }
 
-  .list-table td {
-    padding: 9px 14px;
-    font-size: 12px;
+  .list-table td,
+  .compact-table td {
+    padding: 13px 16px;
+    font-size: 13px;
     border-bottom: 1px solid rgba(255,255,255,0.04);
     vertical-align: middle;
   }
 
-  .list-table tr:last-child td { border-bottom: none; }
+  .list-table tr:last-child td,
+  .compact-table tr:last-child td { border-bottom: none; }
 
-  .list-table tr.list-row {
+  .list-table tr.list-row,
+  .compact-table tr.log-row,
+  .compact-table tr.list-row {
     cursor: pointer;
     transition: background 0.15s;
   }
 
-  .list-table tr.list-row:hover td {
+  .list-table tr.list-row:hover td,
+  .compact-table tr.log-row:hover td,
+  .compact-table tr:hover td {
     background: rgba(124, 92, 252, 0.05);
   }
 

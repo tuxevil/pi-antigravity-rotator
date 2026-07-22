@@ -59,6 +59,7 @@ export default [
         alert: "readonly",
         confirm: "readonly",
         prompt: "readonly",
+        navigator: "readonly",
         encodeURIComponent: "readonly",
         decodeURIComponent: "readonly",
         console: "readonly",

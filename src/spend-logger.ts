@@ -301,3 +301,161 @@ export async function getDailySpendSummary(options: {
     return [];
   }
 }
+
+// ── Spend by Key Aggregation ────────────────────────────────────────
+
+export interface SpendByKey {
+  apiKeyHash: string;
+  totalRequests: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalDurationMs: number;
+  avgDurationMs: number;
+  firstSeen: string | null;
+  lastSeen: string | null;
+}
+
+export async function getSpendByKey(options: {
+  startDate?: string;
+  endDate?: string;
+}): Promise<SpendByKey[]> {
+  if (!isDbConfigured()) return [];
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (options.startDate) {
+    params.push(options.startDate);
+    conditions.push(`date >= $${params.length}::date`);
+  }
+  if (options.endDate) {
+    params.push(options.endDate);
+    conditions.push(`date <= $${params.length}::date`);
+  }
+
+  const whereClause =
+    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  try {
+    const res = await queryDb(
+      `SELECT
+        api_key_hash,
+        SUM(total_requests)::int as total_requests,
+        SUM(prompt_tokens)::bigint as total_prompt_tokens,
+        SUM(completion_tokens)::bigint as total_completion_tokens,
+        SUM(total_duration_ms)::bigint as total_duration_ms,
+        SUM(total_duration_ms)::float / NULLIF(SUM(total_requests), 0) as avg_duration_ms
+      FROM rotator_daily_spend
+      ${whereClause}
+      GROUP BY api_key_hash
+      ORDER BY total_prompt_tokens + total_completion_tokens DESC`,
+      params,
+    );
+
+    const keyHashes = res.rows.map((r) => String(r.api_key_hash));
+    const lastSeenRes =
+      keyHashes.length > 0
+        ? await queryDb(
+            `SELECT api_key_hash, MIN(created_at) as first_seen, MAX(created_at) as last_seen
+             FROM rotator_spend_logs
+             WHERE api_key_hash = ANY($1::text[])
+             GROUP BY api_key_hash`,
+            [keyHashes],
+          )
+        : { rows: [] as Array<Record<string, unknown>> };
+
+    const firstLastMap = new Map<string, { firstSeen: string | null; lastSeen: string | null }>();
+    for (const row of lastSeenRes.rows) {
+      firstLastMap.set(String(row.api_key_hash), {
+        firstSeen: row.first_seen ? new Date(row.first_seen as string).toISOString() : null,
+        lastSeen: row.last_seen ? new Date(row.last_seen as string).toISOString() : null,
+      });
+    }
+
+    return res.rows.map((row) => {
+      const hash = String(row.api_key_hash);
+      const fl = firstLastMap.get(hash) || { firstSeen: null, lastSeen: null };
+      return {
+        apiKeyHash: hash,
+        totalRequests: Number(row.total_requests || 0),
+        totalPromptTokens: Number(row.total_prompt_tokens || 0),
+        totalCompletionTokens: Number(row.total_completion_tokens || 0),
+        totalDurationMs: Number(row.total_duration_ms || 0),
+        avgDurationMs: Number(row.avg_duration_ms || 0),
+        firstSeen: fl.firstSeen,
+        lastSeen: fl.lastSeen,
+      };
+    });
+  } catch (err) {
+    console.error("Failed to get spend by key:", err);
+    return [];
+  }
+}
+
+// ── Retention Policy ─────────────────────────────────────────────────
+
+const DEFAULT_LOG_RETENTION_DAYS = 30;
+const DAILY_RETENTION_DAYS = 90;
+const RETENTION_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+let retentionTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getLogRetentionDays(): number {
+  const env = process.env.PI_ROTATOR_LOG_RETENTION_DAYS;
+  if (env) {
+    const n = parseInt(env, 10);
+    if (!isNaN(n) && n > 0) return n;
+  }
+  return DEFAULT_LOG_RETENTION_DAYS;
+}
+
+async function runRetentionCleanup(): Promise<void> {
+  if (!isDbConfigured()) return;
+
+  const logDays = getLogRetentionDays();
+
+  try {
+    const logRes = await queryDb<{ deleted: string }>(
+      `WITH deleted AS (
+        DELETE FROM rotator_spend_logs WHERE created_at < NOW() - ($1 || ' days')::interval
+        RETURNING request_id
+      )
+      SELECT COUNT(*)::text as deleted FROM deleted`,
+      [String(logDays)],
+    );
+    const dailyRes = await queryDb<{ deleted: string }>(
+      `WITH deleted AS (
+        DELETE FROM rotator_daily_spend WHERE date < CURRENT_DATE - ($1 || ' days')::interval
+        RETURNING id
+      )
+      SELECT COUNT(*)::text as deleted FROM deleted`,
+      [String(DAILY_RETENTION_DAYS)],
+    );
+
+    const logDeleted = parseInt(logRes.rows[0]?.deleted || "0", 10);
+    const dailyDeleted = parseInt(dailyRes.rows[0]?.deleted || "0", 10);
+
+    if (logDeleted > 0 || dailyDeleted > 0) {
+      console.log(
+        `[retention] Cleaned ${logDeleted} spend logs (${logDays}d policy) and ${dailyDeleted} daily aggregates (${DAILY_RETENTION_DAYS}d policy)`,
+      );
+    }
+  } catch (err) {
+    console.error("Retention cleanup failed:", err);
+  }
+}
+
+export function startRetentionCleanup(): void {
+  void runRetentionCleanup();
+  retentionTimer = setInterval(() => {
+    void runRetentionCleanup();
+  }, RETENTION_CHECK_INTERVAL_MS);
+  retentionTimer.unref();
+}
+
+export function stopRetentionCleanup(): void {
+  if (retentionTimer) {
+    clearInterval(retentionTimer);
+    retentionTimer = null;
+  }
+}

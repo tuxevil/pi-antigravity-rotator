@@ -24,7 +24,7 @@ import { setModelAliasesOverride } from "./types.js";
 import { writeTextFileAtomic } from "./storage.js";
 import { initDb } from "./db-store.js";
 import { runKeyMigrations } from "./key-migrations.js";
-import { flushSpendLogs } from "./spend-logger.js";
+import { flushSpendLogs, stopRetentionCleanup, startRetentionCleanup } from "./spend-logger.js";
 import { stopPendingSessionReaper } from "./onboarding.js";
 import { getProxyExposureWarning } from "./exposure.js";
 
@@ -165,6 +165,7 @@ export async function main(): Promise<void> {
 
   await initDb();
   await runKeyMigrations();
+  startRetentionCleanup();
 
   const config = loadConfig();
   console.log(`Loaded ${config.accounts.length} accounts`);
@@ -231,6 +232,7 @@ export async function main(): Promise<void> {
   // ── Graceful shutdown ──
   const shutdown = async (): Promise<void> => {
     console.log("\nShutting down...");
+    stopRetentionCleanup();
     await flushSpendLogs();
     flushResponsesStoreSync();
     rotator.flushPendingStateSaveSync();

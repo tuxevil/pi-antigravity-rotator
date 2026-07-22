@@ -14,7 +14,7 @@ import {
   updateVirtualKey,
   deleteVirtualKey,
 } from "./virtual-keys.js";
-import { getSpendLogs, getDailySpendSummary } from "./spend-logger.js";
+import { getSpendLogs, getDailySpendSummary, getSpendByKey } from "./spend-logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -25,6 +25,14 @@ const DASHBOARD_CSS = readFileSync(
 );
 const DASHBOARD_JS = readFileSync(
   join(__dirname, "static", "dashboard.js"),
+  "utf-8",
+);
+const DASHBOARD_KEYS_JS = readFileSync(
+  join(__dirname, "static", "dashboard-keys.js"),
+  "utf-8",
+);
+const DASHBOARD_LOGS_JS = readFileSync(
+  join(__dirname, "static", "dashboard-logs.js"),
   "utf-8",
 );
 
@@ -47,6 +55,32 @@ export function serveStaticJs(res: ServerResponse): void {
     "Cache-Control": "public, max-age=3600",
   });
   res.end(DASHBOARD_JS);
+}
+
+export function serveStaticKeysJs(res: ServerResponse): void {
+  res.writeHead(200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+    "Cache-Control": "public, max-age=3600",
+  });
+  res.end(DASHBOARD_KEYS_JS);
+}
+
+export function serveStaticLogsJs(res: ServerResponse): void {
+  res.writeHead(200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+    "Cache-Control": "public, max-age=3600",
+  });
+  res.end(DASHBOARD_LOGS_JS);
+}
+
+export function serveDashboardKeys(res: ServerResponse): void {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(DASHBOARD_KEYS_HTML);
+}
+
+export function serveDashboardLogs(res: ServerResponse): void {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(DASHBOARD_LOGS_HTML);
 }
 
 export function serveStatusApi(
@@ -432,6 +466,29 @@ export async function serveGetSpendSummaryApi(
   }
 }
 
+export async function serveGetSpendByKeyApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  try {
+    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const startDate = url.searchParams.get("startDate") || undefined;
+    const endDate = url.searchParams.get("endDate") || undefined;
+
+    const byKey = await getSpendByKey({ startDate, endDate });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, byKey }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -647,5 +704,148 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </div>
 
 <script src="/static/dashboard.js"></script>
+</body>
+</html>`;
+
+const DASHBOARD_KEYS_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Virtual Keys — Pi Antigravity Rotator</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+<style>
+.mono { font-family: JetBrains Mono, monospace; font-size: 0.83rem; }
+.btn-action { padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text); }
+.btn-action:hover { background: var(--accent); color: #fff; }
+#keyModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 100; align-items: center; justify-content: center; }
+#keyModal > div { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 24px; min-width: 420px; max-width: 550px; }
+#keyModal input { width: 100%; padding: 8px; margin: 6px 0 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+#keyModal label { font-weight: bold; font-size: 0.9rem; }
+.generated-key-box { background: var(--bg-card); border: 1px solid var(--accent); border-radius: 6px; padding: 16px; margin: 16px 0; text-align: center; }
+.generated-key-box .raw { font-family: JetBrains Mono, monospace; font-size: 1.1rem; color: var(--accent); word-break: break-all; margin: 8px 0; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 0.8rem; text-transform: uppercase; }
+td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+.nav-bar { display: flex; gap: 12px; margin-bottom: 24px; padding: 12px 16px; background: var(--bg-card); border-radius: 8px; align-items: center; flex-wrap: wrap; }
+.nav-bar a { color: var(--text-dim); text-decoration: none; padding: 6px 14px; border-radius: 4px; font-size: 0.9rem; }
+.nav-bar a.active { background: var(--accent); color: #fff; }
+.nav-bar a:hover:not(.active) { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="nav-bar">
+  <a href="/dashboard">&#8592; Dashboard</a>
+  <a href="/dashboard/keys" class="active">Virtual Keys</a>
+  <a href="/dashboard/logs">Spend Logs</a>
+</div>
+
+<h2>Virtual Keys</h2>
+<div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0; flex-wrap:wrap; gap:12px">
+  <span style="color:var(--text-dim); font-size:0.85rem">Manage API keys for tracking individual agent usage</span>
+  <button class="btn-secondary" onclick="showGenerateModal()">+ Generate Key</button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Alias</th><th>Key</th><th>User</th><th>Models</th><th>Status</th><th>Last Active</th><th style="width:80px">Actions</th>
+    </tr>
+  </thead>
+  <tbody id="keysTbody"></tbody>
+</table>
+
+<div id="keyModal">
+  <div>
+    <h3 id="modalTitle" style="margin-top:0">Generate Virtual Key</h3>
+    <label>Alias</label>
+    <input id="keyFormAlias" placeholder="e.g. cursor-agent" autofocus>
+    <label>User ID (optional)</label>
+    <input id="keyFormUserId" placeholder="e.g. seba">
+    <label>Models (comma-separated, empty = all)</label>
+    <input id="keyFormModels" placeholder="e.g. gemini-3.5-flash-high, claude-sonnet-4-6">
+    <div id="keyFormError" style="color:var(--red); margin:8px 0; font-size:0.85rem"></div>
+    <div id="generatedKeyResult" class="generated-key-box" style="display:none">
+      <strong style="color:var(--accent)">&#9888; Save this key now — it won't be shown again!</strong>
+      <div class="raw" id="generatedRawKey"></div>
+      <button id="copyKeyBtn" class="btn-secondary" onclick="copyRawKey()" style="margin-top:8px">Copy</button>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
+      <button class="btn-secondary" onclick="hideModal()">Cancel</button>
+      <button class="btn-secondary" onclick="submitKeyForm()" style="background:var(--accent);color:#fff">Generate</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/dashboard-keys.js"></script>
+</body>
+</html>`;
+
+const DASHBOARD_LOGS_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spend Logs — Pi Antigravity Rotator</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+<style>
+.mono { font-family: JetBrains Mono, monospace; font-size: 0.8rem; }
+.log-row { cursor: pointer; }
+.log-row:hover { background: rgba(255,255,255,0.03); }
+.log-detail td { padding: 0; }
+.log-detail-content { padding: 12px 16px; background: var(--bg-card); border-left: 2px solid var(--accent); font-size: 0.85rem; }
+.log-payload { max-height: 400px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 4px; font-size: 0.78rem; white-space: pre-wrap; }
+.compact-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.compact-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; }
+.compact-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; }
+td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+.filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+.filters input, .filters select { padding: 6px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.85rem; }
+.filters input { width: 150px; }
+.nav-bar { display: flex; gap: 12px; margin-bottom: 24px; padding: 12px 16px; background: var(--bg-card); border-radius: 8px; align-items: center; flex-wrap: wrap; }
+.nav-bar a { color: var(--text-dim); text-decoration: none; padding: 6px 14px; border-radius: 4px; font-size: 0.9rem; }
+.nav-bar a.active { background: var(--accent); color: #fff; }
+.nav-bar a:hover:not(.active) { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="nav-bar">
+  <a href="/dashboard">&#8592; Dashboard</a>
+  <a href="/dashboard/keys">Virtual Keys</a>
+  <a href="/dashboard/logs" class="active">Spend Logs</a>
+</div>
+
+<h2>Spend Logs &amp; Usage</h2>
+
+<div id="byKeySummary"></div>
+
+<div class="filters">
+  <input id="filterKeyHash" placeholder="Key hash (10+ chars)">
+  <input id="filterModel" placeholder="Model name">
+  <select id="filterStatus">
+    <option value="">All statuses</option>
+    <option value="success">Success</option>
+    <option value="failure">Failure</option>
+  </select>
+  <input id="filterStartDate" type="date" placeholder="From">
+  <input id="filterEndDate" type="date" placeholder="To">
+  <button class="btn-secondary btn-sm" onclick="applyFilters()">Apply</button>
+  <button class="btn-secondary btn-sm" onclick="resetFilters()">Reset</button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Time</th><th>Key</th><th>Model</th><th>Type</th><th>Status</th><th>Tokens (in / out)</th><th>Duration</th><th>TTFB</th><th>IP</th>
+    </tr>
+  </thead>
+  <tbody id="logsBody"></tbody>
+</table>
+
+<div id="pagination" style="margin-top:16px;display:flex;justify-content:center;align-items:center;gap:8px;font-size:0.85rem"></div>
+
+<script src="/static/dashboard-logs.js"></script>
 </body>
 </html>`;

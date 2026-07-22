@@ -43,6 +43,11 @@ import {
   serveDeleteVirtualKeyApi,
   serveGetSpendLogsApi,
   serveGetSpendSummaryApi,
+  serveGetSpendByKeyApi,
+  serveDashboardKeys,
+  serveDashboardLogs,
+  serveStaticKeysJs,
+  serveStaticLogsJs,
   serveStaticCss,
   serveStaticJs,
 } from "./dashboard.js";
@@ -1552,6 +1557,18 @@ export function startProxy(
       return;
     }
 
+    if (method === "GET" && pathname === "/dashboard/keys") {
+      if (!requireAdmin(req, res)) return;
+      serveDashboardKeys(res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/dashboard/logs") {
+      if (!requireAdmin(req, res)) return;
+      serveDashboardLogs(res);
+      return;
+    }
+
     if (method === "GET" && pathname === "/static/dashboard.css") {
       serveStaticCss(res);
       return;
@@ -1559,6 +1576,16 @@ export function startProxy(
 
     if (method === "GET" && pathname === "/static/dashboard.js") {
       serveStaticJs(res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/static/dashboard-keys.js") {
+      serveStaticKeysJs(res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/static/dashboard-logs.js") {
+      serveStaticLogsJs(res);
       return;
     }
 
@@ -1870,6 +1897,12 @@ export function startProxy(
     if (method === "GET" && pathname === "/api/spend/summary") {
       if (!requireAdmin(req, res)) return;
       void serveGetSpendSummaryApi(req, res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/spend/by-key") {
+      if (!requireAdmin(req, res)) return;
+      void serveGetSpendByKeyApi(req, res);
       return;
     }
 

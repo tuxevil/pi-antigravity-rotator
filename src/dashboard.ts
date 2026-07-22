@@ -411,6 +411,8 @@ export async function serveGetSpendLogsApi(
     const keyHash = url.searchParams.get("keyHash") || undefined;
     const model = url.searchParams.get("model") || undefined;
     const status = url.searchParams.get("status") || undefined;
+    const startDate = url.searchParams.get("startDate") || undefined;
+    const endDate = url.searchParams.get("endDate") || undefined;
     const limit = url.searchParams.has("limit")
       ? parseInt(url.searchParams.get("limit")!, 10)
       : 50;
@@ -422,6 +424,8 @@ export async function serveGetSpendLogsApi(
       apiKeyHash: keyHash,
       model,
       status,
+      startDate,
+      endDate,
       limit,
       offset,
     });

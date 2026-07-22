@@ -81,8 +81,10 @@ function loadLogs(page) {
   if (currentKeyHash) params.set("keyHash", currentKeyHash);
   if (currentModel) params.set("model", currentModel);
   if (currentStatus) params.set("status", currentStatus);
+  if (currentStartDate) params.set("startDate", currentStartDate);
+  if (currentEndDate) params.set("endDate", currentEndDate);
 
-  document.getElementById("logsBody").innerHTML = '<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--text-dim)">Loading spend logs...</td></tr>';
+  document.getElementById("logsBody").innerHTML = '<tr><td colspan="100" style="text-align:center;padding:32px;color:var(--text-dim)">Loading spend logs...</td></tr>';
 
   fetch("/api/spend/logs?" + params.toString(), { headers: authHeaders() })
     .then(function(r) { return r.json(); })
@@ -90,43 +92,32 @@ function loadLogs(page) {
       currentTotal = d.total || 0;
       renderLogs(d.logs || []);
       renderPagination();
-      updateSummaryCards(d.logs || [], currentTotal);
+      updateSummaryCards(d.summary, currentTotal);
       loadByKeySummary(currentStartDate, currentEndDate);
     })
     .catch(function(e) { 
-      document.getElementById("logsBody").innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--red);padding:32px">Error loading logs: ' + escapeHtml(e.message) + '</td></tr>'; 
+      document.getElementById("logsBody").innerHTML = '<tr><td colspan="100" style="text-align:center;color:var(--red);padding:32px">Error loading logs: ' + escapeHtml(e.message) + '</td></tr>'; 
     });
 }
 
-function updateSummaryCards(logs, total) {
+function updateSummaryCards(summary, total) {
   var reqEl = document.getElementById("statLogRequests");
   var promptEl = document.getElementById("statLogPromptTokens");
   var compEl = document.getElementById("statLogCompletionTokens");
   var latEl = document.getElementById("statLogAvgLatency");
   var costEl = document.getElementById("statLogCost");
 
-  if (reqEl) reqEl.textContent = total.toLocaleString();
+  var reqs = (summary && summary.totalRequests !== undefined) ? summary.totalRequests : total;
+  var prompt = summary ? (summary.promptTokens || 0) : 0;
+  var comp = summary ? (summary.completionTokens || 0) : 0;
+  var lat = summary ? (summary.avgLatencyMs ? summary.avgLatencyMs + "ms" : "--") : "--";
+  var cost = summary ? (summary.totalCost || 0) : 0;
 
-  var totalPrompt = 0;
-  var totalComp = 0;
-  var totalDur = 0;
-  var countDur = 0;
-  var totalCost = 0;
-
-  logs.forEach(function(l) {
-    totalPrompt += (l.promptTokens || 0);
-    totalComp += (l.completionTokens || 0);
-    totalCost += (l.cost || 0);
-    if (l.durationMs) {
-      totalDur += l.durationMs;
-      countDur++;
-    }
-  });
-
-  if (promptEl) promptEl.textContent = totalPrompt.toLocaleString();
-  if (compEl) compEl.textContent = totalComp.toLocaleString();
-  if (latEl) latEl.textContent = countDur > 0 ? Math.round(totalDur / countDur) + "ms" : "--";
-  if (costEl) costEl.textContent = formatCost(totalCost);
+  if (reqEl) reqEl.textContent = reqs.toLocaleString();
+  if (promptEl) promptEl.textContent = prompt.toLocaleString();
+  if (compEl) compEl.textContent = comp.toLocaleString();
+  if (latEl) latEl.textContent = lat;
+  if (costEl) costEl.textContent = formatCost(cost);
 }
 
 var ALL_COLS = ["time", "key", "model", "type", "status", "tokens", "cost", "duration", "ttfb", "ip"];

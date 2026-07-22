@@ -244,14 +244,32 @@ export interface GetSpendLogsOptions {
   apiKeyHash?: string;
   model?: string;
   status?: string;
+  startDate?: string;
+  endDate?: string;
   limit?: number;
   offset?: number;
 }
 
+export interface SpendSummary {
+  totalRequests: number;
+  promptTokens: number;
+  completionTokens: number;
+  avgLatencyMs: number;
+  totalCost: number;
+}
+
 export async function getSpendLogs(
   options: GetSpendLogsOptions = {},
-): Promise<{ logs: SpendLog[]; total: number }> {
-  if (!isDbConfigured()) return { logs: [], total: 0 };
+): Promise<{ logs: SpendLog[]; total: number; summary: SpendSummary }> {
+  const emptySummary: SpendSummary = {
+    totalRequests: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    avgLatencyMs: 0,
+    totalCost: 0,
+  };
+
+  if (!isDbConfigured()) return { logs: [], total: 0, summary: emptySummary };
 
   const limit = Math.min(100, Math.max(1, options.limit || 50));
   const offset = Math.max(0, options.offset || 0);
@@ -274,19 +292,77 @@ export async function getSpendLogs(
     params.push(options.status);
     conditions.push(`l.status = $${params.length}`);
   }
+  if (options.startDate) {
+    params.push(options.startDate);
+    conditions.push(`l.created_at >= $${params.length}::timestamptz`);
+  }
+  if (options.endDate) {
+    params.push(options.endDate);
+    conditions.push(`l.created_at <= ($${params.length}::date + INTERVAL '1 day')`);
+  }
 
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   try {
-    const countRes = await queryDb<{ count: string }>(
-      `SELECT COUNT(*)::text as count
+    const aggRes = await queryDb<{
+      count: string;
+      prompt_tokens: string;
+      completion_tokens: string;
+      total_duration_ms: string;
+      count_duration: string;
+    }>(
+      `SELECT 
+         COUNT(*)::text as count,
+         COALESCE(SUM(l.prompt_tokens), 0)::text as prompt_tokens,
+         COALESCE(SUM(l.completion_tokens), 0)::text as completion_tokens,
+         COALESCE(SUM(l.duration_ms), 0)::text as total_duration_ms,
+         COUNT(l.duration_ms)::text as count_duration
        FROM rotator_spend_logs l
        LEFT JOIN rotator_virtual_keys k ON l.api_key_hash = k.token_hash
        ${whereClause}`,
       params,
     );
-    const total = parseInt(countRes.rows[0]?.count || "0", 10);
+
+    const aggRow = aggRes.rows[0];
+    const total = parseInt(aggRow?.count || "0", 10);
+    const promptTokens = parseInt(aggRow?.prompt_tokens || "0", 10);
+    const completionTokens = parseInt(aggRow?.completion_tokens || "0", 10);
+    const totalDurationMs = parseInt(aggRow?.total_duration_ms || "0", 10);
+    const countDuration = parseInt(aggRow?.count_duration || "0", 10);
+    const avgLatencyMs = countDuration > 0 ? Math.round(totalDurationMs / countDuration) : 0;
+
+    const byModelRes = await queryDb<{
+      model: string;
+      prompt_tokens: string;
+      completion_tokens: string;
+    }>(
+      `SELECT 
+         l.model,
+         COALESCE(SUM(l.prompt_tokens), 0)::text as prompt_tokens,
+         COALESCE(SUM(l.completion_tokens), 0)::text as completion_tokens
+       FROM rotator_spend_logs l
+       LEFT JOIN rotator_virtual_keys k ON l.api_key_hash = k.token_hash
+       ${whereClause}
+       GROUP BY l.model`,
+      params,
+    );
+
+    let totalCost = 0;
+    for (const mRow of byModelRes.rows) {
+      const pTok = parseInt(mRow.prompt_tokens || "0", 10);
+      const cTok = parseInt(mRow.completion_tokens || "0", 10);
+      totalCost += calculateCost(mRow.model, pTok, cTok);
+    }
+    totalCost = Number(totalCost.toFixed(6));
+
+    const summary: SpendSummary = {
+      totalRequests: total,
+      promptTokens,
+      completionTokens,
+      avgLatencyMs,
+      totalCost,
+    };
 
     const queryParams = [...params, limit, offset];
     const logsRes = await queryDb(
@@ -331,10 +407,10 @@ export async function getSpendLogs(
       };
     });
 
-    return { logs, total };
+    return { logs, total, summary };
   } catch (err) {
     console.error("Failed to query spend logs:", err);
-    return { logs: [], total: 0 };
+    return { logs: [], total: 0, summary: emptySummary };
   }
 }
 

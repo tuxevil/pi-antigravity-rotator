@@ -40,7 +40,7 @@ function formatDuration(ms) {
   return d + "d " + (h % 24) + "h " + (m % 60) + "m";
 }
 function refreshHeaderStats() {
-  fetch("/api/status")
+  fetch("/api/status", { headers: authHeaders() })
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (document.getElementById("uptime")) document.getElementById("uptime").textContent = formatDuration(data.uptime || 0);

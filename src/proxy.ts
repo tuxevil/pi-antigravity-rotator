@@ -1569,6 +1569,12 @@ export function startProxy(
       return;
     }
 
+    if (method === "GET" && pathname === "/favicon.ico") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     if (method === "GET" && pathname === "/static/dashboard.css") {
       serveStaticCss(res);
       return;

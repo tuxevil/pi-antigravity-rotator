@@ -1647,4 +1647,73 @@
   /* Log expand detail */
   .log-detail td { padding: 0; }
   .log-detail-content { padding: 12px 16px; background: var(--surface); border-left: 2px solid var(--accent); font-size: 0.85rem; }
+
+  /* ── Column Picker Styles ── */
+  .col-picker-container { position: relative; }
+  .col-picker-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    width: 220px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+    padding: 12px;
+    z-index: 100;
+  }
+  .col-picker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .col-picker-reset {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0;
+  }
+  .col-picker-reset:hover { text-decoration: underline; }
+  .col-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .col-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: var(--text);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: background 0.15s;
+    user-select: none;
+  }
+  .col-picker-item:hover { background: rgba(255, 255, 255, 0.05); }
+  .col-picker-item input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .compact-table.hide-col-time .col-time,
+  .compact-table.hide-col-key .col-key,
+  .compact-table.hide-col-model .col-model,
+  .compact-table.hide-col-type .col-type,
+  .compact-table.hide-col-status .col-status,
+  .compact-table.hide-col-tokens .col-tokens,
+  .compact-table.hide-col-duration .col-duration,
+  .compact-table.hide-col-ttfb .col-ttfb,
+  .compact-table.hide-col-ip .col-ip {
+    display: none !important;
+  }
   .log-payload { max-height: 400px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 4px; font-size: 0.78rem; white-space: pre-wrap; }

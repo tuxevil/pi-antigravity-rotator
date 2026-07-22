@@ -1031,22 +1031,47 @@ const DASHBOARD_LOGS_HTML = renderAppShell({
 
   <button class="pill-btn" onclick="applyFilters()" style="background:var(--accent);color:#fff;border:none;padding:7px 14px;font-weight:600;cursor:pointer">Apply</button>
   <button class="pill-btn" onclick="resetFilters()" style="padding:7px 12px;cursor:pointer">Reset</button>
+
+  <div class="col-picker-container" style="margin-left:auto;position:relative">
+    <button class="pill-btn" onclick="toggleColumnPicker(event)" type="button" style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;cursor:pointer">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+      <span>Columns</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div id="colPickerMenu" class="col-picker-menu" style="display:none" onclick="event.stopPropagation()">
+      <div class="col-picker-header">
+        <span>Visible Columns</span>
+        <button type="button" class="col-picker-reset" onclick="resetColumns()">Reset</button>
+      </div>
+      <div class="col-picker-list">
+        <label class="col-picker-item"><input type="checkbox" data-col="time" checked onchange="toggleColumn('time')"> Time</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="key" checked onchange="toggleColumn('key')"> Key / Agent</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="model" checked onchange="toggleColumn('model')"> Model</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="type" checked onchange="toggleColumn('type')"> Call Type</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="status" checked onchange="toggleColumn('status')"> Status</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="tokens" checked onchange="toggleColumn('tokens')"> Tokens (In / Out)</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="duration" checked onchange="toggleColumn('duration')"> Duration</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="ttfb" checked onchange="toggleColumn('ttfb')"> TTFB</label>
+        <label class="col-picker-item"><input type="checkbox" data-col="ip" checked onchange="toggleColumn('ip')"> IP Address</label>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="list-panel">
   <div style="overflow-x:auto">
-    <table class="compact-table">
+    <table id="logsTable" class="compact-table">
       <thead>
         <tr>
-          <th>Time</th>
-          <th>Key / Agent</th>
-          <th>Model</th>
-          <th>Call Type</th>
-          <th>Status</th>
-          <th>Tokens (In / Out)</th>
-          <th>Duration</th>
-          <th>TTFB</th>
-          <th>IP</th>
+          <th class="col-time">Time</th>
+          <th class="col-key">Key / Agent</th>
+          <th class="col-model">Model</th>
+          <th class="col-type">Call Type</th>
+          <th class="col-status">Status</th>
+          <th class="col-tokens">Tokens (In / Out)</th>
+          <th class="col-duration">Duration</th>
+          <th class="col-ttfb">TTFB</th>
+          <th class="col-ip">IP</th>
         </tr>
       </thead>
       <tbody id="logsBody"></tbody>

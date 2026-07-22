@@ -120,10 +120,79 @@ function updateSummaryCards(logs, total) {
   if (latEl) latEl.textContent = countDur > 0 ? Math.round(totalDur / countDur) + "ms" : "--";
 }
 
+var ALL_COLS = ["time", "key", "model", "type", "status", "tokens", "duration", "ttfb", "ip"];
+var columnState = {};
+
+function loadColumnState() {
+  var saved = localStorage.getItem("rotatorLogColumns");
+  if (saved) {
+    try {
+      columnState = JSON.parse(saved);
+    } catch(e) {
+      columnState = {};
+    }
+  }
+  ALL_COLS.forEach(function(c) {
+    if (columnState[c] === undefined) columnState[c] = true;
+  });
+  applyColumnState();
+}
+
+function saveColumnState() {
+  localStorage.setItem("rotatorLogColumns", JSON.stringify(columnState));
+}
+
+function applyColumnState() {
+  var table = document.getElementById("logsTable");
+  if (!table) return;
+
+  ALL_COLS.forEach(function(c) {
+    var isVisible = columnState[c] !== false;
+    var cls = "hide-col-" + c;
+    if (isVisible) {
+      table.classList.remove(cls);
+    } else {
+      table.classList.add(cls);
+    }
+    var cb = document.querySelector('.col-picker-item input[data-col="' + c + '"]');
+    if (cb) cb.checked = isVisible;
+  });
+}
+
+function toggleColumn(col) {
+  columnState[col] = !columnState[col];
+  saveColumnState();
+  applyColumnState();
+}
+
+function resetColumns() {
+  ALL_COLS.forEach(function(c) {
+    columnState[c] = true;
+  });
+  saveColumnState();
+  applyColumnState();
+}
+
+function toggleColumnPicker(e) {
+  if (e) e.stopPropagation();
+  var m = document.getElementById("colPickerMenu");
+  if (m) {
+    m.style.display = m.style.display === "none" ? "block" : "none";
+  }
+}
+
+document.addEventListener("click", function(e) {
+  var m = document.getElementById("colPickerMenu");
+  if (m && m.style.display !== "none") {
+    var btn = e.target.closest(".col-picker-container");
+    if (!btn) m.style.display = "none";
+  }
+});
+
 function renderLogs(logs) {
   var tbody = document.getElementById("logsBody");
   if (logs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:32px">No spend logs found matching criteria.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="100" style="text-align:center;color:var(--text-dim);padding:32px">No spend logs found matching criteria.</td></tr>';
     return;
   }
 
@@ -142,17 +211,17 @@ function renderLogs(logs) {
     if (l.callType === "responses") typeBadgeClass = "badge-active";
 
     return '<tr class="log-row" onclick="toggleExpand(\'' + l.requestId + '\')">' +
-      '<td style="font-size:0.8rem;color:var(--text-dim)">' + ts + '</td>' +
-      '<td><span class="mono" style="font-size:0.78rem">' + escapeHtml(keyDisplay) + '</span></td>' +
-      '<td><span class="model-chip">' + escapeHtml(l.model) + '</span></td>' +
-      '<td><span class="badge ' + typeBadgeClass + '" style="font-size:9px">' + escapeHtml(l.callType || "native") + '</span></td>' +
-      '<td>' + statusBadge + '</td>' +
-      '<td class="mono" style="font-size:0.82rem">' + l.promptTokens + ' <span style="color:var(--text-dim)">/</span> <span style="color:var(--green)">' + l.completionTokens + '</span></td>' +
-      '<td class="mono" style="font-size:0.82rem">' + duration + '</td>' +
-      '<td class="mono" style="font-size:0.82rem;color:var(--text-dim)">' + ttfb + '</td>' +
-      '<td style="font-size:0.78rem;color:var(--text-dim)">' + (l.requesterIp || "-") + '</td>' +
+      '<td class="col-time" style="font-size:0.8rem;color:var(--text-dim)">' + ts + '</td>' +
+      '<td class="col-key"><span class="mono" style="font-size:0.78rem">' + escapeHtml(keyDisplay) + '</span></td>' +
+      '<td class="col-model"><span class="model-chip">' + escapeHtml(l.model) + '</span></td>' +
+      '<td class="col-type"><span class="badge ' + typeBadgeClass + '" style="font-size:9px">' + escapeHtml(l.callType || "native") + '</span></td>' +
+      '<td class="col-status">' + statusBadge + '</td>' +
+      '<td class="col-tokens mono" style="font-size:0.82rem">' + l.promptTokens + ' <span style="color:var(--text-dim)">/</span> <span style="color:var(--green)">' + l.completionTokens + '</span></td>' +
+      '<td class="col-duration mono" style="font-size:0.82rem">' + duration + '</td>' +
+      '<td class="col-ttfb mono" style="font-size:0.82rem;color:var(--text-dim)">' + ttfb + '</td>' +
+      '<td class="col-ip" style="font-size:0.78rem;color:var(--text-dim)">' + (l.requesterIp || "-") + '</td>' +
     '</tr>' +
-    '<tr id="expand-' + l.requestId + '" class="log-detail" style="display:none"><td colspan="9">' +
+    '<tr id="expand-' + l.requestId + '" class="log-detail" style="display:none"><td colspan="100">' +
       '<div class="log-detail-content" style="background:rgba(0,0,0,0.25);border-left:3px solid var(--accent);padding:14px;margin:6px 0;border-radius:0 8px 8px 0">' +
         '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:0.82rem">' +
           '<div><strong>Request ID:</strong> <span class="mono">' + escapeHtml(l.requestId) + '</span></div>' +
@@ -164,6 +233,7 @@ function renderLogs(logs) {
       '</div>' +
     '</td></tr>';
   }).join("");
+  applyColumnState();
 }
 
 function toggleExpand(requestId) {
@@ -247,6 +317,7 @@ function renderByKeySummary(byKey) {
 }
 
 function initLogsPage() {
+  loadColumnState();
   loadLogs(0);
   refreshHeaderStats();
   setInterval(refreshHeaderStats, 10000);

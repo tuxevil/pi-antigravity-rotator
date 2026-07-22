@@ -8,12 +8,69 @@ function authHeaders() {
   return ADMIN_TOKEN ? { "X-Rotator-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json" } : {};
 }
 
+function openModal(id) {
+  var m = document.getElementById(id);
+  if (m) m.classList.add("open");
+}
+function closeModal(e, id) {
+  if (e && e.target !== e.currentTarget) return;
+  var m = document.getElementById(id);
+  if (m) m.classList.remove("open");
+}
+function hideDonationModalPermanently() {
+  localStorage.setItem("hideDonationModal", "true");
+  closeModal(null, "donationModal");
+}
+function toggleMask() {
+  var b = document.getElementById("maskBtn");
+  if (b) {
+    var v = b.textContent.includes("Visible");
+    b.textContent = v ? "PII: Masked" : "PII: Visible";
+  }
+}
+function formatDuration(ms) {
+  if (ms <= 0) return "--";
+  var s = Math.floor(ms / 1000);
+  if (s < 60) return s + "s";
+  var m = Math.floor(s / 60);
+  if (m < 60) return m + "m " + (s % 60) + "s";
+  var h = Math.floor(m / 60);
+  if (h < 24) return h + "h " + (m % 60) + "m";
+  var d = Math.floor(h / 24);
+  return d + "d " + (h % 24) + "h " + (m % 60) + "m";
+}
+function refreshHeaderStats() {
+  fetch("/api/status")
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (document.getElementById("uptime")) document.getElementById("uptime").textContent = formatDuration(data.uptime || 0);
+      if (document.getElementById("port")) document.getElementById("port").textContent = data.proxyPort || "51200";
+      if (document.getElementById("rotation")) document.getElementById("rotation").textContent = data.requestsPerRotation || "--";
+      if (document.getElementById("headerVersion")) document.getElementById("headerVersion").textContent = "v" + (data.version || "2.3.6");
+      if (document.getElementById("lastRefresh")) document.getElementById("lastRefresh").textContent = new Date().toLocaleTimeString();
+      if (document.getElementById("totalRequests")) document.getElementById("totalRequests").textContent = data.totalRequestsAllAccounts || 0;
+    })
+    .catch(function() {});
+}
+
 var keys = [];
 var editingKey = null;
 
 function escapeHtml(s) {
   if (!s) return "";
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+
+function timeAgo(dateStr) {
+  if (!dateStr) return "Never";
+  var diff = Date.now() - new Date(dateStr).getTime();
+  if (diff < 60000) return "Just now";
+  var mins = Math.floor(diff / 60000);
+  if (mins < 60) return mins + "m ago";
+  var hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + "h ago";
+  var days = Math.floor(hrs / 24);
+  return days + "d ago";
 }
 
 function getCheckedModels() {
@@ -27,7 +84,7 @@ function updateModelsCountBadge() {
   var badge = document.getElementById("modelsCountBadge");
   if (!badge) return;
   if (checkedCbs.length === 0 || checkedCbs.length === allCbs.length) {
-    badge.textContent = "All models allowed";
+    badge.textContent = "All models allowed (unrestricted)";
     badge.style.color = "var(--accent)";
     badge.style.borderColor = "rgba(124, 92, 252, 0.25)";
   } else {
@@ -64,27 +121,79 @@ function loadKeys() {
 }
 
 function renderKeys() {
+  var totalEl = document.getElementById("statTotalKeys");
+  var activeEl = document.getElementById("statActiveKeys");
+  var blockedEl = document.getElementById("statBlockedKeys");
+  
+  var activeCount = 0;
+  var blockedCount = 0;
+  keys.forEach(function(k) {
+    if (k.blocked) blockedCount++;
+    else activeCount++;
+  });
+  
+  if (totalEl) totalEl.textContent = keys.length;
+  if (activeEl) activeEl.textContent = activeCount;
+  if (blockedEl) blockedEl.textContent = blockedCount;
+
   var tbody = document.getElementById("keysTbody");
   if (!tbody) return;
-  if (keys.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim)">No virtual keys yet. Click "Generate Key" to create one.</td></tr>';
+
+  var search = (document.getElementById("keySearchInput") ? document.getElementById("keySearchInput").value.trim().toLowerCase() : "");
+  var statusFilter = (document.getElementById("keyStatusFilter") ? document.getElementById("keyStatusFilter").value : "all");
+
+  var filtered = keys.filter(function(k) {
+    if (statusFilter === "active" && k.blocked) return false;
+    if (statusFilter === "blocked" && !k.blocked) return false;
+    if (search) {
+      var matchAlias = (k.keyAlias || "").toLowerCase().indexOf(search) >= 0;
+      var matchName = (k.keyName || "").toLowerCase().indexOf(search) >= 0;
+      var matchUser = (k.userId || "").toLowerCase().indexOf(search) >= 0;
+      if (!matchAlias && !matchName && !matchUser) return false;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:32px">' +
+      (keys.length === 0 ? 'No virtual keys created yet. Click "+ Generate Virtual Key" above.' : 'No virtual keys match your search filters.') +
+      '</td></tr>';
     return;
   }
-  tbody.innerHTML = keys.map(function(k) {
-    var blocked = k.blocked ? '<span style="color:var(--red)">BLOCKED</span>' : '<span style="color:var(--green)">active</span>';
-    var models = (k.models && k.models.length > 0) ? escapeHtml(k.models.join(", ")) : '<span style="color:var(--text-dim)">all models</span>';
-    var lastActive = k.lastActive ? new Date(k.lastActive).toLocaleString() : "never";
+
+  tbody.innerHTML = filtered.map(function(k) {
+    var statusBadge = k.blocked 
+      ? '<span class="status-badge blocked">Blocked</span>' 
+      : '<span class="status-badge active">Active</span>';
+      
+    var modelsHtml = "";
+    if (!k.models || k.models.length === 0) {
+      modelsHtml = '<span class="model-chip all">All Models</span>';
+    } else {
+      modelsHtml = k.models.map(function(m) {
+        return '<span class="model-chip">' + escapeHtml(m) + '</span>';
+      }).join("");
+    }
+
+    var userHtml = k.userId 
+      ? '<span style="font-weight:500">' + escapeHtml(k.userId) + '</span>' 
+      : '<span style="color:var(--text-dim)">-</span>';
+
     return '<tr>' +
-      '<td><strong>' + escapeHtml(k.keyAlias) + '</strong></td>' +
-      '<td class="mono">' + escapeHtml(k.keyName) + '</td>' +
-      '<td>' + escapeHtml(k.userId || "-") + '</td>' +
-      '<td>' + models + '</td>' +
-      '<td>' + blocked + '</td>' +
-      '<td style="font-size:0.8rem">' + lastActive + '</td>' +
       '<td>' +
-        '<button class="btn-action" onclick="showEditModal(\'' + k.tokenHash + '\')" title="Edit">&#9998;</button>' +
-        '<button class="btn-action" onclick="blockKey(\'' + k.tokenHash + '\', ' + !k.blocked + ')" title="' + (k.blocked ? "Unblock" : "Block") + '">' + (k.blocked ? "&#9654;" : "&#9632;") + '</button>' +
-        '<button class="btn-action" onclick="deleteKey(\'' + k.tokenHash + '\')" title="Delete">&#10005;</button>' +
+        '<div style="font-weight:600;color:var(--text);font-size:0.92rem">' + escapeHtml(k.keyAlias) + '</div>' +
+        '<div class="mono" style="color:var(--text-dim);font-size:0.75rem;margin-top:2px">' + escapeHtml(k.keyName) + '</div>' +
+      '</td>' +
+      '<td>' + userHtml + '</td>' +
+      '<td><div style="display:flex;flex-wrap:wrap;gap:2px;max-width:280px">' + modelsHtml + '</div></td>' +
+      '<td>' + statusBadge + '</td>' +
+      '<td><span style="font-size:0.82rem;color:var(--text-dim)" title="' + (k.lastActive ? new Date(k.lastActive).toLocaleString() : 'Never') + '">' + timeAgo(k.lastActive) + '</span></td>' +
+      '<td style="text-align:right">' +
+        '<div style="display:inline-flex;gap:4px">' +
+          '<button class="btn-action" onclick="showEditModal(\'' + k.tokenHash + '\')" title="Edit Models">✎</button>' +
+          '<button class="btn-action" onclick="blockKey(\'' + k.tokenHash + '\', ' + !k.blocked + ')" title="' + (k.blocked ? "Unblock Key" : "Block Key") + '">' + (k.blocked ? "▶" : "🚫") + '</button>' +
+          '<button class="btn-action" onclick="deleteKey(\'' + k.tokenHash + '\')" title="Delete Key" style="color:var(--red)">🗑</button>' +
+        '</div>' +
       '</td>' +
     '</tr>';
   }).join("");
@@ -187,7 +296,7 @@ function copyRawKey() {
   navigator.clipboard.writeText(txt).then(function() {
     var btn = document.getElementById("copyKeyBtn");
     btn.textContent = "Copied!";
-    setTimeout(function() { btn.textContent = "Copy"; }, 2000);
+    setTimeout(function() { btn.textContent = "Copy Key"; }, 2000);
   });
 }
 
@@ -213,6 +322,9 @@ function deleteKey(hash) {
 
 document.addEventListener("DOMContentLoaded", function() {
   loadKeys();
+  refreshHeaderStats();
+  setInterval(refreshHeaderStats, 10000);
+
   var modal = document.getElementById("keyModal");
   if (modal) {
     modal.addEventListener("click", function(e) {

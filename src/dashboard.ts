@@ -489,12 +489,19 @@ export async function serveGetSpendByKeyApi(
   }
 }
 
-const DASHBOARD_HTML = `<!DOCTYPE html>
+function renderAppShell(opts: {
+  title: string;
+  activeTab: "accounts" | "keys" | "logs";
+  contentHtml: string;
+  scriptSrc: string;
+}): string {
+  const pageTitle = opts.title === "Pi Antigravity Rotator" ? opts.title : (opts.title + " — Pi Antigravity Rotator");
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pi Antigravity Rotator</title>
+<title>${pageTitle}</title>
 <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
@@ -538,23 +545,96 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 </div>
 
-<div id="topNav" style="display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap">
-  <a href="/dashboard" style="padding:5px 14px;background:var(--accent);color:#fff;border-radius:4px;text-decoration:none;font-size:0.85rem;font-weight:500">Dashboard</a>
-  <a id="navKeys" href="/dashboard/keys" style="padding:5px 14px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);text-decoration:none;font-size:0.85rem">Virtual Keys</a>
-  <a id="navLogs" href="/dashboard/logs" style="padding:5px 14px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);text-decoration:none;font-size:0.85rem">Spend Logs</a>
+<div class="app-nav-bar" id="appNav">
+  <a class="app-nav-tab ${opts.activeTab === "accounts" ? "active" : ""}" id="navAccounts" href="/dashboard">
+    <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    Accounts
+  </a>
+  <a class="app-nav-tab ${opts.activeTab === "keys" ? "active" : ""}" id="navKeys" href="/dashboard/keys">
+    <svg viewBox="0 0 24 24"><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+    Virtual Keys
+  </a>
+  <a class="app-nav-tab ${opts.activeTab === "logs" ? "active" : ""}" id="navLogs" href="/dashboard/logs">
+    <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+    Spend Logs
+  </a>
 </div>
+
 <script>
 (function(){
   var t = new URLSearchParams(window.location.search).get("token") || localStorage.getItem("rotatorAdminToken");
   if (t) {
-    var nk = document.getElementById("navKeys");
-    var nl = document.getElementById("navLogs");
-    if (nk) nk.href += "?token=" + encodeURIComponent(t);
-    if (nl) nl.href += "?token=" + encodeURIComponent(t);
+    ["navAccounts", "navKeys", "navLogs"].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el && el.getAttribute("href")) {
+        var base = el.getAttribute("href").split("?")[0];
+        el.href = base + "?token=" + encodeURIComponent(t);
+      }
+    });
   }
 })();
 </script>
 
+${opts.contentHtml}
+
+<div class="modal" id="attentionModal" onclick="closeModal(event, 'attentionModal')">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <strong>Attention Needed</strong>
+      <button class="modal-close" onclick="closeModal(null, 'attentionModal')" aria-label="Close attention modal">×</button>
+    </div>
+    <div id="attentionPanel"></div>
+  </div>
+</div>
+
+<div class="modal" id="donationModal" onclick="closeModal(event, 'donationModal')">
+  <div class="modal-card" onclick="event.stopPropagation()" style="max-width: 500px;">
+    <div class="modal-header">
+      <strong>Support the Creator</strong>
+      <button class="modal-close" onclick="closeModal(null, 'donationModal')" aria-label="Close donation modal">×</button>
+    </div>
+    <div style="padding: 16px; font-size: 0.95rem; line-height: 1.5; color: var(--text);">
+      <p style="margin-bottom:12px;font-weight:bold;">❤️ A quick message from Sebastián (extension creator)</p>
+      <p style="margin-bottom:12px;">Hello from Ecuador! I built this tool so that everyone can access AI regardless of their budget.</p>
+      <p style="margin-bottom:12px;">To be completely transparent: I'm going through a very difficult financial situation. Instead of giving up, I'm dedicating all my effort to maintaining and improving this project. If you find the extension useful, a small donation (even $1) or <strong>donating a secondary Google account to share its API quota</strong> for testing and development means the world to me right now and allows me to keep coding.</p>
+      <p style="margin-bottom:16px;">If you're short on cash, I completely understand, but please keep using it for free! But if you can lend me a hand today (either financially or by donating quota), I'd be incredibly grateful:</p>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;align-items:center;">
+        <a href="https://ko-fi.com/tuxevil" target="_blank" style="display:inline-flex;flex-direction:column;align-items:center;background-color:#FF5E5B;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;transition:opacity 0.2s;width:100%;box-sizing:border-box;text-align:center;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+          <span style="font-weight:bold;font-size:1.1rem;">☕ Buy me a coffee on Ko-fi</span>
+          <span style="font-size:0.9rem;margin-top:4px;opacity:0.9;">ko-fi.com/tuxevil</span>
+        </a>
+        <div style="font-size:0.8rem;color:var(--text-dim);font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;margin:4px 0;">— OR —</div>
+        <div style="width:100%; padding:14px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,0.02); box-sizing: border-box; text-align: left;">
+          <p style="margin-bottom:10px;font-weight:bold;color:var(--accent);display:flex;align-items:center;gap:6px;font-size:0.95rem;">🔑 How to Donate Account Quota:</p>
+          <ol style="margin-left:18px; margin-bottom:14px; font-size:0.85rem; color:var(--text-dim); line-height:1.5;">
+            <li style="margin-bottom:4px;">Use/create a <strong>secondary or throwaway</strong> Google account.</li>
+            <li style="margin-bottom:4px;">Run <code style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:4px;font-family:monospace;font-size:0.8rem;color:var(--text);">npm run login</code> locally to authorize it.</li>
+            <li style="margin-bottom:4px;">Open your local <code style="font-family:monospace;font-size:0.8rem;color:var(--text);">accounts.json</code> and copy the account's JSON block.</li>
+            <li style="margin-bottom:0;">Send it to Sebastián via Email (<a href="mailto:tuxevil@dragont.ec" style="color:var(--accent);text-decoration:underline;">tuxevil@dragont.ec</a>) or Discord.</li>
+          </ol>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+            <a href="https://github.com/tuxevil/pi-antigravity-rotator#donate-account-quota" target="_blank" class="btn-update-link" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:0.8rem;text-decoration:none;padding:6px 14px;flex:1;min-width:120px;text-align:center;">📖 Read Full Guide</a>
+            <a href="https://discord.gg/GgwVqTaKgK" target="_blank" class="btn-update-link" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:0.8rem;text-decoration:none;padding:6px 14px;border-color:rgba(88,101,242,0.4);color:#5865F2;flex:1;min-width:120px;text-align:center;">💬 Join Discord</a>
+          </div>
+        </div>
+      </div>
+      <div style="text-align: center;">
+        <button class="btn-secondary" onclick="hideDonationModalPermanently()">I've supported or prefer not to see this</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="${opts.scriptSrc}"></script>
+</body>
+</html>`;
+}
+
+const DASHBOARD_HTML = renderAppShell({
+  title: "Pi Antigravity Rotator",
+  activeTab: "accounts",
+  scriptSrc: "/static/dashboard.js",
+  contentHtml: `
 <div class="view-toggle-bar">
   <button class="view-tab active" id="viewTabGrid" onclick="switchView('grid')">⊞ Grid</button>
   <button class="view-tab" id="viewTabList" onclick="switchView('list')">☰ List</button>
@@ -630,16 +710,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
 <div class="events-panel" id="recentEventsPanel" style="display:none"></div>
 
-<div class="modal" id="attentionModal" onclick="closeModal(event, 'attentionModal')">
-  <div class="modal-card" onclick="event.stopPropagation()">
-    <div class="modal-header">
-      <strong>Attention Needed</strong>
-      <button class="modal-close" onclick="closeModal(null, 'attentionModal')" aria-label="Close attention modal">×</button>
-    </div>
-    <div id="attentionPanel"></div>
-  </div>
-</div>
-
 <div class="modal" id="configEditorModal" onclick="closeModal(event, 'configEditorModal')">
   <div class="modal-card" onclick="event.stopPropagation()" style="max-width: 960px; width: min(960px, 92vw);">
     <div class="modal-header">
@@ -671,498 +741,103 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <div id="routingInspectorPanel" style="padding:16px;"></div>
   </div>
 </div>
+`,
+});
 
+const DASHBOARD_KEYS_HTML = renderAppShell({
+  title: "Virtual Keys",
+  activeTab: "keys",
+  scriptSrc: "/static/dashboard-keys.js",
+  contentHtml: `
+<div class="page-header-bar">
+  <div class="page-title-group">
+    <h2>Virtual Keys &amp; Access Control</h2>
+    <p>Manage API credentials, agent assignments, and per-model authorization rules</p>
+  </div>
+  <button class="btn-modal-submit" onclick="showGenerateModal()" style="display:inline-flex;align-items:center;gap:8px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    Generate Virtual Key
+  </button>
+</div>
 
-
-<div class="modal" id="donationModal" onclick="closeModal(event, 'donationModal')">
-  <div class="modal-card" onclick="event.stopPropagation()" style="max-width: 500px;">
-    <div class="modal-header">
-      <strong>Support the Creator</strong>
-      <button class="modal-close" onclick="closeModal(null, 'donationModal')" aria-label="Close donation modal">×</button>
-    </div>
-    <div style="padding: 16px; font-size: 0.95rem; line-height: 1.5; color: var(--text);">
-      <p style="margin-bottom:12px;font-weight:bold;">❤️ A quick message from Sebastián (extension creator)</p>
-      <p style="margin-bottom:12px;">Hello from Ecuador! I built this tool so that everyone can access AI regardless of their budget.</p>
-      <p style="margin-bottom:12px;">To be completely transparent: I'm going through a very difficult financial situation. Instead of giving up, I'm dedicating all my effort to maintaining and improving this project. If you find the extension useful, a small donation (even $1) or <strong>donating a secondary Google account to share its API quota</strong> for testing and development means the world to me right now and allows me to keep coding.</p>
-      <p style="margin-bottom:16px;">If you're short on cash, I completely understand, but please keep using it for free! But if you can lend me a hand today (either financially or by donating quota), I'd be incredibly grateful:</p>
-      <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;align-items:center;">
-        <a href="https://ko-fi.com/tuxevil" target="_blank" style="display:inline-flex;flex-direction:column;align-items:center;background-color:#FF5E5B;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;transition:opacity 0.2s;width:100%;box-sizing:border-box;text-align:center;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
-          <span style="font-weight:bold;font-size:1.1rem;">☕ Buy me a coffee on Ko-fi</span>
-          <span style="font-size:0.9rem;margin-top:4px;opacity:0.9;">ko-fi.com/tuxevil</span>
-        </a>
-
-        <div style="font-size:0.8rem;color:var(--text-dim);font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;margin:4px 0;">— OR —</div>
-
-        <div style="width:100%; padding:14px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,0.02); box-sizing: border-box; text-align: left;">
-          <p style="margin-bottom:10px;font-weight:bold;color:var(--accent);display:flex;align-items:center;gap:6px;font-size:0.95rem;">
-            🔑 How to Donate Account Quota:
-          </p>
-          <ol style="margin-left:18px; margin-bottom:14px; font-size:0.85rem; color:var(--text-dim); line-height:1.5;">
-            <li style="margin-bottom:4px;">Use/create a <strong>secondary or throwaway</strong> Google account.</li>
-            <li style="margin-bottom:4px;">Run <code style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:4px;font-family:monospace;font-size:0.8rem;color:var(--text);">npm run login</code> locally to authorize it.</li>
-            <li style="margin-bottom:4px;">Open your local <code style="font-family:monospace;font-size:0.8rem;color:var(--text);">accounts.json</code> and copy the account's JSON block.</li>
-            <li style="margin-bottom:0;">Send it to Sebastián via Email (<a href="mailto:tuxevil@dragont.ec" style="color:var(--accent);text-decoration:underline;">tuxevil@dragont.ec</a>) or Discord.</li>
-          </ol>
-          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-            <a href="https://github.com/tuxevil/pi-antigravity-rotator#donate-account-quota" target="_blank" class="btn-update-link" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:0.8rem;text-decoration:none;padding:6px 14px;flex:1;min-width:120px;text-align:center;">
-              📖 Read Full Guide
-            </a>
-            <a href="https://discord.gg/GgwVqTaKgK" target="_blank" class="btn-update-link" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:0.8rem;text-decoration:none;padding:6px 14px;border-color:rgba(88,101,242,0.4);color:#5865F2;flex:1;min-width:120px;text-align:center;" onmouseover="this.style.background='rgba(88,101,242,0.08)'" onmouseout="this.style.background='transparent'">
-              💬 Join Discord
-            </a>
-          </div>
-        </div>
-      </div>
-      <div style="text-align: center;">
-        <button class="btn-secondary" onclick="hideDonationModalPermanently()">I've supported or prefer not to see this</button>
+<div class="stats-summary-grid">
+  <div class="summary-card">
+    <div class="summary-card-header">
+      <span>Total Credentials</span>
+      <div class="summary-card-icon">
+        <svg viewBox="0 0 24 24"><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
       </div>
     </div>
+    <div class="summary-card-value" id="statTotalKeys">0</div>
+    <div class="summary-card-sub">Registered virtual keys</div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-card-header">
+      <span>Active Keys</span>
+      <div class="summary-card-icon" style="background:rgba(52,211,153,0.1);color:var(--green)">
+        <svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      </div>
+    </div>
+    <div class="summary-card-value" id="statActiveKeys" style="color:var(--green)">0</div>
+    <div class="summary-card-sub">Authorized for requests</div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-card-header">
+      <span>Blocked Keys</span>
+      <div class="summary-card-icon" style="background:rgba(248,113,113,0.1);color:var(--red)">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+      </div>
+    </div>
+    <div class="summary-card-value" id="statBlockedKeys" style="color:var(--red)">0</div>
+    <div class="summary-card-sub">Revoked access</div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-card-header">
+      <span>Supported Models</span>
+      <div class="summary-card-icon" style="background:rgba(96,165,250,0.1);color:var(--blue)">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </div>
+    </div>
+    <div class="summary-card-value" id="statAvailableModels">12</div>
+    <div class="summary-card-sub">Gemini, Claude, GPT-OSS</div>
   </div>
 </div>
 
-<script src="/static/dashboard.js"></script>
-</body>
-</html>`;
+<div class="list-panel">
+  <div class="list-toolbar">
+    <span class="list-toolbar-label">Virtual Keys</span>
+    <div class="filter-input-group" style="width:260px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input id="keySearchInput" placeholder="Search alias, key name, user..." oninput="renderKeys()">
+    </div>
+    <div class="filter-input-group" style="width:140px">
+      <select id="keyStatusFilter" onchange="renderKeys()">
+        <option value="all">All Statuses</option>
+        <option value="active">Active Only</option>
+        <option value="blocked">Blocked Only</option>
+      </select>
+    </div>
+  </div>
 
-const DASHBOARD_KEYS_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Virtual Keys — Pi Antigravity Rotator</title>
-<link rel="stylesheet" href="/static/dashboard.css">
-<style>
-.mono { font-family: JetBrains Mono, monospace; font-size: 0.83rem; }
-.btn-action { padding: 5px 9px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--text); font-size: 0.82rem; transition: all 0.15s ease; }
-.btn-action:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
-
-/* Modal Backdrop & Card */
-.modal-backdrop {
-  display: none;
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  width: 100%; height: 100%;
-  background: rgba(5, 5, 12, 0.75);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  z-index: 1000;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  box-sizing: border-box;
-}
-
-.modal-card {
-  background: var(--surface, #12121a);
-  border: 1px solid rgba(124, 92, 252, 0.25);
-  border-radius: 16px;
-  width: 100%;
-  max-width: 640px;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), 0 0 40px rgba(124, 92, 252, 0.12);
-  animation: modalSlideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  overflow: hidden;
-}
-
-@keyframes modalSlideUp {
-  from { opacity: 0; transform: translateY(12px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-/* Modal Header */
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--border, #1e1e2e);
-  background: rgba(255, 255, 255, 0.015);
-}
-
-.modal-title-group {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.modal-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: rgba(124, 92, 252, 0.15);
-  border: 1px solid rgba(124, 92, 252, 0.3);
-  color: var(--accent, #7c5cfc);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.modal-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text, #e0e0e8);
-  margin: 0;
-}
-
-.modal-subtitle {
-  font-size: 0.78rem;
-  color: var(--text-dim, #6e6e82);
-  margin-top: 2px;
-}
-
-.modal-close-btn {
-  background: none;
-  border: none;
-  color: var(--text-dim, #6e6e82);
-  font-size: 1.4rem;
-  line-height: 1;
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 8px;
-  transition: all 0.15s ease;
-}
-
-.modal-close-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text, #e0e0e8);
-}
-
-/* Modal Body */
-.modal-body {
-  padding: 20px 24px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-/* Form Grid */
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text, #e0e0e8);
-}
-
-.form-label .req { color: var(--accent, #7c5cfc); }
-.form-label .opt { font-weight: normal; color: var(--text-dim, #6e6e82); font-size: 0.75rem; }
-
-.form-input {
-  width: 100%;
-  padding: 9px 12px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--border, #1e1e2e);
-  border-radius: 8px;
-  color: var(--text, #e0e0e8);
-  font-size: 0.88rem;
-  font-family: inherit;
-  transition: all 0.15s ease;
-  box-sizing: border-box;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--accent, #7c5cfc);
-  box-shadow: 0 0 0 3px rgba(124, 92, 252, 0.2);
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.form-input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-/* Models Section */
-.models-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.models-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.models-badge {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 2px 8px;
-  border-radius: 12px;
-  background: rgba(124, 92, 252, 0.12);
-  border: 1px solid rgba(124, 92, 252, 0.25);
-  color: var(--accent, #7c5cfc);
-  font-size: 0.72rem;
-  font-weight: 500;
-}
-
-.models-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.pill-btn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border, #1e1e2e);
-  border-radius: 6px;
-  color: var(--text-dim, #6e6e82);
-  padding: 4px 10px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.pill-btn:hover {
-  background: rgba(124, 92, 252, 0.15);
-  border-color: rgba(124, 92, 252, 0.4);
-  color: var(--text, #e0e0e8);
-}
-
-/* Model Categories & Cards Grid */
-.model-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.model-category {
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
-  padding: 10px 12px;
-}
-
-.cat-title {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--text-dim, #6e6e82);
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.cat-title::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent, #7c5cfc);
-}
-
-.cat-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
-}
-
-/* Model Card Label */
-.model-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 6px;
-  cursor: pointer;
-  user-select: none;
-  transition: all 0.15s ease;
-}
-
-.model-card:hover {
-  background: rgba(124, 92, 252, 0.06);
-  border-color: rgba(124, 92, 252, 0.3);
-}
-
-.model-card:has(:checked) {
-  background: rgba(124, 92, 252, 0.12);
-  border-color: rgba(124, 92, 252, 0.5);
-}
-
-.model-card input[type="checkbox"] {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 15px;
-  height: 15px;
-  border: 1.5px solid var(--text-dim, #6e6e82);
-  border-radius: 4px;
-  background: transparent;
-  outline: none;
-  cursor: pointer;
-  display: grid;
-  place-content: center;
-  transition: all 0.15s ease;
-  margin: 0;
-  flex-shrink: 0;
-}
-
-.model-card input[type="checkbox"]:checked {
-  background: var(--accent, #7c5cfc);
-  border-color: var(--accent, #7c5cfc);
-}
-
-.model-card input[type="checkbox"]:checked::before {
-  content: "✓";
-  color: #fff;
-  font-size: 10px;
-  font-weight: bold;
-}
-
-.model-card .model-name {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.78rem;
-  color: var(--text, #e0e0e8);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.modal-error {
-  color: var(--red, #f87171);
-  margin-top: 10px;
-  font-size: 0.82rem;
-  font-weight: 500;
-}
-
-.generated-key-box {
-  background: rgba(124, 92, 252, 0.08);
-  border: 1px solid rgba(124, 92, 252, 0.3);
-  border-radius: 10px;
-  padding: 16px;
-  margin-top: 16px;
-  text-align: center;
-}
-
-.key-warn-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: #fbbf24;
-  font-weight: 600;
-  font-size: 0.85rem;
-}
-
-.generated-key-box .raw {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 1.05rem;
-  color: var(--accent, #7c5cfc);
-  word-break: break-all;
-  margin: 12px 0;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 10px;
-  border-radius: 6px;
-  border: 1px dashed rgba(124, 92, 252, 0.4);
-}
-
-/* Modal Footer */
-.modal-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 16px 24px;
-  border-top: 1px solid var(--border, #1e1e2e);
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.btn-modal-cancel {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border, #1e1e2e);
-  border-radius: 8px;
-  color: var(--text, #e0e0e8);
-  padding: 8px 16px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.btn-modal-cancel:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.btn-modal-submit {
-  background: linear-gradient(135deg, var(--accent, #7c5cfc), #6366f1);
-  border: none;
-  border-radius: 8px;
-  color: #fff;
-  padding: 8px 20px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(124, 92, 252, 0.3);
-  transition: all 0.15s ease;
-}
-
-.btn-modal-submit:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(124, 92, 252, 0.45);
-}
-
-table { width: 100%; border-collapse: collapse; }
-th { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
-td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
-.nav-bar { display: flex; gap: 12px; margin-bottom: 24px; padding: 12px 16px; background: var(--bg-card); border-radius: 8px; align-items: center; flex-wrap: wrap; }
-.nav-bar a { color: var(--text-dim); text-decoration: none; padding: 6px 14px; border-radius: 4px; font-size: 0.9rem; }
-.nav-bar a.active { background: var(--accent); color: #fff; }
-.nav-bar a:hover:not(.active) { color: var(--text); }
-</style>
-</head>
-<body>
-<div class="nav-bar">
-  <a id="navDashBack" href="/dashboard">&#8592; Dashboard</a>
-  <a href="/dashboard/keys" class="active">Virtual Keys</a>
-  <a id="navLogsSub" href="/dashboard/logs">Spend Logs</a>
+  <div style="overflow-x:auto">
+    <table class="compact-table">
+      <thead>
+        <tr>
+          <th>Key Alias &amp; Name</th>
+          <th>User ID</th>
+          <th>Allowed Models</th>
+          <th>Status</th>
+          <th>Last Active</th>
+          <th style="width:110px;text-align:right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="keysTbody"></tbody>
+    </table>
+  </div>
 </div>
-<script>
-(function(){
-  var t = new URLSearchParams(window.location.search).get("token") || localStorage.getItem("rotatorAdminToken");
-  if (t) {
-    var nd = document.getElementById("navDashBack");
-    var nl = document.getElementById("navLogsSub");
-    var nk = document.querySelector(".nav-bar a.active");
-    if (nd) nd.href += "?token=" + encodeURIComponent(t);
-    if (nl) nl.href += "?token=" + encodeURIComponent(t);
-    if (nk) nk.href += "?token=" + encodeURIComponent(t);
-  }
-})();
-</script>
-
-<h2>Virtual Keys</h2>
-<div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0; flex-wrap:wrap; gap:12px">
-  <span style="color:var(--text-dim); font-size:0.85rem">Manage API keys for tracking individual agent usage</span>
-  <button class="btn-secondary" onclick="showGenerateModal()">+ Generate Key</button>
-</div>
-
-<table>
-  <thead>
-    <tr>
-      <th>Alias</th><th>Key</th><th>User</th><th>Models</th><th>Status</th><th>Last Active</th><th style="width:80px">Actions</th>
-    </tr>
-  </thead>
-  <tbody id="keysTbody"></tbody>
-</table>
 
 <div id="keyModal" class="modal-backdrop">
   <div class="modal-card">
@@ -1262,89 +937,121 @@ td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 0.88
     </div>
   </div>
 </div>
+`,
+});
 
-<script src="/static/dashboard-keys.js"></script>
-</body>
-</html>`;
-
-const DASHBOARD_LOGS_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spend Logs — Pi Antigravity Rotator</title>
-<link rel="stylesheet" href="/static/dashboard.css">
-<style>
-.mono { font-family: JetBrains Mono, monospace; font-size: 0.8rem; }
-.log-row { cursor: pointer; }
-.log-row:hover { background: rgba(255,255,255,0.03); }
-.log-detail td { padding: 0; }
-.log-detail-content { padding: 12px 16px; background: var(--bg-card); border-left: 2px solid var(--accent); font-size: 0.85rem; }
-.log-payload { max-height: 400px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 4px; font-size: 0.78rem; white-space: pre-wrap; }
-.compact-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.compact-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; }
-.compact-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-table { width: 100%; border-collapse: collapse; }
-th { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; }
-td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
-.filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
-.filters input, .filters select { padding: 6px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.85rem; }
-.filters input { width: 150px; }
-.nav-bar { display: flex; gap: 12px; margin-bottom: 24px; padding: 12px 16px; background: var(--bg-card); border-radius: 8px; align-items: center; flex-wrap: wrap; }
-.nav-bar a { color: var(--text-dim); text-decoration: none; padding: 6px 14px; border-radius: 4px; font-size: 0.9rem; }
-.nav-bar a.active { background: var(--accent); color: #fff; }
-.nav-bar a:hover:not(.active) { color: var(--text); }
-</style>
-</head>
-<body>
-<div class="nav-bar">
-  <a id="navDashBack2" href="/dashboard">&#8592; Dashboard</a>
-  <a id="navKeysSub" href="/dashboard/keys">Virtual Keys</a>
-  <a href="/dashboard/logs" class="active">Spend Logs</a>
+const DASHBOARD_LOGS_HTML = renderAppShell({
+  title: "Spend Logs",
+  activeTab: "logs",
+  scriptSrc: "/static/dashboard-logs.js",
+  contentHtml: `
+<div class="page-header-bar">
+  <div class="page-title-group">
+    <h2>Spend Logs &amp; Usage Analytics</h2>
+    <p>Real-time audit trail of requests, prompt/completion tokens, latency metrics, and payload inspector</p>
+  </div>
 </div>
-<script>
-(function(){
-  var t = new URLSearchParams(window.location.search).get("token") || localStorage.getItem("rotatorAdminToken");
-  if (t) {
-    var nd = document.getElementById("navDashBack2");
-    var nk = document.getElementById("navKeysSub");
-    var nl = document.querySelector(".nav-bar a.active");
-    if (nd) nd.href += "?token=" + encodeURIComponent(t);
-    if (nk) nk.href += "?token=" + encodeURIComponent(t);
-    if (nl) nl.href += "?token=" + encodeURIComponent(t);
-  }
-})();
-</script>
 
-<h2>Spend Logs &amp; Usage</h2>
+<div class="stats-summary-grid">
+  <div class="summary-card">
+    <div class="summary-card-header">
+      <span>Total Requests</span>
+      <div class="summary-card-icon">
+        <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+      </div>
+    </div>
+    <div class="summary-card-value" id="statLogRequests">0</div>
+    <div class="summary-card-sub" id="statLogRequestsSub">Logged requests</div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-card-header">
+      <span>Prompt Tokens</span>
+      <div class="summary-card-icon" style="background:rgba(124,92,252,0.1);color:var(--accent)">
+        <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+      </div>
+    </div>
+    <div class="summary-card-value" id="statLogPromptTokens">0</div>
+    <div class="summary-card-sub">Input tokens processed</div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-card-header">
+      <span>Completion Tokens</span>
+      <div class="summary-card-icon" style="background:rgba(52,211,153,0.1);color:var(--green)">
+        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    <div class="summary-card-value" id="statLogCompletionTokens" style="color:var(--green)">0</div>
+    <div class="summary-card-sub">Output tokens generated</div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-card-header">
+      <span>Avg Latency</span>
+      <div class="summary-card-icon" style="background:rgba(251,191,36,0.1);color:var(--yellow)">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      </div>
+    </div>
+    <div class="summary-card-value" id="statLogAvgLatency" style="color:var(--yellow)">--</div>
+    <div class="summary-card-sub">Average round-trip duration</div>
+  </div>
+</div>
 
 <div id="byKeySummary"></div>
 
-<div class="filters">
-  <input id="filterKeyHash" placeholder="Key hash (10+ chars)">
-  <input id="filterModel" placeholder="Model name">
-  <select id="filterStatus">
-    <option value="">All statuses</option>
-    <option value="success">Success</option>
-    <option value="failure">Failure</option>
-  </select>
-  <input id="filterStartDate" type="date" placeholder="From">
-  <input id="filterEndDate" type="date" placeholder="To">
-  <button class="btn-secondary btn-sm" onclick="applyFilters()">Apply</button>
-  <button class="btn-secondary btn-sm" onclick="resetFilters()">Reset</button>
+<div class="filter-panel">
+  <div class="filter-input-group" style="width:200px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+    <input id="filterKeyHash" placeholder="Key hash or alias...">
+  </div>
+
+  <div class="filter-input-group" style="width:180px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    <input id="filterModel" placeholder="Filter model name...">
+  </div>
+
+  <div class="filter-input-group" style="width:150px">
+    <select id="filterStatus">
+      <option value="">All Statuses</option>
+      <option value="success">Success (200)</option>
+      <option value="failure">Failure / Error</option>
+    </select>
+  </div>
+
+  <div class="filter-input-group" style="width:150px">
+    <input id="filterStartDate" type="date" title="From Date">
+  </div>
+
+  <div class="filter-input-group" style="width:150px">
+    <input id="filterEndDate" type="date" title="To Date">
+  </div>
+
+  <button class="pill-btn" onclick="applyFilters()" style="background:var(--accent);color:#fff;border:none;padding:7px 14px;font-weight:600;cursor:pointer">Apply</button>
+  <button class="pill-btn" onclick="resetFilters()" style="padding:7px 12px;cursor:pointer">Reset</button>
 </div>
 
-<table>
-  <thead>
-    <tr>
-      <th>Time</th><th>Key</th><th>Model</th><th>Type</th><th>Status</th><th>Tokens (in / out)</th><th>Duration</th><th>TTFB</th><th>IP</th>
-    </tr>
-  </thead>
-  <tbody id="logsBody"></tbody>
-</table>
+<div class="list-panel">
+  <div style="overflow-x:auto">
+    <table class="compact-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Key / Agent</th>
+          <th>Model</th>
+          <th>Call Type</th>
+          <th>Status</th>
+          <th>Tokens (In / Out)</th>
+          <th>Duration</th>
+          <th>TTFB</th>
+          <th>IP</th>
+        </tr>
+      </thead>
+      <tbody id="logsBody"></tbody>
+    </table>
+  </div>
+</div>
 
 <div id="pagination" style="margin-top:16px;display:flex;justify-content:center;align-items:center;gap:8px;font-size:0.85rem"></div>
-
-<script src="/static/dashboard-logs.js"></script>
-</body>
-</html>`;
+`,
+});

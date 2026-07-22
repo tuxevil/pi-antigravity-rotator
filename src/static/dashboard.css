@@ -1020,6 +1020,277 @@
   }
 
   /* ── List View ── */
+  /* Top App Navigation Bar */
+  .app-nav-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -12px 0 24px 0;
+    padding: 6px;
+    background: rgba(18, 18, 26, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+    width: fit-content;
+  }
+
+  .app-nav-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 7px 16px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
+  }
+
+  .app-nav-tab svg {
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+  }
+
+  .app-nav-tab.active {
+    background: linear-gradient(135deg, var(--accent), #6366f1);
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 4px 14px rgba(124, 92, 252, 0.35);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .app-nav-tab.active svg {
+    opacity: 1;
+    stroke: #ffffff;
+  }
+
+  .app-nav-tab:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text);
+  }
+
+  .app-nav-tab:hover:not(.active) svg {
+    opacity: 1;
+  }
+
+  /* Stats Cards Grid */
+  .stats-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+
+  .summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+  }
+
+  .summary-card:hover {
+    border-color: rgba(124, 92, 252, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .summary-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .summary-card-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: rgba(124, 92, 252, 0.1);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .summary-card-icon svg {
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+  }
+
+  .summary-card-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    margin-top: 4px;
+    letter-spacing: -0.5px;
+  }
+
+  .summary-card-sub {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  /* Page Header Bar */
+  .page-header-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+
+  .page-title-group h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.3px;
+    margin: 0;
+  }
+
+  .page-title-group p {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Filter Glass Bar */
+  .filter-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .filter-input-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    transition: border-color 0.15s ease;
+  }
+
+  .filter-input-group:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(124, 92, 252, 0.2);
+  }
+
+  .filter-input-group svg {
+    width: 14px;
+    height: 14px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  .filter-input-group input,
+  .filter-input-group select {
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    width: 140px;
+  }
+
+  .filter-input-group select option {
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  /* Status Badges with Pulse Dot */
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  .status-badge.active {
+    background: rgba(52, 211, 153, 0.12);
+    color: var(--green);
+    border: 1px solid rgba(52, 211, 153, 0.25);
+  }
+
+  .status-badge.active::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+  }
+
+  .status-badge.blocked {
+    background: rgba(248, 113, 113, 0.12);
+    color: var(--red);
+    border: 1px solid rgba(248, 113, 113, 0.25);
+  }
+
+  .status-badge.blocked::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--red);
+  }
+
+  /* Model Chips */
+  .model-chip {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(124, 92, 252, 0.12);
+    border: 1px solid rgba(124, 92, 252, 0.25);
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    margin: 1px 2px;
+  }
+
+  .model-chip.all {
+    background: rgba(52, 211, 153, 0.1);
+    border-color: rgba(52, 211, 153, 0.25);
+    color: var(--green);
+    font-family: var(--font);
+    font-weight: 500;
+  }
+
+  /* ── List View ── */
   .view-toggle-bar {
     display: flex;
     align-items: center;

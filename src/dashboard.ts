@@ -802,7 +802,7 @@ td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
     </div>
     <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
       <button class="btn-secondary" onclick="hideModal()">Cancel</button>
-      <button class="btn-secondary" onclick="submitKeyForm()" style="background:var(--accent);color:#fff">Generate</button>
+      <button class="btn-secondary" onclick="submitKeyForm()" id="submitKeyBtn" style="background:var(--accent);color:#fff">Generate</button>
     </div>
   </div>
 </div>

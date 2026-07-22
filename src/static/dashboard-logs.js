@@ -41,10 +41,8 @@ function formatDuration(ms) {
 }
 
 function formatCost(usd) {
-  if (usd === undefined || usd === null || usd <= 0) return "$0.00";
-  if (usd < 0.001) return "$" + usd.toFixed(5);
-  if (usd < 0.01) return "$" + usd.toFixed(4);
-  return "$" + usd.toFixed(3);
+  if (usd === undefined || usd === null || isNaN(usd) || usd <= 0) return "$0.000000";
+  return "$" + Number(usd).toFixed(6);
 }
 function refreshHeaderStats() {
   fetch("/api/status", { headers: authHeaders() })

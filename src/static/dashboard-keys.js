@@ -37,7 +37,6 @@ function renderKeys() {
     var blocked = k.blocked ? '<span style="color:var(--red)">BLOCKED</span>' : '<span style="color:var(--green)">active</span>';
     var models = (k.models && k.models.length > 0) ? escapeHtml(k.models.join(", ")) : '<span style="color:var(--text-dim)">all models</span>';
     var lastActive = k.lastActive ? new Date(k.lastActive).toLocaleString() : "never";
-    var created = new Date(k.createdAt).toLocaleString();
     return '<tr>' +
       '<td><strong>' + escapeHtml(k.keyAlias) + '</strong></td>' +
       '<td class="mono">' + escapeHtml(k.keyName) + '</td>' +
@@ -46,6 +45,7 @@ function renderKeys() {
       '<td>' + blocked + '</td>' +
       '<td style="font-size:0.8rem">' + lastActive + '</td>' +
       '<td>' +
+        '<button class="btn-action" onclick="showEditModal(\'' + k.tokenHash + '\')" title="Edit">&#9998;</button>' +
         '<button class="btn-action" onclick="blockKey(\'' + k.tokenHash + '\', ' + !k.blocked + ')" title="' + (k.blocked ? "Unblock" : "Block") + '">' + (k.blocked ? "&#9654;" : "&#9632;") + '</button>' +
         '<button class="btn-action" onclick="deleteKey(\'' + k.tokenHash + '\')" title="Delete">&#10005;</button>' +
       '</td>' +
@@ -58,9 +58,31 @@ function showGenerateModal() {
   document.getElementById("keyFormAlias").value = "";
   document.getElementById("keyFormUserId").value = "";
   document.getElementById("keyFormModels").value = "";
+  document.getElementById("keyFormAlias").disabled = false;
   document.getElementById("keyFormError").textContent = "";
   document.getElementById("generatedKeyResult").style.display = "none";
+  document.getElementById("submitKeyBtn").textContent = "Generate";
   document.getElementById("modalTitle").textContent = "Generate Virtual Key";
+  document.getElementById("keyModal").style.display = "flex";
+}
+
+function showEditModal(hash) {
+  var k = null;
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].tokenHash === hash) { k = keys[i]; break; }
+  }
+  if (!k) return;
+
+  editingKey = k;
+  document.getElementById("keyFormAlias").value = k.keyAlias;
+  document.getElementById("keyFormAlias").disabled = true;
+  document.getElementById("keyFormUserId").value = k.userId || "";
+  document.getElementById("keyFormUserId").disabled = true;
+  document.getElementById("keyFormModels").value = (k.models && k.models.length > 0) ? k.models.join(", ") : "";
+  document.getElementById("keyFormError").textContent = "";
+  document.getElementById("generatedKeyResult").style.display = "none";
+  document.getElementById("submitKeyBtn").textContent = "Update";
+  document.getElementById("modalTitle").textContent = "Edit Virtual Key — " + escapeHtml(k.keyAlias);
   document.getElementById("keyModal").style.display = "flex";
 }
 
@@ -69,6 +91,11 @@ function hideModal() {
 }
 
 function submitKeyForm() {
+  if (editingKey) {
+    submitEditKey();
+    return;
+  }
+
   var alias = document.getElementById("keyFormAlias").value.trim();
   if (!alias) {
     document.getElementById("keyFormError").textContent = "Alias is required";
@@ -87,6 +114,27 @@ function submitKeyForm() {
       if (!d.ok) { document.getElementById("keyFormError").textContent = d.error; return; }
       document.getElementById("generatedRawKey").textContent = d.rawKey;
       document.getElementById("generatedKeyResult").style.display = "block";
+      loadKeys();
+    })
+    .catch(function(e) { document.getElementById("keyFormError").textContent = e.message; });
+}
+
+function submitEditKey() {
+  if (!editingKey) return;
+  var modelsRaw = document.getElementById("keyFormModels").value.trim();
+  var models = modelsRaw ? modelsRaw.split(",").map(function(s) { return s.trim(); }).filter(Boolean) : null;
+
+  document.getElementById("keyFormError").textContent = "";
+
+  fetch("/api/keys/" + editingKey.tokenHash, {
+    method: "PUT",
+    headers: authHeaders(),
+    body: JSON.stringify({ models: models })
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) { document.getElementById("keyFormError").textContent = d.error; return; }
+      hideModal();
       loadKeys();
     })
     .catch(function(e) { document.getElementById("keyFormError").textContent = e.message; });

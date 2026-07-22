@@ -47,9 +47,82 @@
   .header-title-row {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .header-brand-group {
+    display: flex;
+    align-items: center;
     gap: 12px;
     flex-wrap: wrap;
-    margin-bottom: 8px;
+  }
+
+  .header-nav-bar,
+  .app-nav-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    background: rgba(18, 18, 26, 0.8);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+  }
+
+  .header-nav-tab,
+  .app-nav-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 5px 14px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
+  }
+
+  .header-nav-tab svg,
+  .app-nav-tab svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    opacity: 0.75;
+    transition: opacity 0.2s ease;
+  }
+
+  .header-nav-tab.active,
+  .app-nav-tab.active {
+    background: linear-gradient(135deg, var(--accent), #6366f1);
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 3px 12px rgba(124, 92, 252, 0.35);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .header-nav-tab.active svg,
+  .app-nav-tab.active svg {
+    opacity: 1;
+    stroke: #ffffff;
+  }
+
+  .header-nav-tab:hover:not(.active),
+  .app-nav-tab:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text);
+  }
+
+  .header-nav-tab:hover:not(.active) svg,
+  .app-nav-tab:hover:not(.active) svg {
+    opacity: 1;
   }
 
   .header h1 {
@@ -1020,67 +1093,6 @@
   }
 
   /* ── List View ── */
-  /* Top App Navigation Bar */
-  .app-nav-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: -12px 0 24px 0;
-    padding: 6px;
-    background: rgba(18, 18, 26, 0.7);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    backdrop-filter: blur(8px);
-    width: fit-content;
-  }
-
-  .app-nav-tab {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    font-weight: 500;
-    padding: 7px 16px;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    color: var(--text-dim);
-    text-decoration: none;
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-    cursor: pointer;
-  }
-
-  .app-nav-tab svg {
-    width: 15px;
-    height: 15px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
-    opacity: 0.7;
-    transition: opacity 0.2s ease;
-  }
-
-  .app-nav-tab.active {
-    background: linear-gradient(135deg, var(--accent), #6366f1);
-    color: #ffffff;
-    font-weight: 600;
-    box-shadow: 0 4px 14px rgba(124, 92, 252, 0.35);
-    border-color: rgba(255, 255, 255, 0.15);
-  }
-
-  .app-nav-tab.active svg {
-    opacity: 1;
-    stroke: #ffffff;
-  }
-
-  .app-nav-tab:hover:not(.active) {
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--text);
-  }
-
-  .app-nav-tab:hover:not(.active) svg {
-    opacity: 1;
-  }
-
   /* Stats Cards Grid */
   .stats-summary-grid {
     display: grid;

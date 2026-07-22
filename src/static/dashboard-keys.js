@@ -21,17 +21,36 @@ function getCheckedModels() {
   return Array.from(cbs).map(function(c) { return c.value; });
 }
 
-function setCheckedModels(models) {
-  var cbs = document.querySelectorAll(".modelCb");
-  cbs.forEach(function(c) { c.checked = models.length === 0 || models.indexOf(c.value) >= 0; });
+function updateModelsCountBadge() {
+  var allCbs = document.querySelectorAll(".modelCb");
+  var checkedCbs = document.querySelectorAll(".modelCb:checked");
+  var badge = document.getElementById("modelsCountBadge");
+  if (!badge) return;
+  if (checkedCbs.length === 0 || checkedCbs.length === allCbs.length) {
+    badge.textContent = "All models allowed";
+    badge.style.color = "var(--accent)";
+    badge.style.borderColor = "rgba(124, 92, 252, 0.25)";
+  } else {
+    badge.textContent = checkedCbs.length + " of " + allCbs.length + " models selected";
+    badge.style.color = "var(--yellow)";
+    badge.style.borderColor = "rgba(251, 191, 36, 0.3)";
+  }
 }
 
 function selectAllModels() {
   document.querySelectorAll(".modelCb").forEach(function(c) { c.checked = true; });
+  updateModelsCountBadge();
 }
 
 function selectNoModels() {
   document.querySelectorAll(".modelCb").forEach(function(c) { c.checked = false; });
+  updateModelsCountBadge();
+}
+
+function setCheckedModels(models) {
+  var cbs = document.querySelectorAll(".modelCb");
+  cbs.forEach(function(c) { c.checked = models.length === 0 || models.indexOf(c.value) >= 0; });
+  updateModelsCountBadge();
 }
 
 function loadKeys() {
@@ -80,9 +99,11 @@ function showGenerateModal() {
   selectNoModels();
   document.getElementById("keyFormError").textContent = "";
   document.getElementById("generatedKeyResult").style.display = "none";
-  document.getElementById("submitKeyBtn").textContent = "Generate";
+  document.getElementById("submitKeyBtn").textContent = "Generate Key";
   document.getElementById("modelCheckboxes").style.display = "";
   document.getElementById("modalTitle").textContent = "Generate Virtual Key";
+  var sub = document.getElementById("modalSubtitle");
+  if (sub) sub.textContent = "Configure key access and model restrictions";
   document.getElementById("keyModal").style.display = "flex";
 }
 
@@ -101,9 +122,11 @@ function showEditModal(hash) {
   setCheckedModels(k.models || []);
   document.getElementById("keyFormError").textContent = "";
   document.getElementById("generatedKeyResult").style.display = "none";
-  document.getElementById("submitKeyBtn").textContent = "Update";
+  document.getElementById("submitKeyBtn").textContent = "Save Changes";
   document.getElementById("modelCheckboxes").style.display = "";
-  document.getElementById("modalTitle").textContent = "Edit Virtual Key — " + escapeHtml(k.keyAlias);
+  document.getElementById("modalTitle").textContent = "Edit Virtual Key";
+  var sub = document.getElementById("modalSubtitle");
+  if (sub) sub.textContent = "Updating model restrictions for alias: " + k.keyAlias;
   document.getElementById("keyModal").style.display = "flex";
 }
 
@@ -190,4 +213,10 @@ function deleteKey(hash) {
 
 document.addEventListener("DOMContentLoaded", function() {
   loadKeys();
+  var modal = document.getElementById("keyModal");
+  if (modal) {
+    modal.addEventListener("click", function(e) {
+      if (e.target === modal) hideModal();
+    });
+  }
 });

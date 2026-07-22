@@ -733,17 +733,396 @@ const DASHBOARD_KEYS_HTML = `<!DOCTYPE html>
 <link rel="stylesheet" href="/static/dashboard.css">
 <style>
 .mono { font-family: JetBrains Mono, monospace; font-size: 0.83rem; }
-.btn-action { padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text); }
-.btn-action:hover { background: var(--accent); color: #fff; }
-#keyModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 100; align-items: center; justify-content: center; }
-#keyModal > div { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 24px; min-width: 420px; max-width: 550px; }
-#keyModal input { width: 100%; padding: 8px; margin: 6px 0 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
-#keyModal label { font-weight: bold; font-size: 0.9rem; }
-.generated-key-box { background: var(--bg-card); border: 1px solid var(--accent); border-radius: 6px; padding: 16px; margin: 16px 0; text-align: center; }
-.generated-key-box .raw { font-family: JetBrains Mono, monospace; font-size: 1.1rem; color: var(--accent); word-break: break-all; margin: 8px 0; }
+.btn-action { padding: 5px 9px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--text); font-size: 0.82rem; transition: all 0.15s ease; }
+.btn-action:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Modal Backdrop & Card */
+.modal-backdrop {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100%; height: 100%;
+  background: rgba(5, 5, 12, 0.75);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.modal-card {
+  background: var(--surface, #12121a);
+  border: 1px solid rgba(124, 92, 252, 0.25);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 640px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), 0 0 40px rgba(124, 92, 252, 0.12);
+  animation: modalSlideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+@keyframes modalSlideUp {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Modal Header */
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border, #1e1e2e);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.modal-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.modal-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(124, 92, 252, 0.15);
+  border: 1px solid rgba(124, 92, 252, 0.3);
+  color: var(--accent, #7c5cfc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.modal-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text, #e0e0e8);
+  margin: 0;
+}
+
+.modal-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-dim, #6e6e82);
+  margin-top: 2px;
+}
+
+.modal-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim, #6e6e82);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.modal-close-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text, #e0e0e8);
+}
+
+/* Modal Body */
+.modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Form Grid */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text, #e0e0e8);
+}
+
+.form-label .req { color: var(--accent, #7c5cfc); }
+.form-label .opt { font-weight: normal; color: var(--text-dim, #6e6e82); font-size: 0.75rem; }
+
+.form-input {
+  width: 100%;
+  padding: 9px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border, #1e1e2e);
+  border-radius: 8px;
+  color: var(--text, #e0e0e8);
+  font-size: 0.88rem;
+  font-family: inherit;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--accent, #7c5cfc);
+  box-shadow: 0 0 0 3px rgba(124, 92, 252, 0.2);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.form-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Models Section */
+.models-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.models-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.models-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(124, 92, 252, 0.12);
+  border: 1px solid rgba(124, 92, 252, 0.25);
+  color: var(--accent, #7c5cfc);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.models-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.pill-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border, #1e1e2e);
+  border-radius: 6px;
+  color: var(--text-dim, #6e6e82);
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.pill-btn:hover {
+  background: rgba(124, 92, 252, 0.15);
+  border-color: rgba(124, 92, 252, 0.4);
+  color: var(--text, #e0e0e8);
+}
+
+/* Model Categories & Cards Grid */
+.model-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.model-category {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.cat-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim, #6e6e82);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cat-title::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #7c5cfc);
+}
+
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+/* Model Card Label */
+.model-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.model-card:hover {
+  background: rgba(124, 92, 252, 0.06);
+  border-color: rgba(124, 92, 252, 0.3);
+}
+
+.model-card:has(:checked) {
+  background: rgba(124, 92, 252, 0.12);
+  border-color: rgba(124, 92, 252, 0.5);
+}
+
+.model-card input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--text-dim, #6e6e82);
+  border-radius: 4px;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition: all 0.15s ease;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.model-card input[type="checkbox"]:checked {
+  background: var(--accent, #7c5cfc);
+  border-color: var(--accent, #7c5cfc);
+}
+
+.model-card input[type="checkbox"]:checked::before {
+  content: "✓";
+  color: #fff;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.model-card .model-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--text, #e0e0e8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.modal-error {
+  color: var(--red, #f87171);
+  margin-top: 10px;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.generated-key-box {
+  background: rgba(124, 92, 252, 0.08);
+  border: 1px solid rgba(124, 92, 252, 0.3);
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 16px;
+  text-align: center;
+}
+
+.key-warn-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fbbf24;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.generated-key-box .raw {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.05rem;
+  color: var(--accent, #7c5cfc);
+  word-break: break-all;
+  margin: 12px 0;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px dashed rgba(124, 92, 252, 0.4);
+}
+
+/* Modal Footer */
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border, #1e1e2e);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.btn-modal-cancel {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border, #1e1e2e);
+  border-radius: 8px;
+  color: var(--text, #e0e0e8);
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-modal-cancel:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.btn-modal-submit {
+  background: linear-gradient(135deg, var(--accent, #7c5cfc), #6366f1);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  padding: 8px 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(124, 92, 252, 0.3);
+  transition: all 0.15s ease;
+}
+
+.btn-modal-submit:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(124, 92, 252, 0.45);
+}
+
 table { width: 100%; border-collapse: collapse; }
-th { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 0.8rem; text-transform: uppercase; }
-td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+th { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
 .nav-bar { display: flex; gap: 12px; margin-bottom: 24px; padding: 12px 16px; background: var(--bg-card); border-radius: 8px; align-items: center; flex-wrap: wrap; }
 .nav-bar a { color: var(--text-dim); text-decoration: none; padding: 6px 14px; border-radius: 4px; font-size: 0.9rem; }
 .nav-bar a.active { background: var(--accent); color: #fff; }
@@ -785,46 +1164,101 @@ td { padding: 8px; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
   <tbody id="keysTbody"></tbody>
 </table>
 
-<div id="keyModal">
-  <div>
-    <h3 id="modalTitle" style="margin-top:0">Generate Virtual Key</h3>
-    <label>Alias</label>
-    <input id="keyFormAlias" placeholder="e.g. cursor-agent" autofocus>
-    <label>User ID (optional)</label>
-    <input id="keyFormUserId" placeholder="e.g. seba">
-    <label>Models</label>
-    <div style="display:flex; gap:6px; margin-bottom:10px">
-      <button class="btn-secondary btn-sm" onclick="selectAllModels()" type="button">All</button>
-      <button class="btn-secondary btn-sm" onclick="selectNoModels()" type="button">None</button>
+<div id="keyModal" class="modal-backdrop">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title-group">
+        <div class="modal-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+        </div>
+        <div>
+          <h3 id="modalTitle" class="modal-title">Generate Virtual Key</h3>
+          <p id="modalSubtitle" class="modal-subtitle">Configure key access and model restrictions</p>
+        </div>
+      </div>
+      <button class="modal-close-btn" onclick="hideModal()" type="button" aria-label="Close">&times;</button>
     </div>
-    <div id="modelCheckboxes" style="padding:12px; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; font-size:0.85rem">
-      <div style="font-weight:bold;color:var(--text-dim);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Gemini 3.1 Pro</div>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3.1-pro-low" class="modelCb"> gemini-3.1-pro-low</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3.1-pro-high" class="modelCb"> gemini-3.1-pro-high</label>
-      <div style="font-weight:bold;color:var(--text-dim);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Gemini 3.5 Flash</div>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3.5-flash-medium" class="modelCb"> gemini-3.5-flash-medium</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3.5-flash-high" class="modelCb"> gemini-3.5-flash-high</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3-flash" class="modelCb"> gemini-3-flash</label>
-      <div style="font-weight:bold;color:var(--text-dim);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Gemini 3.6 Flash</div>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3.6-flash-low" class="modelCb"> gemini-3.6-flash-low</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3.6-flash-medium" class="modelCb"> gemini-3.6-flash-medium</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3.6-flash-high" class="modelCb"> gemini-3.6-flash-high</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gemini-3.6-flash-tiered" class="modelCb"> gemini-3.6-flash-tiered</label>
-      <div style="font-weight:bold;color:var(--text-dim);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">Claude</div>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="claude-sonnet-4-6" class="modelCb"> claude-sonnet-4-6</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="claude-opus-4-6-thinking" class="modelCb"> claude-opus-4-6-thinking</label>
-      <div style="font-weight:bold;color:var(--text-dim);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">GPT-OSS</div>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:3px;cursor:pointer"><input type="checkbox" value="gpt-oss-120b-medium" class="modelCb"> gpt-oss-120b-medium</label>
+
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="keyFormAlias">Key Alias <span class="req">*</span></label>
+          <input id="keyFormAlias" class="form-input" placeholder="e.g. cursor-agent" autofocus>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="keyFormUserId">User ID <span class="opt">(optional)</span></label>
+          <input id="keyFormUserId" class="form-input" placeholder="e.g. seba">
+        </div>
+      </div>
+
+      <div id="modelCheckboxes" class="models-section">
+        <div class="models-header">
+          <div>
+            <span class="form-label">Allowed Models</span>
+            <span class="models-badge" id="modelsCountBadge">All models allowed</span>
+          </div>
+          <div class="models-actions">
+            <button class="pill-btn" onclick="selectAllModels()" type="button">Select All</button>
+            <button class="pill-btn" onclick="selectNoModels()" type="button">Clear All</button>
+          </div>
+        </div>
+
+        <div class="model-grid">
+          <div class="model-category">
+            <div class="cat-title">Gemini 3.1 Pro</div>
+            <div class="cat-grid">
+              <label class="model-card"><input type="checkbox" value="gemini-3.1-pro-low" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3.1-pro-low</span></label>
+              <label class="model-card"><input type="checkbox" value="gemini-3.1-pro-high" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3.1-pro-high</span></label>
+            </div>
+          </div>
+          <div class="model-category">
+            <div class="cat-title">Gemini 3.5 Flash</div>
+            <div class="cat-grid">
+              <label class="model-card"><input type="checkbox" value="gemini-3.5-flash-medium" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3.5-flash-medium</span></label>
+              <label class="model-card"><input type="checkbox" value="gemini-3.5-flash-high" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3.5-flash-high</span></label>
+              <label class="model-card"><input type="checkbox" value="gemini-3-flash" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3-flash</span></label>
+            </div>
+          </div>
+          <div class="model-category">
+            <div class="cat-title">Gemini 3.6 Flash</div>
+            <div class="cat-grid">
+              <label class="model-card"><input type="checkbox" value="gemini-3.6-flash-low" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3.6-flash-low</span></label>
+              <label class="model-card"><input type="checkbox" value="gemini-3.6-flash-medium" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3.6-flash-medium</span></label>
+              <label class="model-card"><input type="checkbox" value="gemini-3.6-flash-high" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3.6-flash-high</span></label>
+              <label class="model-card"><input type="checkbox" value="gemini-3.6-flash-tiered" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gemini-3.6-flash-tiered</span></label>
+            </div>
+          </div>
+          <div class="model-category">
+            <div class="cat-title">Claude</div>
+            <div class="cat-grid">
+              <label class="model-card"><input type="checkbox" value="claude-sonnet-4-6" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">claude-sonnet-4-6</span></label>
+              <label class="model-card"><input type="checkbox" value="claude-opus-4-6-thinking" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">claude-opus-4-6-thinking</span></label>
+            </div>
+          </div>
+          <div class="model-category">
+            <div class="cat-title">GPT-OSS</div>
+            <div class="cat-grid">
+              <label class="model-card"><input type="checkbox" value="gpt-oss-120b-medium" class="modelCb" onchange="updateModelsCountBadge()"><span class="model-name">gpt-oss-120b-medium</span></label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="keyFormError" class="modal-error"></div>
+
+      <div id="generatedKeyResult" class="generated-key-box" style="display:none">
+        <div class="key-warn-header">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          Save this key now — it won't be shown again!
+        </div>
+        <div class="raw" id="generatedRawKey"></div>
+        <button id="copyKeyBtn" class="btn-secondary" onclick="copyRawKey()" style="margin-top:8px" type="button">Copy Key</button>
+      </div>
     </div>
-    <div id="keyFormError" style="color:var(--red); margin:8px 0; font-size:0.85rem"></div>
-    <div id="generatedKeyResult" class="generated-key-box" style="display:none">
-      <strong style="color:var(--accent)">&#9888; Save this key now — it won't be shown again!</strong>
-      <div class="raw" id="generatedRawKey"></div>
-      <button id="copyKeyBtn" class="btn-secondary" onclick="copyRawKey()" style="margin-top:8px">Copy</button>
-    </div>
-    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
-      <button class="btn-secondary" onclick="hideModal()">Cancel</button>
-      <button class="btn-secondary" onclick="submitKeyForm()" id="submitKeyBtn" style="background:var(--accent);color:#fff">Generate</button>
+
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="hideModal()" type="button">Cancel</button>
+      <button class="btn-modal-submit" onclick="submitKeyForm()" id="submitKeyBtn" type="button">Generate Key</button>
     </div>
   </div>
 </div>

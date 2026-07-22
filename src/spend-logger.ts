@@ -31,6 +31,24 @@ export function logSpend(
     totalTokens?: number;
   },
 ): void {
+  const pricing = MODEL_PRICING[log.model] || { inputPer1M: 0, outputPer1M: 0 };
+  const promptTokens = Math.max(0, log.promptTokens || 0);
+  const completionTokens = Math.max(0, log.completionTokens || 0);
+  const promptCostUsd = (promptTokens / 1_000_000) * (pricing.inputPer1M || 0);
+  const completionCostUsd = (completionTokens / 1_000_000) * (pricing.outputPer1M || 0);
+  const totalCostUsd = promptCostUsd + completionCostUsd;
+
+  const enrichedMetadata: Record<string, unknown> = {
+    ...(log.metadata || {}),
+    costBreakdown: {
+      promptCostUsd,
+      completionCostUsd,
+      totalCostUsd,
+      inputRatePer1M: pricing.inputPer1M || 0,
+      outputRatePer1M: pricing.outputPer1M || 0,
+    },
+  };
+
   const fullLog: SpendLog = {
     requestId: log.requestId || generateRequestId(),
     apiKeyHash: log.apiKeyHash || null,
@@ -38,19 +56,16 @@ export function logSpend(
     accountEmail: log.accountEmail || null,
     callType: log.callType,
     status: log.status,
-    promptTokens: Math.max(0, log.promptTokens || 0),
-    completionTokens: Math.max(0, log.completionTokens || 0),
-    totalTokens: Math.max(
-      0,
-      log.totalTokens || (log.promptTokens || 0) + (log.completionTokens || 0),
-    ),
+    promptTokens,
+    completionTokens,
+    totalTokens: Math.max(0, log.totalTokens || promptTokens + completionTokens),
     startTime: log.startTime,
     endTime: log.endTime,
     ttfbMs: log.ttfbMs ?? null,
     durationMs: Math.max(0, log.durationMs || 0),
     requestMessages: storeMessagesConfig ? sanitizePayload(log.requestMessages) : null,
     responseContent: storeResponsesConfig ? sanitizePayload(log.responseContent) : null,
-    metadata: log.metadata || {},
+    metadata: enrichedMetadata,
     requesterIp: log.requesterIp || null,
     createdAt: new Date().toISOString(),
   };
@@ -76,15 +91,45 @@ function scheduleFlush(): void {
 function sanitizePayload(payload: unknown): unknown {
   if (!payload) return null;
   try {
-    const str = JSON.stringify(payload);
-    // Truncate payloads larger than 256KB to avoid exhausting database disk space
-    if (str.length > 256 * 1024) {
-      return { _truncated: true, preview: str.slice(0, 1000) + "..." };
+    const cleaned = cleanValue(payload);
+    const str = JSON.stringify(cleaned);
+    if (str.length > 512 * 1024) {
+      return {
+        _truncated: true,
+        originalLengthBytes: str.length,
+        previewText: str.slice(0, 50000) + "\n... [payload truncated at 50,000 characters]",
+      };
     }
-    return payload;
+    return cleaned;
   } catch {
     return null;
   }
+}
+
+function cleanValue(val: unknown, depth = 0): unknown {
+  if (depth > 20) return "[Max Depth Reached]";
+  if (typeof val === "string") {
+    if (val.startsWith("data:") && val.includes(";base64,")) {
+      const parts = val.split(";base64,");
+      const b64Len = parts[1] ? parts[1].length : 0;
+      return `${parts[0]};base64,[data truncated: ${Math.round((b64Len * 0.75) / 1024)}KB]`;
+    }
+    if (val.length > 2000 && !val.includes(" ") && /^[A-Za-z0-9+/=]+$/.test(val.slice(0, 100))) {
+      return `[base64 data truncated: ${Math.round((val.length * 0.75) / 1024)}KB]`;
+    }
+    return val;
+  }
+  if (Array.isArray(val)) {
+    return val.map((item) => cleanValue(item, depth + 1));
+  }
+  if (val && typeof val === "object") {
+    const obj: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+      obj[k] = cleanValue(v, depth + 1);
+    }
+    return obj;
+  }
+  return val;
 }
 
 /**

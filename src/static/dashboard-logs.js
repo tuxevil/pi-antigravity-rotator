@@ -200,6 +200,49 @@ document.addEventListener("click", function(e) {
   }
 });
 
+function formatJsonCode(obj) {
+  if (obj === undefined || obj === null) return '<span style="color:var(--text-dim)">null</span>';
+  try {
+    var str = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+    var escaped = escapeHtml(str);
+    return escaped
+      .replace(/"([^"]+)":/g, '<span style="color:#a78bfa;font-weight:500">"$1"</span>:')
+      .replace(/: "([^"]*)"/g, ': <span style="color:#4ade80">"$1"</span>')
+      .replace(/: (\d+\.?\d*)/g, ': <span style="color:#f59e0b">$1</span>')
+      .replace(/: (true|false)/g, ': <span style="color:#38bdf8">$1</span>')
+      .replace(/: (null)/g, ': <span style="color:#94a3b8">$1</span>');
+  } catch(e) {
+    return escapeHtml(String(obj));
+  }
+}
+
+function copyText(str) {
+  if (!str) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(str);
+  }
+}
+
+function copyJson(elementId) {
+  var el = document.getElementById(elementId);
+  if (!el) return;
+  copyText(el.textContent);
+}
+
+function switchInspectorTab(requestId, tabName) {
+  var container = document.getElementById("expand-" + requestId);
+  if (!container) return;
+  var tabs = container.querySelectorAll(".inspector-tab-btn");
+  tabs.forEach(function(tb) { tb.classList.remove("active"); });
+  var targetTab = container.querySelector('.inspector-tab-btn[data-tab="' + tabName + '"]');
+  if (targetTab) targetTab.classList.add("active");
+
+  var contents = container.querySelectorAll(".tab-content");
+  contents.forEach(function(c) { c.style.display = "none"; });
+  var targetContent = document.getElementById("tab-" + tabName + "-" + requestId);
+  if (targetContent) targetContent.style.display = "block";
+}
+
 function renderLogs(logs) {
   var tbody = document.getElementById("logsBody");
   if (logs.length === 0) {
@@ -208,9 +251,9 @@ function renderLogs(logs) {
   }
 
   tbody.innerHTML = logs.map(function(l) {
-    var statusBadge = l.status === "success" 
+    var statusBadge = l.status === "success" || l.status === "200" || (typeof l.status === "number" && l.status >= 200 && l.status < 300)
       ? '<span class="status-badge active" style="font-size:10px">200 OK</span>' 
-      : '<span class="status-badge blocked" style="font-size:10px">Error</span>';
+      : '<span class="status-badge blocked" style="font-size:10px">Error (' + escapeHtml(String(l.status)) + ')</span>';
       
     var ts = l.createdAt ? new Date(l.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "-";
     var duration = l.durationMs ? (l.durationMs + "ms") : "-";
@@ -231,29 +274,91 @@ function renderLogs(logs) {
     if (l.callType === "anthropic") typeBadgeClass = "badge-cooldown";
     if (l.callType === "responses") typeBadgeClass = "badge-active";
 
+    var pCost = (l.promptTokens / 1000000) * (l.promptRate || 0);
+    var cCost = (l.completionTokens / 1000000) * (l.completionRate || 0);
+
     return '<tr class="log-row" onclick="toggleExpand(\'' + l.requestId + '\')">' +
       '<td class="col-time" style="font-size:0.8rem;color:var(--text-dim)">' + ts + '</td>' +
       '<td class="col-key"><span class="mono" style="font-size:0.78rem;font-weight:600;color:var(--accent)" title="' + escapeHtml(l.apiKeyHash || "") + '">' + escapeHtml(keyDisplay) + '</span></td>' +
       '<td class="col-model"><span class="model-chip">' + escapeHtml(l.model) + '</span></td>' +
       '<td class="col-type"><span class="badge ' + typeBadgeClass + '" style="font-size:9px">' + escapeHtml(l.callType || "native") + '</span></td>' +
       '<td class="col-status">' + statusBadge + '</td>' +
-      '<td class="col-tokens mono" style="font-size:0.82rem">' + l.promptTokens + ' <span style="color:var(--text-dim)">/</span> <span style="color:var(--green)">' + l.completionTokens + '</span></td>' +
+      '<td class="col-tokens mono" style="font-size:0.82rem">' + l.promptTokens.toLocaleString() + ' <span style="color:var(--text-dim)">/</span> <span style="color:var(--green)">' + l.completionTokens.toLocaleString() + '</span></td>' +
       '<td class="col-cost mono" style="font-size:0.82rem;color:#3b82f6">' + costDisplay + '</td>' +
       '<td class="col-duration mono" style="font-size:0.82rem">' + duration + '</td>' +
       '<td class="col-ttfb mono" style="font-size:0.82rem;color:var(--text-dim)">' + ttfb + '</td>' +
       '<td class="col-ip" style="font-size:0.78rem;color:var(--text-dim)">' + (l.requesterIp || "-") + '</td>' +
     '</tr>' +
-    '<tr id="expand-' + l.requestId + '" class="log-detail" style="display:none"><td colspan="100">' +
-      '<div class="log-detail-content" style="background:rgba(0,0,0,0.25);border-left:3px solid var(--accent);padding:14px;margin:6px 0;border-radius:0 8px 8px 0">' +
-        '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:0.82rem">' +
-          '<div><strong>Request ID:</strong> <span class="mono">' + escapeHtml(l.requestId) + '</span></div>' +
-          '<div><strong>Account Email:</strong> <span class="mono">' + escapeHtml(l.accountEmail || "unknown") + '</span></div>' +
-          '<div><strong>Est. Cost:</strong> <span class="mono" style="color:#3b82f6">' + costDisplay + '</span></div>' +
-          '<div><strong>Key Hash:</strong> <span class="mono">' + escapeHtml(l.apiKeyHash || "none") + '</span></div>' +
+    '<tr id="expand-' + l.requestId + '" class="log-detail" style="display:none"><td colspan="100" style="padding:10px 14px;background:var(--bg)">' +
+      '<div class="inspector-card">' +
+        '<div class="inspector-header">' +
+          '<div class="inspector-badge-row">' +
+            statusBadge +
+            '<span class="badge ' + typeBadgeClass + '">' + escapeHtml(l.callType || "native") + '</span>' +
+            '<span class="model-chip">' + escapeHtml(l.model) + '</span>' +
+            '<span class="mono-tag">Key: <strong>' + escapeHtml(keyDisplay) + '</strong></span>' +
+            '<span class="mono-tag">Account: <strong>' + escapeHtml(l.accountEmail || "unknown") + '</strong></span>' +
+            '<span class="mono-tag">IP: <strong>' + escapeHtml(l.requesterIp || "-") + '</strong></span>' +
+          '</div>' +
+          '<div class="inspector-req-id">' +
+            '<span>ID: <code class="mono" style="color:var(--accent)">' + escapeHtml(l.requestId) + '</code></span>' +
+            '<button class="pill-btn btn-sm" onclick="copyText(\'' + escapeHtml(l.requestId) + '\')">Copy ID</button>' +
+          '</div>' +
         '</div>' +
-        (l.metadata && Object.keys(l.metadata).length > 0 ? '<div style="margin-bottom:8px;font-size:0.82rem"><strong>Metadata:</strong> <span class="mono">' + escapeHtml(JSON.stringify(l.metadata)) + '</span></div>' : '') +
-        (l.requestMessages ? '<details style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600;color:var(--accent);margin-bottom:6px">📩 Request Payload (Messages)</summary><pre class="log-payload">' + escapeHtml(JSON.stringify(l.requestMessages, null, 2)) + '</pre></details>' : '') +
-        (l.responseContent ? '<details><summary style="cursor:pointer;font-weight:600;color:var(--green);margin-bottom:6px">📤 Response Payload (Content)</summary><pre class="log-payload">' + escapeHtml(JSON.stringify(l.responseContent, null, 2)) + '</pre></details>' : '') +
+
+        '<div class="inspector-metrics-grid">' +
+          '<div class="metric-box">' +
+            '<div class="metric-label">Prompt Tokens</div>' +
+            '<div class="metric-val">' + l.promptTokens.toLocaleString() + '</div>' +
+            '<div class="metric-sub">$' + pCost.toFixed(6) + '</div>' +
+          '</div>' +
+          '<div class="metric-box">' +
+            '<div class="metric-label">Completion Tokens</div>' +
+            '<div class="metric-val" style="color:var(--green)">' + l.completionTokens.toLocaleString() + '</div>' +
+            '<div class="metric-sub">$' + cCost.toFixed(6) + '</div>' +
+          '</div>' +
+          '<div class="metric-box">' +
+            '<div class="metric-label">Latency / TTFB</div>' +
+            '<div class="metric-val">' + duration + '</div>' +
+            '<div class="metric-sub">TTFB: ' + ttfb + '</div>' +
+          '</div>' +
+          '<div class="metric-box highlight">' +
+            '<div class="metric-label">Rotator Savings</div>' +
+            '<div class="metric-val" style="color:#3b82f6">' + costDisplay + '</div>' +
+            '<div class="metric-sub" style="color:#22c55e">100% Free via Rotator</div>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="inspector-tabs">' +
+          '<button class="inspector-tab-btn active" data-tab="req" onclick="switchInspectorTab(\'' + l.requestId + '\', \'req\')">📩 Request Payload</button>' +
+          '<button class="inspector-tab-btn" data-tab="res" onclick="switchInspectorTab(\'' + l.requestId + '\', \'res\')">📤 Response Payload</button>' +
+          '<button class="inspector-tab-btn" data-tab="meta" onclick="switchInspectorTab(\'' + l.requestId + '\', \'meta\')">⚙️ Parameters &amp; Metadata</button>' +
+        '</div>' +
+
+        '<div id="tab-req-' + l.requestId + '" class="tab-content" style="display:block">' +
+          '<div class="payload-header">' +
+            '<span>Input Messages &amp; Request Body</span>' +
+            '<button class="pill-btn btn-sm" onclick="copyJson(\'json-req-' + l.requestId + '\')">Copy JSON</button>' +
+          '</div>' +
+          '<pre id="json-req-' + l.requestId + '" class="code-viewer">' + formatJsonCode(l.requestMessages) + '</pre>' +
+        '</div>' +
+
+        '<div id="tab-res-' + l.requestId + '" class="tab-content" style="display:none">' +
+          '<div class="payload-header">' +
+            '<span>Output Content &amp; Choices</span>' +
+            '<button class="pill-btn btn-sm" onclick="copyJson(\'json-res-' + l.requestId + '\')">Copy JSON</button>' +
+          '</div>' +
+          '<pre id="json-res-' + l.requestId + '" class="code-viewer">' + formatJsonCode(l.responseContent) + '</pre>' +
+        '</div>' +
+
+        '<div id="tab-meta-' + l.requestId + '" class="tab-content" style="display:none">' +
+          '<div class="payload-header">' +
+            '<span>Metadata &amp; System Context</span>' +
+            '<button class="pill-btn btn-sm" onclick="copyJson(\'json-meta-' + l.requestId + '\')">Copy JSON</button>' +
+          '</div>' +
+          '<pre id="json-meta-' + l.requestId + '" class="code-viewer">' + formatJsonCode(l.metadata) + '</pre>' +
+        '</div>' +
+
       '</div>' +
     '</td></tr>';
   }).join("");

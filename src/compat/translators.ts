@@ -148,6 +148,7 @@ export interface CompatCompletion {
   firstByteMs?: number;
   responseId?: string;
   toolCalls?: OpenAIToolCall[];
+  rawResponse?: unknown;
 }
 
 export type AntigravityPart =

@@ -278,6 +278,8 @@ function recordCompatOutcome(
     callType?: string;
     apiKeyHash?: string | null;
     requesterIp?: string | null;
+    rawRequest?: unknown;
+    rawResponse?: unknown;
   },
 ): void {
   const ttfbMs = completion?.firstByteMs ?? totalMs;
@@ -305,8 +307,11 @@ function recordCompatOutcome(
     endTime: new Date().toISOString(),
     ttfbMs,
     durationMs: totalMs,
-    requestMessages: body.request || body,
-    responseContent: completion?.text ? { text: completion.text } : null,
+    requestMessages: options?.rawRequest || body.request || body,
+    responseContent:
+      options?.rawResponse ||
+      completion?.rawResponse ||
+      (completion?.text ? { text: completion.text } : null),
     requesterIp: options?.requesterIp || null,
   });
 }
@@ -319,6 +324,8 @@ function recordCompatFailure(
     callType?: string;
     apiKeyHash?: string | null;
     requesterIp?: string | null;
+    rawRequest?: unknown;
+    rawResponse?: unknown;
   },
 ): void {
   if (outcome.ok || !outcome.context) return;
@@ -625,6 +632,51 @@ async function streamCompatSse(
       : anthropicToolCalls.length > 0
         ? anthropicToolCalls
         : undefined;
+
+  const rawResponse =
+    format === "openai"
+      ? {
+          id,
+          object: "chat.completion",
+          created,
+          model,
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: text || null,
+                ...(collectedToolCalls ? { tool_calls: collectedToolCalls } : {}),
+              },
+              finish_reason: collectedToolCalls ? "tool_calls" : "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: inputTokens,
+            completion_tokens: outputTokens,
+            total_tokens: inputTokens + outputTokens,
+          },
+        }
+      : {
+          id,
+          type: "message",
+          role: "assistant",
+          model,
+          content: [
+            ...(text ? [{ type: "text", text }] : []),
+            ...(collectedToolCalls
+              ? collectedToolCalls.map((tc) => ({
+                  type: "tool_use",
+                  id: tc.id,
+                  name: tc.function.name,
+                  input: JSON.parse(tc.function.arguments || "{}"),
+                }))
+              : []),
+          ],
+          stop_reason: anthropicHasToolUse ? "tool_use" : "end_turn",
+          usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+        };
+
   return {
     text,
     inputTokens,
@@ -632,6 +684,7 @@ async function streamCompatSse(
     firstByteMs,
     responseId,
     toolCalls: collectedToolCalls,
+    rawResponse,
   };
 }
 
@@ -924,6 +977,17 @@ async function streamResponsesSse(
     outputTokens,
     firstByteMs,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    rawResponse: {
+      id: responseId,
+      object: "response",
+      created: createdAt,
+      output_text: text,
+      usage: {
+        prompt_tokens: inputTokens,
+        completion_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens,
+      },
+    },
   };
   if (!reqClosed && !res.writableEnded) {
     // Close reasoning item if it was never closed mid-stream
@@ -994,6 +1058,8 @@ async function completeResponsesViaRotator(
     callType?: string;
     apiKeyHash?: string | null;
     requesterIp?: string | null;
+    rawRequest?: unknown;
+    rawResponse?: unknown;
   },
 ): Promise<{
   completion: CompatCompletion;
@@ -1060,6 +1126,8 @@ async function completeViaRotator(
     callType?: string;
     apiKeyHash?: string | null;
     requesterIp?: string | null;
+    rawRequest?: unknown;
+    rawResponse?: unknown;
   },
 ): Promise<{
   completion: CompatCompletion;
@@ -1346,6 +1414,7 @@ export async function handleGeminiGenerateContent(
     callType: "gemini",
     apiKeyHash,
     requesterIp: req.socket?.remoteAddress || null,
+    rawRequest: parsed,
   });
   if (result.status !== 200) {
     return writeJson(res, result.status, {
@@ -1422,6 +1491,7 @@ export async function handleOpenAIChatCompletions(
       callType: "chat_completion",
       apiKeyHash,
       requesterIp: req.socket?.remoteAddress || null,
+      rawRequest: validation.value,
     },
   );
   if (result.status !== 200) {
@@ -1599,6 +1669,7 @@ export async function handleOpenAIResponsesCreate(
       callType: "responses",
       apiKeyHash,
       requesterIp: req.socket?.remoteAddress || null,
+      rawRequest: validation.value,
     },
   );
   if (result.status !== 200) {
@@ -1750,6 +1821,7 @@ export async function handleAnthropicMessages(
       callType: "anthropic",
       apiKeyHash,
       requesterIp: req.socket?.remoteAddress || null,
+      rawRequest: validation.value,
     },
   );
   if (result.status !== 200) {

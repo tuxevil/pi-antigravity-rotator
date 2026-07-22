@@ -1718,3 +1718,148 @@
     display: none !important;
   }
   .log-payload { max-height: 400px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 4px; font-size: 0.78rem; white-space: pre-wrap; }
+
+  /* ── LiteLLM-Grade Log Inspector Styles ── */
+  .inspector-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 8px 0;
+  }
+
+  .inspector-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .inspector-badge-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .mono-tag {
+    font-family: JetBrains Mono, monospace;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .mono-tag strong {
+    color: var(--text);
+  }
+
+  .inspector-req-id {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+
+  .inspector-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .metric-box {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+
+  .metric-box.highlight {
+    background: rgba(124, 92, 252, 0.08);
+    border-color: rgba(124, 92, 252, 0.25);
+  }
+
+  .metric-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+
+  .metric-val {
+    font-family: JetBrains Mono, monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .metric-sub {
+    font-family: JetBrains Mono, monospace;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .inspector-tabs {
+    display: flex;
+    gap: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 14px;
+  }
+
+  .inspector-tab-btn {
+    padding: 8px 14px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .inspector-tab-btn:hover {
+    color: var(--text);
+  }
+
+  .inspector-tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .payload-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .code-viewer {
+    max-height: 450px;
+    overflow: auto;
+    background: rgba(5, 5, 10, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 14px;
+    font-family: JetBrains Mono, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #e0e0e8;
+  }

@@ -652,6 +652,7 @@ function regexExtractUsage(
 /** State for the SSE event accumulator used by streamResponseBody. */
 class SseEventAccumulator {
   private buffer = "";
+  private accumulatedText = "";
   private readonly maxBytes: number;
   constructor(maxBytes: number = SSE_EVENT_BUFFER_MAX) {
     this.maxBytes = maxBytes;
@@ -672,18 +673,62 @@ class SseEventAccumulator {
       this.buffer = this.buffer.slice(boundary + 2);
       const usage = extractUsageFromSseEvent(eventText);
       if (usage && !extracted) extracted = usage;
+      const text = extractTextFromSseEvent(eventText);
+      if (text && this.accumulatedText.length < 100000) {
+        this.accumulatedText += text;
+      }
       boundary = this.buffer.indexOf("\n\n");
     }
     return extracted;
+  }
+
+  getText(): string {
+    return this.accumulatedText;
   }
 
   /** Flush any partial event at end-of-stream. */
   final(): { inputTokens: number; outputTokens: number } | null {
     if (!this.buffer) return null;
     const usage = extractUsageFromSseEvent(this.buffer);
+    const text = extractTextFromSseEvent(this.buffer);
+    if (text && this.accumulatedText.length < 100000) {
+      this.accumulatedText += text;
+    }
     this.buffer = "";
     return usage;
   }
+}
+
+function extractTextFromSseEvent(eventText: string): string | null {
+  const dataLines: string[] = [];
+  for (const raw of eventText.split("\n")) {
+    if (raw.startsWith("data:")) {
+      dataLines.push(raw.slice(5).trim());
+    }
+  }
+  if (dataLines.length === 0) return null;
+  const payload = dataLines.join("\n");
+  if (payload === "[DONE]" || payload === "") return null;
+  try {
+    const parsed = JSON.parse(payload);
+    if (parsed && typeof parsed === "object") {
+      const p = parsed as Record<string, unknown>;
+      if (Array.isArray(p.candidates) && p.candidates[0] && typeof p.candidates[0] === "object") {
+        const cand = p.candidates[0] as Record<string, unknown>;
+        if (cand.content && typeof cand.content === "object") {
+          const content = cand.content as Record<string, unknown>;
+          if (Array.isArray(content.parts)) {
+            return content.parts
+              .map((part) => (part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string" ? (part as Record<string, unknown>).text : ""))
+              .join("");
+          }
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 async function readJsonRequest(req: IncomingMessage): Promise<unknown> {
@@ -701,6 +746,7 @@ async function streamResponseBody(
   inputTokens: number;
   outputTokens: number;
   firstByteMs: number;
+  responseText?: string;
 } | null> {
   if (!body) return null;
 
@@ -716,6 +762,7 @@ async function streamResponseBody(
     inputTokens: number;
     outputTokens: number;
     firstByteMs: number;
+    responseText?: string;
   } | null>((resolve) => {
     let settled = false;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -738,7 +785,7 @@ async function streamResponseBody(
       cleanup();
       // Drain any partial event that didn't end with \n\n
       if (!firstUsage) firstUsage = eventAccumulator.final();
-      resolve(firstUsage ? { ...firstUsage, firstByteMs } : null);
+      resolve(firstUsage ? { ...firstUsage, firstByteMs, responseText: eventAccumulator.getText() } : null);
     };
 
     const resetIdleTimer = (): void => {
@@ -1439,7 +1486,9 @@ async function handleProxyRequest(
           ttfbMs,
           durationMs: totalMs,
           requestMessages: body.request || body,
-          responseContent: null,
+          responseContent: usage?.responseText
+            ? { candidates: [{ content: { parts: [{ text: usage.responseText }] }, finishReason: "STOP" }] }
+            : null,
           requesterIp: req.socket?.remoteAddress || null,
         });
         if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {

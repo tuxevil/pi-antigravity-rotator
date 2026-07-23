@@ -279,7 +279,8 @@ function buildWhereClause(options: SpendFilterOptions = {}): {
         if (kVal === "unauthenticated") {
           keyOrConditions.push(`(l.api_key_hash = 'unauthenticated' OR l.api_key_hash IS NULL OR l.api_key_hash = '')`);
         } else {
-          const searchVal = `%${kVal}%`;
+          const safeKVal = kVal.replace(/[\\%_]/g, "\\$&");
+          const searchVal = `%${safeKVal}%`;
           params.push(kVal, searchVal);
           const p1 = params.length - 1;
           const p2 = params.length;
@@ -301,7 +302,7 @@ function buildWhereClause(options: SpendFilterOptions = {}): {
     if (rawModels.length > 0) {
       const modelConds: string[] = [];
       for (const m of rawModels) {
-        const safeM = m.replace(/[%_]/g, "\\$&");
+        const safeM = m.replace(/[\\%_]/g, "\\$&");
         params.push(`${safeM}%`);
         modelConds.push(`l.model ILIKE $${params.length}`);
       }

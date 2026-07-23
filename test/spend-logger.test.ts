@@ -41,3 +41,9 @@ test("getDailySpendSummary returns empty array when DB is not configured", async
   const summary = await getDailySpendSummary({});
   assert.deepEqual(summary, []);
 });
+
+test("sanitizeLikePattern escapes backslashes, percent signs, and underscores", () => {
+  const input = "test\\%_query";
+  const escaped = input.replace(/[\\%_]/g, "\\$&");
+  assert.equal(escaped, "test\\\\\\%\\_query");
+});

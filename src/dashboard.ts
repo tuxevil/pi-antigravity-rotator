@@ -451,10 +451,13 @@ export async function serveGetSpendByKeyApi(
 ): Promise<void> {
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const apiKeyHash = url.searchParams.get("apiKeyHash") || undefined;
+    const model = url.searchParams.get("model") || undefined;
+    const status = url.searchParams.get("status") || undefined;
     const startDate = url.searchParams.get("startDate") || undefined;
     const endDate = url.searchParams.get("endDate") || undefined;
 
-    const byKey = await getSpendByKey({ startDate, endDate });
+    const byKey = await getSpendByKey({ apiKeyHash, model, status, startDate, endDate });
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, byKey }));
   } catch (err) {

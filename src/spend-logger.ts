@@ -240,12 +240,15 @@ export function calculateCost(model: string, promptTokens: number, completionTok
 
 // ── Dashboard Query API Functions ────────────────────────────────────
 
-export interface GetSpendLogsOptions {
-  apiKeyHash?: string;
-  model?: string;
+export interface SpendFilterOptions {
+  apiKeyHash?: string | string[];
+  model?: string | string[];
   status?: string;
   startDate?: string;
   endDate?: string;
+}
+
+export interface GetSpendLogsOptions extends SpendFilterOptions {
   limit?: number;
   offset?: number;
 }
@@ -258,22 +261,10 @@ export interface SpendSummary {
   totalCost: number;
 }
 
-export async function getSpendLogs(
-  options: GetSpendLogsOptions = {},
-): Promise<{ logs: SpendLog[]; total: number; summary: SpendSummary }> {
-  const emptySummary: SpendSummary = {
-    totalRequests: 0,
-    promptTokens: 0,
-    completionTokens: 0,
-    avgLatencyMs: 0,
-    totalCost: 0,
-  };
-
-  if (!isDbConfigured()) return { logs: [], total: 0, summary: emptySummary };
-
-  const limit = Math.min(100, Math.max(1, options.limit || 50));
-  const offset = Math.max(0, options.offset || 0);
-
+function buildWhereClause(options: SpendFilterOptions = {}): {
+  whereClause: string;
+  params: unknown[];
+} {
   const conditions: string[] = [];
   const params: unknown[] = [];
 
@@ -332,6 +323,26 @@ export async function getSpendLogs(
 
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  return { whereClause, params };
+}
+
+export async function getSpendLogs(
+  options: GetSpendLogsOptions = {},
+): Promise<{ logs: SpendLog[]; total: number; summary: SpendSummary }> {
+  const emptySummary: SpendSummary = {
+    totalRequests: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    avgLatencyMs: 0,
+    totalCost: 0,
+  };
+
+  if (!isDbConfigured()) return { logs: [], total: 0, summary: emptySummary };
+
+  const limit = Math.min(100, Math.max(1, options.limit || 50));
+  const offset = Math.max(0, options.offset || 0);
+
+  const { whereClause, params } = buildWhereClause(options);
 
   try {
     const aggRes = await queryDb<{
@@ -508,42 +519,30 @@ export interface SpendByKey {
   lastSeen: string | null;
 }
 
-export async function getSpendByKey(options: {
-  startDate?: string;
-  endDate?: string;
-}): Promise<SpendByKey[]> {
+export async function getSpendByKey(
+  options: SpendFilterOptions = {},
+): Promise<SpendByKey[]> {
   if (!isDbConfigured()) return [];
 
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  if (options.startDate) {
-    params.push(options.startDate);
-    conditions.push(`d.date >= $${params.length}::date`);
-  }
-  if (options.endDate) {
-    params.push(options.endDate);
-    conditions.push(`d.date <= $${params.length}::date`);
-  }
-
-  const whereClause =
-    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const { whereClause, params } = buildWhereClause(options);
 
   try {
     const res = await queryDb(
       `SELECT
-        d.api_key_hash,
+        COALESCE(NULLIF(l.api_key_hash, ''), 'unauthenticated') as api_key_hash,
         k.key_alias,
         k.key_name,
-        d.model,
-        SUM(d.total_requests)::int as total_requests,
-        SUM(d.prompt_tokens)::bigint as total_prompt_tokens,
-        SUM(d.completion_tokens)::bigint as total_completion_tokens,
-        SUM(d.total_duration_ms)::bigint as total_duration_ms
-      FROM rotator_daily_spend d
-      LEFT JOIN rotator_virtual_keys k ON d.api_key_hash = k.token_hash
+        l.model,
+        COUNT(*)::int as total_requests,
+        COALESCE(SUM(l.prompt_tokens), 0)::bigint as total_prompt_tokens,
+        COALESCE(SUM(l.completion_tokens), 0)::bigint as total_completion_tokens,
+        COALESCE(SUM(l.duration_ms), 0)::bigint as total_duration_ms,
+        MIN(l.created_at) as first_seen,
+        MAX(l.created_at) as last_seen
+      FROM rotator_spend_logs l
+      LEFT JOIN rotator_virtual_keys k ON l.api_key_hash = k.token_hash
       ${whereClause}
-      GROUP BY d.api_key_hash, k.key_alias, k.key_name, d.model`,
+      GROUP BY COALESCE(NULLIF(l.api_key_hash, ''), 'unauthenticated'), k.key_alias, k.key_name, l.model`,
       params,
     );
 
@@ -558,6 +557,8 @@ export async function getSpendByKey(options: {
         totalCompletionTokens: number;
         totalDurationMs: number;
         totalCost: number;
+        firstSeen: string | null;
+        lastSeen: string | null;
       }
     >();
 
@@ -566,6 +567,9 @@ export async function getSpendByKey(options: {
       const prompt = Number(row.total_prompt_tokens || 0);
       const completion = Number(row.total_completion_tokens || 0);
       const cost = calculateCost(String(row.model), prompt, completion);
+
+      const firstSeenIso = row.first_seen ? new Date(row.first_seen as string | Date).toISOString() : null;
+      const lastSeenIso = row.last_seen ? new Date(row.last_seen as string | Date).toISOString() : null;
 
       const existing = map.get(hash) || {
         apiKeyHash: hash,
@@ -576,6 +580,8 @@ export async function getSpendByKey(options: {
         totalCompletionTokens: 0,
         totalDurationMs: 0,
         totalCost: 0,
+        firstSeen: firstSeenIso,
+        lastSeen: lastSeenIso,
       };
 
       existing.totalRequests += Number(row.total_requests || 0);
@@ -584,31 +590,17 @@ export async function getSpendByKey(options: {
       existing.totalDurationMs += Number(row.total_duration_ms || 0);
       existing.totalCost += cost;
 
+      if (firstSeenIso && (!existing.firstSeen || firstSeenIso < existing.firstSeen)) {
+        existing.firstSeen = firstSeenIso;
+      }
+      if (lastSeenIso && (!existing.lastSeen || lastSeenIso > existing.lastSeen)) {
+        existing.lastSeen = lastSeenIso;
+      }
+
       map.set(hash, existing);
     }
 
-    const keyHashes = Array.from(map.keys());
-    const lastSeenRes =
-      keyHashes.length > 0
-        ? await queryDb(
-            `SELECT api_key_hash, MIN(created_at) as first_seen, MAX(created_at) as last_seen
-             FROM rotator_spend_logs
-             WHERE api_key_hash = ANY($1::text[])
-             GROUP BY api_key_hash`,
-            [keyHashes],
-          )
-        : { rows: [] as Array<Record<string, unknown>> };
-
-    const firstLastMap = new Map<string, { firstSeen: string | null; lastSeen: string | null }>();
-    for (const row of lastSeenRes.rows) {
-      firstLastMap.set(String(row.api_key_hash), {
-        firstSeen: row.first_seen ? new Date(row.first_seen as string).toISOString() : null,
-        lastSeen: row.last_seen ? new Date(row.last_seen as string).toISOString() : null,
-      });
-    }
-
     const resultList: SpendByKey[] = Array.from(map.values()).map((item) => {
-      const fl = firstLastMap.get(item.apiKeyHash) || { firstSeen: null, lastSeen: null };
       const avgDurationMs = item.totalRequests > 0 ? item.totalDurationMs / item.totalRequests : 0;
       return {
         apiKeyHash: item.apiKeyHash,
@@ -620,8 +612,8 @@ export async function getSpendByKey(options: {
         totalDurationMs: item.totalDurationMs,
         avgDurationMs,
         totalCost: Number(item.totalCost.toFixed(6)),
-        firstSeen: fl.firstSeen,
-        lastSeen: fl.lastSeen,
+        firstSeen: item.firstSeen,
+        lastSeen: item.lastSeen,
       };
     });
 

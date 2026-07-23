@@ -151,7 +151,7 @@ function loadLogs(page) {
       renderLogs(d.logs || []);
       renderPagination();
       updateSummaryCards(d.summary, currentTotal);
-      loadByKeySummary(currentStartDate, currentEndDate);
+      loadByKeySummary(params);
     })
     .catch(function(e) { 
       document.getElementById("logsBody").innerHTML = '<tr><td colspan="100" style="text-align:center;color:var(--red);padding:32px">Error loading logs: ' + escapeHtml(e.message) + '</td></tr>'; 
@@ -662,10 +662,14 @@ function resetFilters() {
   loadLogs(0);
 }
 
-function loadByKeySummary(startDate, endDate) {
+function loadByKeySummary(filterParams) {
   var params = new URLSearchParams();
-  if (startDate) params.set("startDate", startDate);
-  if (endDate) params.set("endDate", endDate);
+  if (filterParams) {
+    ["apiKeyHash", "model", "status", "startDate", "endDate"].forEach(function(k) {
+      var v = filterParams.get(k);
+      if (v) params.set(k, v);
+    });
+  }
 
   fetch("/api/spend/by-key?" + params.toString(), { headers: authHeaders() })
     .then(function(r) { return r.json(); })
@@ -679,14 +683,19 @@ function renderByKeySummary(byKey) {
   var container = document.getElementById("byKeySummary");
   if (!byKey || byKey.length === 0) { container.innerHTML = ""; return; }
   
-  var html = '<div class="list-panel" style="margin-bottom:20px">' +
-    '<div class="list-toolbar"><span class="list-toolbar-label">Spend Summary by Virtual Key / Agent</span></div>' +
-    '<div style="overflow-x:auto">' +
-    '<table class="compact-table"><thead><tr>' +
-      '<th>Key / Agent</th><th>Total Requests</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>Est. Cost</th><th>Avg Duration</th><th>Last Active</th>' +
-    '</tr></thead><tbody>';
+  var grandRequests = 0;
+  var grandPrompt = 0;
+  var grandCompletion = 0;
+  var grandCost = 0;
+  var totalDurSum = 0;
 
-  html += byKey.map(function(k) {
+  var rowsHtml = byKey.map(function(k) {
+    grandRequests += k.totalRequests || 0;
+    grandPrompt += k.totalPromptTokens || 0;
+    grandCompletion += k.totalCompletionTokens || 0;
+    grandCost += k.totalCost || 0;
+    totalDurSum += (k.avgDurationMs || 0) * (k.totalRequests || 0);
+
     var avgDur = k.avgDurationMs ? Math.round(k.avgDurationMs) + "ms" : "-";
     var lastSeen = k.lastSeen ? new Date(k.lastSeen).toLocaleString() : "-";
     var keyName = k.keyAlias || k.keyName || (k.apiKeyHash ? k.apiKeyHash.slice(0, 14) + "..." : "unauthenticated");
@@ -703,7 +712,28 @@ function renderByKeySummary(byKey) {
       '<td style="font-size:0.8rem;color:var(--text-dim)">' + lastSeen + '</td>' +
     '</tr>';
   }).join("");
-  html += '</tbody></table></div></div>';
+
+  var grandAvgDur = grandRequests > 0 ? Math.round(totalDurSum / grandRequests) + "ms" : "-";
+
+  var footHtml = '<tr style="font-weight:700;border-top:2px solid var(--border);background:rgba(255,255,255,0.02)">' +
+    '<td>Total (' + byKey.length + ' key' + (byKey.length > 1 ? 's' : '') + ')</td>' +
+    '<td>' + grandRequests.toLocaleString() + '</td>' +
+    '<td class="mono">' + grandPrompt.toLocaleString() + '</td>' +
+    '<td class="mono" style="color:var(--green)">' + grandCompletion.toLocaleString() + '</td>' +
+    '<td class="mono" style="color:#3b82f6">' + formatCost(grandCost) + '</td>' +
+    '<td class="mono">' + grandAvgDur + '</td>' +
+    '<td></td>' +
+  '</tr>';
+
+  var html = '<div class="list-panel" style="margin-bottom:20px">' +
+    '<div class="list-toolbar"><span class="list-toolbar-label">Spend Summary by Virtual Key / Agent</span></div>' +
+    '<div style="overflow-x:auto">' +
+    '<table class="compact-table"><thead><tr>' +
+      '<th>Key / Agent</th><th>Total Requests</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>Est. Cost</th><th>Avg Duration</th><th>Last Active</th>' +
+    '</tr></thead><tbody>' + rowsHtml + '</tbody>' +
+    '<tfoot>' + footHtml + '</tfoot>' +
+    '</table></div></div>';
+
   container.innerHTML = html;
 }
 

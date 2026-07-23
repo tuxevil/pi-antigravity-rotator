@@ -308,8 +308,13 @@ export async function getSpendLogs(
       : String(options.model).split(",").map((s) => s.trim()).filter(Boolean);
 
     if (rawModels.length > 0) {
-      params.push(rawModels);
-      conditions.push(`l.model = ANY($${params.length})`);
+      const modelConds: string[] = [];
+      for (const m of rawModels) {
+        const safeM = m.replace(/[%_]/g, "\\$&");
+        params.push(`${safeM}%`);
+        modelConds.push(`l.model ILIKE $${params.length}`);
+      }
+      conditions.push(`(${modelConds.join(" OR ")})`);
     }
   }
   if (options.status) {

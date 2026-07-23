@@ -278,15 +278,39 @@ export async function getSpendLogs(
   const params: unknown[] = [];
 
   if (options.apiKeyHash) {
-    const searchVal = `%${options.apiKeyHash}%`;
-    params.push(options.apiKeyHash, searchVal);
-    conditions.push(
-      `(l.api_key_hash = $${params.length - 1} OR k.key_alias ILIKE $${params.length} OR k.key_name ILIKE $${params.length})`,
-    );
+    const rawKeys = Array.isArray(options.apiKeyHash)
+      ? options.apiKeyHash
+      : String(options.apiKeyHash).split(",").map((s) => s.trim()).filter(Boolean);
+
+    if (rawKeys.length > 0) {
+      const keyOrConditions: string[] = [];
+      for (const kVal of rawKeys) {
+        if (kVal === "unauthenticated") {
+          keyOrConditions.push(`(l.api_key_hash = 'unauthenticated' OR l.api_key_hash IS NULL OR l.api_key_hash = '')`);
+        } else {
+          const searchVal = `%${kVal}%`;
+          params.push(kVal, searchVal);
+          const p1 = params.length - 1;
+          const p2 = params.length;
+          keyOrConditions.push(
+            `(l.api_key_hash = $${p1} OR k.key_alias ILIKE $${p2} OR k.key_name ILIKE $${p2})`,
+          );
+        }
+      }
+      if (keyOrConditions.length > 0) {
+        conditions.push(`(${keyOrConditions.join(" OR ")})`);
+      }
+    }
   }
   if (options.model) {
-    params.push(options.model);
-    conditions.push(`l.model = $${params.length}`);
+    const rawModels = Array.isArray(options.model)
+      ? options.model
+      : String(options.model).split(",").map((s) => s.trim()).filter(Boolean);
+
+    if (rawModels.length > 0) {
+      params.push(rawModels);
+      conditions.push(`l.model = ANY($${params.length})`);
+    }
   }
   if (options.status) {
     params.push(options.status);

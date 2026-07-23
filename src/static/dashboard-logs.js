@@ -247,6 +247,200 @@ document.addEventListener("click", function(e) {
   }
 });
 
+var availableKeys = [];
+var selectedKeyValues = [];
+var availableModels = [
+  { value: "gemini-3.6-flash", label: "gemini-3.6-flash" },
+  { value: "gemini-3.5-flash", label: "gemini-3.5-flash" },
+  { value: "gemini-3.1-pro", label: "gemini-3.1-pro" },
+  { value: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
+  { value: "claude-opus-4-6-thinking", label: "claude-opus-4-6-thinking" },
+  { value: "gpt-oss-120b-medium", label: "gpt-oss-120b-medium" }
+];
+var selectedModelValues = [];
+
+function getTodayDateString() {
+  var now = new Date();
+  var year = now.getFullYear();
+  var month = String(now.getMonth() + 1).padStart(2, "0");
+  var day = String(now.getDate()).padStart(2, "0");
+  return year + "-" + month + "-" + day;
+}
+
+function toggleMultiselect(e, type) {
+  if (e) e.stopPropagation();
+  var menu = document.getElementById(type + "MultiselectMenu");
+  var trigger = document.getElementById(type + "MultiselectTrigger");
+  if (!menu || !trigger) return;
+
+  var isOpening = menu.style.display === "none";
+  ["key", "model"].forEach(function(t) {
+    var m = document.getElementById(t + "MultiselectMenu");
+    var tr = document.getElementById(t + "MultiselectTrigger");
+    if (m) m.style.display = "none";
+    if (tr) tr.classList.remove("open");
+  });
+
+  if (isOpening) {
+    menu.style.display = "flex";
+    trigger.classList.add("open");
+    var searchInput = document.getElementById(type + "SearchInput");
+    if (searchInput) searchInput.focus();
+  }
+}
+
+document.addEventListener("click", function(e) {
+  var m = document.getElementById("colPickerMenu");
+  if (m && m.style.display !== "none") {
+    var btn = e.target.closest(".col-picker-container");
+    if (!btn) m.style.display = "none";
+  }
+
+  ["key", "model"].forEach(function(type) {
+    var container = document.getElementById(type + "MultiselectContainer");
+    var menu = document.getElementById(type + "MultiselectMenu");
+    var trigger = document.getElementById(type + "MultiselectTrigger");
+    if (menu && menu.style.display !== "none" && container && !container.contains(e.target)) {
+      menu.style.display = "none";
+      if (trigger) trigger.classList.remove("open");
+    }
+  });
+});
+
+function updateMultiselectTriggerLabel(type) {
+  var labelEl = document.getElementById(type + "MultiselectLabel");
+  if (!labelEl) return;
+
+  var selected = type === "key" ? selectedKeyValues : selectedModelValues;
+  var available = type === "key" ? availableKeys : availableModels;
+
+  if (selected.length === 0) {
+    labelEl.textContent = type === "key" ? "All Keys" : "All Models";
+  } else if (selected.length === 1) {
+    var match = available.find(function(o) { return o.value === selected[0]; });
+    labelEl.textContent = match ? match.label : selected[0];
+  } else {
+    labelEl.textContent = selected.length + (type === "key" ? " Keys Selected" : " Models Selected");
+  }
+}
+
+function renderMultiselectOptions(type) {
+  var optionsContainer = document.getElementById(type + "MultiselectOptions");
+  if (!optionsContainer) return;
+
+  var options = type === "key" ? availableKeys : availableModels;
+  var selected = type === "key" ? selectedKeyValues : selectedModelValues;
+  var searchInput = document.getElementById(type + "SearchInput");
+  var query = searchInput ? searchInput.value.toLowerCase().trim() : "";
+
+  var filtered = options.filter(function(o) {
+    if (!query) return true;
+    return o.label.toLowerCase().indexOf(query) !== -1 || o.value.toLowerCase().indexOf(query) !== -1;
+  });
+
+  if (filtered.length === 0) {
+    optionsContainer.innerHTML = '<div style="padding:10px;color:var(--text-dim);font-size:12px;text-align:center">No ' + type + 's match search</div>';
+    return;
+  }
+
+  optionsContainer.innerHTML = filtered.map(function(o) {
+    var isChecked = selected.indexOf(o.value) !== -1;
+    return '<label class="multiselect-option" onclick="event.stopPropagation()">' +
+      '<input type="checkbox" ' + (isChecked ? 'checked' : '') + ' onchange="onMultiselectOptionToggle(\'' + type + '\', \'' + escapeHtml(o.value) + '\')">' +
+      '<span class="multiselect-option-text">' + escapeHtml(o.label) + '</span>' +
+    '</label>';
+  }).join("");
+}
+
+function onMultiselectOptionToggle(type, val) {
+  var selected = type === "key" ? selectedKeyValues : selectedModelValues;
+  var idx = selected.indexOf(val);
+  if (idx !== -1) {
+    selected.splice(idx, 1);
+  } else {
+    selected.push(val);
+  }
+  updateMultiselectTriggerLabel(type);
+  renderMultiselectOptions(type);
+}
+
+function filterMultiselectOptions(type) {
+  renderMultiselectOptions(type);
+}
+
+function selectAllMultiselect(type) {
+  var options = type === "key" ? availableKeys : availableModels;
+  var selected = type === "key" ? selectedKeyValues : selectedModelValues;
+  selected.length = 0;
+  options.forEach(function(o) { selected.push(o.value); });
+  updateMultiselectTriggerLabel(type);
+  renderMultiselectOptions(type);
+}
+
+function clearMultiselect(type) {
+  var selected = type === "key" ? selectedKeyValues : selectedModelValues;
+  selected.length = 0;
+  var searchInput = document.getElementById(type + "SearchInput");
+  if (searchInput) searchInput.value = "";
+  updateMultiselectTriggerLabel(type);
+  renderMultiselectOptions(type);
+}
+
+function fetchFilterOptions() {
+  fetch("/api/keys", { headers: authHeaders() })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var keysList = d.keys || [];
+      var keysMap = {};
+
+      keysMap["unauthenticated"] = { value: "unauthenticated", label: "unauthenticated" };
+
+      keysList.forEach(function(k) {
+        var keyVal = k.keyAlias || k.keyName || k.tokenHash;
+        var displayLabel = maskKeyDisplay(k.keyAlias || k.keyName || (k.tokenHash ? k.tokenHash.slice(0, 10) + "..." : ""));
+        keysMap[keyVal] = { value: keyVal, label: displayLabel };
+      });
+
+      fetch("/api/spend/by-key", { headers: authHeaders() })
+        .then(function(r) { return r.json(); })
+        .then(function(bkData) {
+          (bkData.byKey || []).forEach(function(item) {
+            var val = item.keyAlias || item.keyName || (item.apiKeyHash ? item.apiKeyHash.slice(0, 10) + "..." : "unauthenticated");
+            if (!keysMap[val]) {
+              keysMap[val] = { value: val, label: maskKeyDisplay(val) };
+            }
+          });
+          availableKeys = Object.values(keysMap);
+          renderMultiselectOptions("key");
+        })
+        .catch(function() {
+          availableKeys = Object.values(keysMap);
+          renderMultiselectOptions("key");
+        });
+    })
+    .catch(function() {
+      availableKeys = [{ value: "unauthenticated", label: "unauthenticated" }];
+      renderMultiselectOptions("key");
+    });
+
+  fetch("/api/models", { headers: authHeaders() })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var modelsMap = {};
+      availableModels.forEach(function(m) { modelsMap[m.value] = m; });
+      (d.data || []).forEach(function(m) {
+        if (m.id && !modelsMap[m.id]) {
+          modelsMap[m.id] = { value: m.id, label: m.id };
+        }
+      });
+      availableModels = Object.values(modelsMap);
+      renderMultiselectOptions("model");
+    })
+    .catch(function() {
+      renderMultiselectOptions("model");
+    });
+}
+
 function formatJsonCode(obj) {
   if (obj === undefined || obj === null) return '<span style="color:var(--text-dim)">null</span>';
   try {
@@ -434,8 +628,8 @@ function renderPagination() {
 }
 
 function applyFilters() {
-  currentKeyHash = document.getElementById("filterKeyHash").value.trim();
-  currentModel = document.getElementById("filterModel").value.trim();
+  currentKeyHash = selectedKeyValues.join(",");
+  currentModel = selectedModelValues.join(",");
   currentStatus = document.getElementById("filterStatus").value;
   currentStartDate = document.getElementById("filterStartDate").value;
   currentEndDate = document.getElementById("filterEndDate").value;
@@ -443,16 +637,27 @@ function applyFilters() {
 }
 
 function resetFilters() {
-  document.getElementById("filterKeyHash").value = "";
-  document.getElementById("filterModel").value = "";
+  var todayStr = getTodayDateString();
+  var startEl = document.getElementById("filterStartDate");
+  var endEl = document.getElementById("filterEndDate");
+  if (startEl) startEl.value = todayStr;
+  if (endEl) endEl.value = todayStr;
   document.getElementById("filterStatus").value = "";
-  document.getElementById("filterStartDate").value = "";
-  document.getElementById("filterEndDate").value = "";
+
+  selectedKeyValues = [];
+  selectedModelValues = [];
+  ["key", "model"].forEach(function(t) {
+    var searchInput = document.getElementById(t + "SearchInput");
+    if (searchInput) searchInput.value = "";
+    updateMultiselectTriggerLabel(t);
+    renderMultiselectOptions(t);
+  });
+
   currentKeyHash = "";
   currentModel = "";
   currentStatus = "";
-  currentStartDate = "";
-  currentEndDate = "";
+  currentStartDate = todayStr;
+  currentEndDate = todayStr;
   loadLogs(0);
 }
 
@@ -504,6 +709,16 @@ function renderByKeySummary(byKey) {
 function initLogsPage() {
   updateMaskButton();
   loadColumnState();
+
+  var todayStr = getTodayDateString();
+  var startEl = document.getElementById("filterStartDate");
+  var endEl = document.getElementById("filterEndDate");
+  if (startEl) startEl.value = todayStr;
+  if (endEl) endEl.value = todayStr;
+  currentStartDate = todayStr;
+  currentEndDate = todayStr;
+
+  fetchFilterOptions();
   loadLogs(0);
   refreshHeaderStats();
   setInterval(refreshHeaderStats, 10000);

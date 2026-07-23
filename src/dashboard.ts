@@ -994,14 +994,44 @@ const DASHBOARD_LOGS_HTML = renderAppShell({
 <div id="byKeySummary"></div>
 
 <div class="filter-panel">
-  <div class="filter-input-group" style="width:200px">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-    <input id="filterKeyHash" placeholder="Key hash or alias...">
+  <div class="multiselect-container" id="keyMultiselectContainer">
+    <div class="multiselect-trigger" id="keyMultiselectTrigger" onclick="toggleMultiselect(event, 'key')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <span class="multiselect-label" id="keyMultiselectLabel">All Keys</span>
+      <svg class="multiselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="multiselect-menu" id="keyMultiselectMenu" style="display:none">
+      <div class="multiselect-header">
+        <input type="text" class="multiselect-search" id="keySearchInput" placeholder="Search keys..." onclick="event.stopPropagation()" oninput="filterMultiselectOptions('key')">
+        <div class="multiselect-actions">
+          <button type="button" class="multiselect-action-btn" onclick="selectAllMultiselect('key')">Select All</button>
+          <button type="button" class="multiselect-action-btn" onclick="clearMultiselect('key')">Clear</button>
+        </div>
+      </div>
+      <div class="multiselect-options" id="keyMultiselectOptions">
+        <div style="padding:8px;color:var(--text-dim);font-size:12px;text-align:center">Loading keys...</div>
+      </div>
+    </div>
   </div>
 
-  <div class="filter-input-group" style="width:180px">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-    <input id="filterModel" placeholder="Filter model name...">
+  <div class="multiselect-container" id="modelMultiselectContainer">
+    <div class="multiselect-trigger" id="modelMultiselectTrigger" onclick="toggleMultiselect(event, 'model')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span class="multiselect-label" id="modelMultiselectLabel">All Models</span>
+      <svg class="multiselect-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="multiselect-menu" id="modelMultiselectMenu" style="display:none">
+      <div class="multiselect-header">
+        <input type="text" class="multiselect-search" id="modelSearchInput" placeholder="Search models..." onclick="event.stopPropagation()" oninput="filterMultiselectOptions('model')">
+        <div class="multiselect-actions">
+          <button type="button" class="multiselect-action-btn" onclick="selectAllMultiselect('model')">Select All</button>
+          <button type="button" class="multiselect-action-btn" onclick="clearMultiselect('model')">Clear</button>
+        </div>
+      </div>
+      <div class="multiselect-options" id="modelMultiselectOptions">
+        <div style="padding:8px;color:var(--text-dim);font-size:12px;text-align:center">Loading models...</div>
+      </div>
+    </div>
   </div>
 
   <div class="filter-input-group" style="width:150px">

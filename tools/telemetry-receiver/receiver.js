@@ -1311,6 +1311,7 @@ tr:last-child td{border-bottom:none}
 
 <script>
 
+var _token = '';
 var _notifications = [];
 
 function $(i) { return document.getElementById(i); }
@@ -1493,7 +1494,14 @@ function updatePreview() {
   $('previewMsg').innerHTML = html;
 }
 
-function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function esc(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function jsString(s) {
+  return esc(String(s == null ? '' : s)
+    .replace(/\\\\/g, '\\\\\\\\')
+    .replace(/'/g, "\\\\'")
+    .replace(/\\r/g, '\\\\r')
+    .replace(/\\n/g, '\\\\n'));
+}
 function showErr(m) { $('errMsg').textContent = '\u26a0 ' + m; $('errMsg').style.display = ''; setTimeout(function(){ $('errMsg').style.display='none'; }, 8000); }
 function hideErr() { $('errMsg').style.display = 'none'; }
 function showSuccess(m) { $('successMsg').textContent = '\u2713 ' + m; $('successMsg').style.display = ''; setTimeout(function(){ $('successMsg').style.display='none'; }, 4000); }

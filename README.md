@@ -194,6 +194,9 @@ When configured with PostgreSQL (`PI_ROTATOR_DATABASE_URL`), the rotator acts as
 
 Create and manage Virtual Keys using the Web UI (`/dashboard/keys`) or the CLI:
 
+![Virtual Keys Management](virtual_keys.png)
+![Generate Virtual Key Modal](generate_virtual_key.png)
+
 ```bash
 # List virtual keys
 pi-antigravity-rotator keys list
@@ -218,6 +221,8 @@ Pass your virtual key from any agent (e.g. Cursor, LiteLLM, Hermes, OpenWebUI):
 If no virtual keys exist in the database, the proxy runs in open mode for backward compatibility. Once at least one key is generated, requests to proxy routes require a valid key.
 
 ### 3. Spend Logs & Payload Inspector (`/dashboard/logs`)
+
+![Spend Logs & Inspector](spend_logs.png)
 
 - **Audit Trail:** Captures prompt/completion tokens, total duration, TTFB, requester IP, and account assigned.
 - **Cost Breakdown:** Calculates estimated cost in USD with 6-decimal precision based on market rates.

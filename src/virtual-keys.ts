@@ -1,4 +1,4 @@
-import { createHash, pbkdf2Sync, randomBytes } from "node:crypto";
+import { pbkdf2Sync, randomBytes } from "node:crypto";
 import type { VirtualKey } from "./types.js";
 import { isDbConfigured, queryDb } from "./db-store.js";
 
@@ -25,12 +25,6 @@ export function hashKey(rawKey: string): string {
     32,
     "sha256",
   ).toString("hex");
-}
-
-function oldHashKey(rawKey: string): string {
-  return createHash("sha256")
-    .update(rawKey.trim())
-    .digest("hex");
 }
 
 export function maskKey(rawKey: string): string {
@@ -154,26 +148,10 @@ export async function lookupVirtualKey(
   }
 
   try {
-    let res = await queryDb(
+    const res = await queryDb(
       "SELECT * FROM rotator_virtual_keys WHERE token_hash = $1",
       [tokenHash],
     );
-
-    // Fallback: try old SHA256 hash for keys created before v2.4.0-PBKDF2
-    if (res.rows.length === 0) {
-      const oldHash = oldHashKey(rawKey);
-      res = await queryDb(
-        "SELECT * FROM rotator_virtual_keys WHERE token_hash = $1",
-        [oldHash],
-      );
-      if (res.rows.length > 0) {
-        // Auto-upgrade: rewrite the row with the new PBKDF2 hash
-        await queryDb(
-          "UPDATE rotator_virtual_keys SET token_hash = $1 WHERE token_hash = $2",
-          [tokenHash, oldHash],
-        );
-      }
-    }
 
     if (res.rows.length === 0) {
       keyCache.set(tokenHash, { key: null, fetchedAt: now });

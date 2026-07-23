@@ -460,7 +460,9 @@ Login now fails if Google does not return a project ID. No shared fallback.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/dashboard` | Web dashboard |
+| `GET` | `/dashboard` | Main Web dashboard |
+| `GET` | `/dashboard/keys` | Virtual Keys management UI |
+| `GET` | `/dashboard/logs` | Spend Logs & Usage analytics UI |
 | `GET` | `/login` | Hosted account-link landing page |
 | `GET` | `/api/status` | JSON status: accounts, quotas, model routing, flags |
 | `POST` | `/api/enable/<email>` | Re-enable a disabled account after its underlying issue is fixed |
@@ -468,6 +470,14 @@ Login now fails if Google does not return a project ID. No shared fallback.
 | `POST` | `/api/settings/fresh-window-starts/off` | Block opening new `idle`/fresh windows globally |
 | `POST` | `/api/account-fresh-window-starts/<email>/on` | Allow one account to override the global fresh-window block |
 | `POST` | `/api/account-fresh-window-starts/<email>/off` | Return one account to the global fresh-window policy |
+| `GET` | `/api/keys` | List all virtual keys (admin-only) |
+| `POST` | `/api/keys/generate` | Generate a new virtual key (admin-only) |
+| `GET` | `/api/keys/<hash>` | Retrieve details for a virtual key (admin-only) |
+| `PUT` | `/api/keys/<hash>` | Update alias, models, or blocked state for a virtual key (admin-only) |
+| `DELETE` | `/api/keys/<hash>` | Delete a virtual key (admin-only) |
+| `GET` | `/api/spend/logs` | Query spend logs with filters and pagination (admin-only) |
+| `GET` | `/api/spend/summary` | Get aggregated daily spend summary (admin-only) |
+| `GET` | `/api/spend/by-key` | Get aggregated spend breakdown by virtual key (admin-only) |
 | `POST` | `/api/self-update` | Trigger npm self-update to latest version (admin-only) |
 | `POST` | `/v1internal:streamGenerateContent` | Native Antigravity proxy endpoint (used by pi) |
 | `GET` | `/v1/models` | OpenAI-compatible model list |
@@ -479,7 +489,7 @@ Login now fails if Google does not return a project ID. No shared fallback.
 | `POST` | `/v1/chat/completions` | OpenAI-compatible non-streaming chat adapter |
 | `POST` | `/v1/messages` | Anthropic-compatible non-streaming messages adapter |
 
-Dashboard and internal `/api/*` requests must include either `Authorization: Bearer <token>`, `X-Rotator-Admin-Token: <token>`, or `?token=<token>` for browser dashboard access. The native pi proxy endpoint and compatibility adapters (`/v1/*`) remain unauthenticated by design, so your AI agents and existing clients will keep working without requiring a token. `PI_ROTATOR_ADMIN_TOKEN` does **not** protect those proxy routes. Put this service behind a trusted local boundary, firewall, or reverse proxy if exposing beyond localhost/LAN.
+Dashboard and internal `/api/*` requests must include either `Authorization: Bearer <token>`, `X-Rotator-Admin-Token: <token>`, or `?token=<token>` for browser dashboard access. By default, proxy endpoints (`/v1/*` and `/v1internal:*`) run in unauthenticated open mode. Once at least one Virtual Key is created in PostgreSQL, all proxy endpoints require a valid Virtual Key (`rk-...`). Put this service behind a trusted local boundary, firewall, or reverse proxy if exposing beyond localhost/LAN.
 
 ### Compatibility Adapters
 
@@ -681,7 +691,7 @@ IP addresses are not part of the telemetry JSON payload and are not written to t
 Telemetry posts to:
 
 ```bash
-https://telemetry.tuxevil.com:3800/v1/events
+https://telemetry.tuxevil.com/v1/events
 ```
 
 ### Opt out

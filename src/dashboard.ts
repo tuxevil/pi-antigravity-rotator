@@ -1056,7 +1056,18 @@ const DASHBOARD_LOGS_HTML = renderAppShell({
   <button class="pill-btn" onclick="applyFilters()" style="background:var(--accent);color:#fff;border:none;padding:7px 14px;font-weight:600;cursor:pointer">Apply</button>
   <button class="pill-btn" onclick="resetFilters()" style="padding:7px 12px;cursor:pointer">Reset</button>
 
-  <div class="col-picker-container" style="margin-left:auto;position:relative">
+  <div class="filter-input-group" style="width:160px;margin-left:auto">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;color:var(--text-dim)"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+    <select id="autoRefreshSelect" onchange="changeAutoRefresh(this.value)" title="Auto Refresh">
+      <option value="0">Auto-refresh: Off</option>
+      <option value="5">Auto-refresh: 5s</option>
+      <option value="10">Auto-refresh: 10s</option>
+      <option value="30">Auto-refresh: 30s</option>
+      <option value="60">Auto-refresh: 60s</option>
+    </select>
+  </div>
+
+  <div class="col-picker-container" style="position:relative">
     <button class="pill-btn" onclick="toggleColumnPicker(event)" type="button" style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;cursor:pointer">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
       <span>Columns</span>

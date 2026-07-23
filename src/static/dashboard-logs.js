@@ -128,8 +128,25 @@ var currentModel = "";
 var currentStatus = "";
 var currentStartDate = "";
 var currentEndDate = "";
+var autoRefreshTimer = null;
 
-function loadLogs(page) {
+function changeAutoRefresh(val) {
+  var sec = parseInt(val, 10) || 0;
+  localStorage.setItem("rotatorAutoRefreshSec", String(sec));
+
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+
+  if (sec > 0) {
+    autoRefreshTimer = setInterval(function() {
+      loadLogs(currentPage, true);
+    }, sec * 1000);
+  }
+}
+
+function loadLogs(page, isSilent) {
   if (page === undefined) page = currentPage;
   currentPage = page;
 
@@ -142,19 +159,23 @@ function loadLogs(page) {
   if (currentStartDate) params.set("startDate", currentStartDate);
   if (currentEndDate) params.set("endDate", currentEndDate);
 
-  document.getElementById("logsBody").innerHTML = '<tr><td colspan="100" style="text-align:center;padding:32px;color:var(--text-dim)">Loading spend logs...</td></tr>';
+  if (!isSilent) {
+    document.getElementById("logsBody").innerHTML = '<tr><td colspan="100" style="text-align:center;padding:32px;color:var(--text-dim)">Loading spend logs...</td></tr>';
+  }
 
   fetch("/api/spend/logs?" + params.toString(), { headers: authHeaders() })
     .then(function(r) { return r.json(); })
     .then(function(d) {
       currentTotal = d.total || 0;
-      renderLogs(d.logs || []);
+      renderLogs(d.logs || [], isSilent);
       renderPagination();
       updateSummaryCards(d.summary, currentTotal);
       loadByKeySummary(params);
     })
     .catch(function(e) { 
-      document.getElementById("logsBody").innerHTML = '<tr><td colspan="100" style="text-align:center;color:var(--red);padding:32px">Error loading logs: ' + escapeHtml(e.message) + '</td></tr>'; 
+      if (!isSilent) {
+        document.getElementById("logsBody").innerHTML = '<tr><td colspan="100" style="text-align:center;color:var(--red);padding:32px">Error loading logs: ' + escapeHtml(e.message) + '</td></tr>'; 
+      }
     });
 }
 
@@ -485,11 +506,29 @@ function switchInspectorTab(requestId, tabName) {
   if (targetContent) targetContent.style.display = "block";
 }
 
-function renderLogs(logs) {
+function renderLogs(logs, isSilent) {
   var tbody = document.getElementById("logsBody");
+  if (!tbody) return;
+
   if (logs.length === 0) {
     tbody.innerHTML = '<tr><td colspan="100" style="text-align:center;color:var(--text-dim);padding:32px">No spend logs found matching criteria.</td></tr>';
     return;
+  }
+
+  var openExpandedIds = {};
+  var activeTabs = {};
+  if (isSilent) {
+    var expandedRows = tbody.querySelectorAll('.log-detail');
+    expandedRows.forEach(function(el) {
+      if (el.style.display !== "none") {
+        var reqId = el.id.replace("expand-", "");
+        openExpandedIds[reqId] = true;
+        var activeTabBtn = el.querySelector(".inspector-tab-btn.active");
+        if (activeTabBtn) {
+          activeTabs[reqId] = activeTabBtn.getAttribute("data-tab");
+        }
+      }
+    });
   }
 
   tbody.innerHTML = logs.map(function(l) {
@@ -609,6 +648,18 @@ function renderLogs(logs) {
     '</td></tr>';
   }).join("");
   applyColumnState();
+
+  if (isSilent) {
+    Object.keys(openExpandedIds).forEach(function(reqId) {
+      var el = document.getElementById("expand-" + reqId);
+      if (el) {
+        el.style.display = "";
+        if (activeTabs[reqId]) {
+          switchInspectorTab(reqId, activeTabs[reqId]);
+        }
+      }
+    });
+  }
 }
 
 function toggleExpand(requestId) {
@@ -725,7 +776,16 @@ function initLogsPage() {
   currentEndDate = todayStr;
 
   fetchFilterOptions();
+
+  var savedSec = localStorage.getItem("rotatorAutoRefreshSec");
+  var secVal = savedSec !== null ? savedSec : "10";
+  var refreshSelect = document.getElementById("autoRefreshSelect");
+  if (refreshSelect) {
+    refreshSelect.value = secVal;
+  }
+
   loadLogs(0);
+  changeAutoRefresh(secVal);
   refreshHeaderStats();
   setInterval(refreshHeaderStats, 10000);
 }

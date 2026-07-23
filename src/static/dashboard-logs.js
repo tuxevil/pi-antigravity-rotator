@@ -405,9 +405,10 @@ function fetchFilterOptions() {
         .then(function(r) { return r.json(); })
         .then(function(bkData) {
           (bkData.byKey || []).forEach(function(item) {
-            var val = item.keyAlias || item.keyName || (item.apiKeyHash ? item.apiKeyHash.slice(0, 10) + "..." : "unauthenticated");
+            var val = item.keyAlias || item.keyName || item.apiKeyHash || "unauthenticated";
+            var label = maskKeyDisplay(item.keyAlias || item.keyName || (item.apiKeyHash ? item.apiKeyHash.slice(0, 14) + "..." : "unauthenticated"));
             if (!keysMap[val]) {
-              keysMap[val] = { value: val, label: maskKeyDisplay(val) };
+              keysMap[val] = { value: val, label: label };
             }
           });
           availableKeys = Object.values(keysMap);

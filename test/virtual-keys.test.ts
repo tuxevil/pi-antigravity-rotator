@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   hashKey,
   maskKey,
@@ -8,14 +9,22 @@ import {
   hasAnyVirtualKeys,
 } from "../src/virtual-keys.js";
 
-test("hashKey generates deterministic 64-char hex string", () => {
-  const hash1 = hashKey("rk-testkey123");
-  const hash2 = hashKey("rk-testkey123");
+test("hashKey uses PBKDF2 (64-char hex, deterministic, differs from SHA256)", () => {
+  const input = "rk-testkey123";
+  const hash1 = hashKey(input);
+  const hash2 = hashKey(input);
   const hash3 = hashKey("rk-otherkey456");
 
   assert.equal(hash1, hash2);
   assert.notEqual(hash1, hash3);
   assert.equal(hash1.length, 64);
+
+  const sha256 = createHash("sha256").update(input.trim()).digest("hex");
+  assert.notEqual(
+    hash1,
+    sha256,
+    "PBKDF2 hash must differ from raw SHA256 for migration safety",
+  );
 });
 
 test("maskKey masks raw key showing prefix and suffix", () => {

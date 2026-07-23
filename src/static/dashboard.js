@@ -1730,9 +1730,19 @@ function renderForecastPanel(data) {
   var minutes = tokenUsage.minutes || [];
   var now = Date.now();
   var oneHourAgo = now - 3600000;
+  function parsePeriodUtc(p) {
+    if (!p) return 0;
+    var str = String(p);
+    if (str.length === 16) return new Date(str + ":00Z").getTime();
+    if (str.length === 13) return new Date(str + ":00:00Z").getTime();
+    if (str.length === 10) return new Date(str + "T00:00:00Z").getTime();
+    return new Date(str).getTime();
+  }
+
   var recentMinutes = minutes.filter(function (b) {
     try {
-      return new Date(b.period).getTime() > oneHourAgo;
+      var t = parsePeriodUtc(b.period);
+      return t > 0 && t > oneHourAgo;
     } catch (e) {
       return false;
     }
@@ -1751,20 +1761,18 @@ function renderForecastPanel(data) {
   });
 
   // Collapse display model burn rates into quota pool keys for forecast
-  // e.g. gemini-3.1-pro-low + gemini-3.1-pro-high → gemini-3.1-pro
-  // e.g. claude-sonnet-4-6 + claude-opus-4-6-thinking → claude-opus-4-6-thinking (quota pool)
+  function resolveQuotaPoolKey(displayKey) {
+    var lower = String(displayKey).toLowerCase();
+    if (lower.indexOf("gemini-3.6-flash") !== -1) return "gemini-3.6-flash";
+    if (lower.indexOf("gemini-3.5-flash") !== -1 || lower === "gemini-3-flash") return "gemini-3.5-flash";
+    if (lower.indexOf("gemini-3.1-pro") !== -1 || lower.indexOf("gemini-pro") !== -1) return "gemini-3.1-pro";
+    if (lower.indexOf("claude") !== -1 || lower.indexOf("gpt-oss") !== -1) return "claude-opus-4-6-thinking";
+    return displayKey;
+  }
+
   var burnByPool = {};
   Object.keys(burnByModel).forEach(function (displayKey) {
-    var poolKey = displayKey;
-    if (displayKey.startsWith("gemini-3.1-pro")) poolKey = "gemini-3.1-pro";
-    if (
-      displayKey.startsWith("gemini-3.5-flash") ||
-      displayKey === "gemini-3-flash"
-    )
-      poolKey = "gemini-3.5-flash";
-    if (displayKey.startsWith("gpt-oss")) poolKey = "gpt-oss-120b-medium";
-    if (displayKey === "claude-sonnet-4-6")
-      poolKey = "claude-opus-4-6-thinking";
+    var poolKey = resolveQuotaPoolKey(displayKey);
     if (!burnByPool[poolKey]) burnByPool[poolKey] = 0;
     burnByPool[poolKey] += burnByModel[displayKey];
   });

@@ -49,16 +49,17 @@ To donate a quota-enabled account safely:
 5. **Revoke Access Anytime:** You retain full control over your account. If you wish to stop donating, simply go to your [Google Account Settings](https://myaccount.google.com/) -> **Security** -> **Your connections to third-party apps & services**, find the authorized application (e.g., **Google Cloud SDK**), and click **Remove Access**. The rotator will immediately lose access and disable the account on the next refresh attempt.
 
 
-## v2.0 Highlights
+## v2.4 Highlights
 
-- Full dashboard config editor with import/export.
-- Official Docker and compose deployment.
-- `pi-antigravity-rotator doctor` for config/state validation.
-- Optional account `tier` metadata and runtime `healthScore`.
-- Strong security warnings when admin routes are open without `PI_ROTATOR_ADMIN_TOKEN`.
+- **Virtual Keys & Scoped Access Control**: Generate scoped API keys (`rk-...`) with per-key model authorization rules and user tracking.
+- **Spend Logging & LiteLLM-grade Audit Inspector**: PostgreSQL audit trail of all requests, token metrics, TTFB/Total duration, Base64 media sanitization, 6-decimal USD cost breakdown, and Request/Response payload viewer.
+- **Multi-page Web Dashboard**: Unified header navigation connecting Accounts (`/dashboard`), Virtual Keys (`/dashboard/keys`), and Spend Logs (`/dashboard/logs`), featuring customizable column visibility, search/filtering, and instant PII masking (`?mask=1`).
+- **PostgreSQL Persistence Backend**: Enable `PI_ROTATOR_DATABASE_URL` for high-concurrency key validation, persistent spend logging, and retention policies (`PI_ROTATOR_LOG_RETENTION_DAYS`, default 30 days).
 
 ## Features
 
+- **Virtual Keys & Access Control** -- Issue scoped `rk-...` keys for multi-agent environments with granular model restrictions and per-agent usage tracking.
+- **Spend Logging & Audit Inspector** -- LiteLLM-grade audit trail storing request metadata, full request/response payloads (sanitized for large base64 media), TTFB/total latency, and 6-decimal USD cost estimations.
 - **Compatibility Adapters** -- Includes standard OpenAI-compatible `/v1/chat/completions` and Anthropic-compatible `/v1/messages` APIs. Features comprehensive **OpenAI Responses API compatibility** (`/v1/responses`), enabling seamless integration with advanced agentic systems like Codex.
 - **Per-model routing** -- Each model (Gemini Pro, Flash, Claude) routes to its own active account independently. Multiple agents using different models won't interfere with each other.
 - **Real-time quota monitoring** -- Polls Google's quota API every 5 minutes to track remaining usage per model per account
@@ -184,6 +185,44 @@ The dashboard shows:
 - **Routing Inspector** -- On-demand modal showing the active routing policy, candidate scores, local token bucket state, and rejection reasons per model.
 
 ![Dashboard](dashboard.png)
+
+## Virtual Keys & Spend Logging
+
+When configured with PostgreSQL (`PI_ROTATOR_DATABASE_URL`), the rotator acts as an enterprise-grade gateway capable of managing Virtual Keys and audit logging across multiple agents.
+
+### 1. Managing Virtual Keys
+
+Create and manage Virtual Keys using the Web UI (`/dashboard/keys`) or the CLI:
+
+```bash
+# List virtual keys
+pi-antigravity-rotator keys list
+
+# Generate a virtual key restricted to specific models
+pi-antigravity-rotator keys generate --alias "cursor-agent" --user-id "seba" --models "gemini-3.6-flash-high,claude-sonnet-4-6"
+
+# Delete a key by its token hash
+pi-antigravity-rotator keys delete <hash>
+```
+
+Keys use the format `rk-{random_32_hex_chars}`. Only the SHA-256 hash of the key is stored in the database.
+
+### 2. Authenticating Requests
+
+Pass your virtual key from any agent (e.g. Cursor, LiteLLM, Hermes, OpenWebUI):
+
+- **Bearer Header:** `Authorization: Bearer rk-...`
+- **Custom Headers:** `x-rotator-key: rk-...` or `x-api-key: rk-...`
+- **URL Parameter:** `http://localhost:51200/v1/chat/completions?rotator_key=rk-...`
+
+If no virtual keys exist in the database, the proxy runs in open mode for backward compatibility. Once at least one key is generated, requests to proxy routes require a valid key.
+
+### 3. Spend Logs & Payload Inspector (`/dashboard/logs`)
+
+- **Audit Trail:** Captures prompt/completion tokens, total duration, TTFB, requester IP, and account assigned.
+- **Cost Breakdown:** Calculates estimated cost in USD with 6-decimal precision based on market rates.
+- **Payload Inspector:** Interactive tabbed viewer for request messages, output choices, tool calls, and Gemini thinking blocks. Large Base64 inline media is safely sanitized (`[inline-media: N bytes]`).
+- **Retention Policy:** Automatically cleans up logs older than 30 days (configurable via `PI_ROTATOR_LOG_RETENTION_DAYS`).
 
 ## How It Works
 
@@ -316,6 +355,8 @@ export PI_ROTATOR_BIND_HOST="127.0.0.1"
 export PI_ROTATOR_MAX_BODY_BYTES=26214400
 # Optional: log verbosity. One of debug, info, warn, error, silent. Default: info.
 export PI_ROTATOR_LOG_LEVEL=info
+# Optional: spend log database retention in days (default: 30)
+export PI_ROTATOR_LOG_RETENTION_DAYS=30
 # Optional override for Antigravity UA version used by quota fetches
 export PI_AI_ANTIGRAVITY_VERSION=1.107.0
 

@@ -568,13 +568,18 @@ function renderAppShell(opts: {
 
 <script>
 (function(){
-  var t = new URLSearchParams(window.location.search).get("token") || localStorage.getItem("rotatorAdminToken");
-  if (t) {
+  var urlParams = new URLSearchParams(window.location.search);
+  var t = urlParams.get("token") || localStorage.getItem("rotatorAdminToken");
+  var mask = urlParams.has("mask");
+  if (t || mask) {
     ["navAccounts", "navKeys", "navLogs"].forEach(function(id) {
       var el = document.getElementById(id);
       if (el && el.getAttribute("href")) {
         var base = el.getAttribute("href").split("?")[0];
-        el.href = base + "?token=" + encodeURIComponent(t);
+        var params = new URLSearchParams();
+        if (t) params.set("token", t);
+        if (mask) params.set("mask", "1");
+        el.href = base + "?" + params.toString();
       }
     });
   }

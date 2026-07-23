@@ -21,11 +21,50 @@ function hideDonationModalPermanently() {
   localStorage.setItem("hideDonationModal", "true");
   closeModal(null, "donationModal");
 }
+var MASK_MODE = new URLSearchParams(window.location.search).has("mask");
+var maskCounter = 0;
+var maskMap = {};
+
+function maskText(text) {
+  if (!text) return "";
+  if (!MASK_MODE) return text;
+  if (!maskMap[text]) {
+    maskCounter++;
+    maskMap[text] = "User " + maskCounter;
+  }
+  return maskMap[text];
+}
+
+function maskKeyAlias(alias) {
+  if (!alias) return "";
+  if (!MASK_MODE) return alias;
+  if (!maskMap["alias_" + alias]) {
+    maskCounter++;
+    maskMap["alias_" + alias] = "Agent " + maskCounter;
+  }
+  return maskMap["alias_" + alias];
+}
+
+function maskKeyName(keyName) {
+  if (!keyName) return "";
+  if (!MASK_MODE) return keyName;
+  return "rk-***...***";
+}
+
 function toggleMask() {
+  var url = new URL(window.location);
+  if (MASK_MODE) {
+    url.searchParams.delete("mask");
+  } else {
+    url.searchParams.set("mask", "1");
+  }
+  window.location.href = url.toString();
+}
+
+function updateMaskButton() {
   var b = document.getElementById("maskBtn");
   if (b) {
-    var v = b.textContent.includes("Visible");
-    b.textContent = v ? "PII: Masked" : "PII: Visible";
+    b.textContent = MASK_MODE ? "PII: Hidden" : "PII: Visible";
   }
 }
 function formatDuration(ms) {
@@ -46,7 +85,7 @@ function refreshHeaderStats() {
       if (document.getElementById("uptime")) document.getElementById("uptime").textContent = formatDuration(data.uptime || 0);
       if (document.getElementById("port")) document.getElementById("port").textContent = data.proxyPort || "51200";
       if (document.getElementById("rotation")) document.getElementById("rotation").textContent = data.requestsPerRotation || "--";
-      if (document.getElementById("headerVersion")) document.getElementById("headerVersion").textContent = "v" + (data.version || "2.3.6");
+      if (document.getElementById("headerVersion")) document.getElementById("headerVersion").textContent = "v" + (data.version || "2.4.0");
       if (document.getElementById("lastRefresh")) document.getElementById("lastRefresh").textContent = new Date().toLocaleTimeString();
       if (document.getElementById("totalRequests")) document.getElementById("totalRequests").textContent = data.totalRequestsAllAccounts || 0;
     })
@@ -175,14 +214,18 @@ function renderKeys() {
       }).join("");
     }
 
-    var userHtml = k.userId 
-      ? '<span style="font-weight:500">' + escapeHtml(k.userId) + '</span>' 
+    var displayAlias = maskKeyAlias(k.keyAlias);
+    var displayName = maskKeyName(k.keyName);
+    var displayUser = k.userId ? maskText(k.userId) : null;
+
+    var userHtml = displayUser 
+      ? '<span style="font-weight:500">' + escapeHtml(displayUser) + '</span>' 
       : '<span style="color:var(--text-dim)">-</span>';
 
     return '<tr>' +
       '<td>' +
-        '<div style="font-weight:600;color:var(--text);font-size:0.92rem">' + escapeHtml(k.keyAlias) + '</div>' +
-        '<div class="mono" style="color:var(--text-dim);font-size:0.75rem;margin-top:2px">' + escapeHtml(k.keyName) + '</div>' +
+        '<div style="font-weight:600;color:var(--text);font-size:0.92rem">' + escapeHtml(displayAlias) + '</div>' +
+        '<div class="mono" style="color:var(--text-dim);font-size:0.75rem;margin-top:2px">' + escapeHtml(displayName) + '</div>' +
       '</td>' +
       '<td>' + userHtml + '</td>' +
       '<td><div style="display:flex;flex-wrap:wrap;gap:2px;max-width:280px">' + modelsHtml + '</div></td>' +
@@ -321,6 +364,7 @@ function deleteKey(hash) {
 }
 
 function initKeysPage() {
+  updateMaskButton();
   loadKeys();
   refreshHeaderStats();
   setInterval(refreshHeaderStats, 10000);

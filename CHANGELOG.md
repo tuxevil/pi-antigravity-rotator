@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-07-22
+
+### Added
+- **Virtual Keys**: Issued scoped `rk-...` API keys with per-key model authorization rules and user tracking. Supports CLI management (`pi-antigravity-rotator keys list/generate/delete`) and Web UI (`/dashboard/keys`).
+- **Spend Logs & LiteLLM-grade Inspector**: Persistent audit trail for requests, token metrics, latency (TTFB & total), USD cost estimation (6 decimals), Base64 media sanitization (1 MB cap), and multi-tab Request/Response/Metadata inspector.
+- **Multi-page Dashboard UI**: Redesigned header with integrated navigation tabs connecting Accounts (`/dashboard`), Virtual Keys (`/dashboard/keys`), and Spend Logs (`/dashboard/logs`). Includes customizable column visibility, full search/filtering, global DB-aggregated summary metrics, and robust PII masking (`?mask=1`).
+- **PostgreSQL Persistence & Retention**: Added PostgreSQL storage backend for high-concurrency key validation and spend audit logging, with automatic background retention policies (`PI_ROTATOR_LOG_RETENTION_DAYS`, default 30 days).
+
 ## [2.3.6] - 2026-07-21
 
 ### Fixed

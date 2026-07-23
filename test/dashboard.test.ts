@@ -186,4 +186,15 @@ describe("dashboard", () => {
     assert.doesNotMatch(html, /refreshToken\s*[:=]\s*["']1\/\//);
     assert.doesNotMatch(html, /accessToken\s*[:=]\s*["']ya29\./);
   });
+
+  it("contains syntactically valid dashboard-keys.js and dashboard-logs.js with mask support", () => {
+    const keysJs = readFileSync(join(__dirname, "..", "src", "static", "dashboard-keys.js"), "utf-8");
+    const logsJs = readFileSync(join(__dirname, "..", "src", "static", "dashboard-logs.js"), "utf-8");
+    assert.doesNotThrow(() => new Script(keysJs));
+    assert.doesNotThrow(() => new Script(logsJs));
+    assert.match(keysJs, /function toggleMask\(\)/);
+    assert.match(logsJs, /function toggleMask\(\)/);
+    assert.match(keysJs, /MASK_MODE/);
+    assert.match(logsJs, /MASK_MODE/);
+  });
 });

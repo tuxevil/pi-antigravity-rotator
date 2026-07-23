@@ -21,11 +21,69 @@ function hideDonationModalPermanently() {
   localStorage.setItem("hideDonationModal", "true");
   closeModal(null, "donationModal");
 }
+var MASK_MODE = new URLSearchParams(window.location.search).has("mask");
+var maskCounter = 0;
+var maskMap = {};
+
+function maskText(text) {
+  if (!text) return "";
+  if (!MASK_MODE) return text;
+  if (!maskMap[text]) {
+    maskCounter++;
+    maskMap[text] = "User " + maskCounter;
+  }
+  return maskMap[text];
+}
+
+function maskKeyDisplay(keyDisplay) {
+  if (!keyDisplay || keyDisplay === "unauthenticated") return keyDisplay;
+  if (!MASK_MODE) return keyDisplay;
+  if (keyDisplay.startsWith("rk-")) {
+    return "rk-***...***";
+  }
+  if (!maskMap["key_" + keyDisplay]) {
+    maskCounter++;
+    maskMap["key_" + keyDisplay] = "Agent " + maskCounter;
+  }
+  return maskMap["key_" + keyDisplay];
+}
+
+function maskEmail(email) {
+  if (!email || email === "unknown") return email;
+  if (!MASK_MODE) return email;
+  var parts = email.split("@");
+  if (parts.length < 2) return "***";
+  if (!maskMap["email_" + email]) {
+    maskCounter++;
+    maskMap["email_" + email] = "account-" + maskCounter + "@***.com";
+  }
+  return maskMap["email_" + email];
+}
+
+function maskIp(ip) {
+  if (!ip || ip === "-") return ip;
+  if (!MASK_MODE) return ip;
+  var parts = ip.split(".");
+  if (parts.length === 4) {
+    return parts[0] + "." + parts[1] + ".x.x";
+  }
+  return "xxx.xxx.xxx.xxx";
+}
+
 function toggleMask() {
+  var url = new URL(window.location);
+  if (MASK_MODE) {
+    url.searchParams.delete("mask");
+  } else {
+    url.searchParams.set("mask", "1");
+  }
+  window.location.href = url.toString();
+}
+
+function updateMaskButton() {
   var b = document.getElementById("maskBtn");
   if (b) {
-    var v = b.textContent.includes("Visible");
-    b.textContent = v ? "PII: Masked" : "PII: Visible";
+    b.textContent = MASK_MODE ? "PII: Hidden" : "PII: Visible";
   }
 }
 function formatDuration(ms) {
@@ -51,7 +109,7 @@ function refreshHeaderStats() {
       if (document.getElementById("uptime")) document.getElementById("uptime").textContent = formatDuration(data.uptime || 0);
       if (document.getElementById("port")) document.getElementById("port").textContent = data.proxyPort || "51200";
       if (document.getElementById("rotation")) document.getElementById("rotation").textContent = data.requestsPerRotation || "--";
-      if (document.getElementById("headerVersion")) document.getElementById("headerVersion").textContent = "v" + (data.version || "2.3.6");
+      if (document.getElementById("headerVersion")) document.getElementById("headerVersion").textContent = "v" + (data.version || "2.4.0");
       if (document.getElementById("lastRefresh")) document.getElementById("lastRefresh").textContent = new Date().toLocaleTimeString();
       if (document.getElementById("totalRequests")) document.getElementById("totalRequests").textContent = data.totalRequestsAllAccounts || 0;
     })
@@ -256,6 +314,10 @@ function renderLogs(logs) {
     } else if (l.apiKeyHash) {
       keyDisplay = l.apiKeyHash.slice(0, 10) + "...";
     }
+    keyDisplay = maskKeyDisplay(keyDisplay);
+
+    var displayAccount = maskEmail(l.accountEmail);
+    var displayIp = maskIp(l.requesterIp);
 
     var costDisplay = formatCost(l.cost);
 
@@ -268,7 +330,7 @@ function renderLogs(logs) {
 
     return '<tr class="log-row" onclick="toggleExpand(\'' + l.requestId + '\')">' +
       '<td class="col-time" style="font-size:0.8rem;color:var(--text-dim)">' + ts + '</td>' +
-      '<td class="col-key"><span class="mono" style="font-size:0.78rem;font-weight:600;color:var(--accent)" title="' + escapeHtml(l.apiKeyHash || "") + '">' + escapeHtml(keyDisplay) + '</span></td>' +
+      '<td class="col-key"><span class="mono" style="font-size:0.78rem;font-weight:600;color:var(--accent)" title="' + escapeHtml(MASK_MODE ? "***" : (l.apiKeyHash || "")) + '">' + escapeHtml(keyDisplay) + '</span></td>' +
       '<td class="col-model"><span class="model-chip">' + escapeHtml(l.model) + '</span></td>' +
       '<td class="col-type"><span class="badge ' + typeBadgeClass + '" style="font-size:9px">' + escapeHtml(l.callType || "native") + '</span></td>' +
       '<td class="col-status">' + statusBadge + '</td>' +
@@ -276,7 +338,7 @@ function renderLogs(logs) {
       '<td class="col-cost mono" style="font-size:0.82rem;color:#3b82f6">' + costDisplay + '</td>' +
       '<td class="col-duration mono" style="font-size:0.82rem">' + duration + '</td>' +
       '<td class="col-ttfb mono" style="font-size:0.82rem;color:var(--text-dim)">' + ttfb + '</td>' +
-      '<td class="col-ip" style="font-size:0.78rem;color:var(--text-dim)">' + (l.requesterIp || "-") + '</td>' +
+      '<td class="col-ip" style="font-size:0.78rem;color:var(--text-dim)">' + escapeHtml(displayIp || "-") + '</td>' +
     '</tr>' +
     '<tr id="expand-' + l.requestId + '" class="log-detail" style="display:none"><td colspan="100" style="padding:10px 14px;background:var(--bg)">' +
       '<div class="inspector-card">' +
@@ -286,8 +348,8 @@ function renderLogs(logs) {
             '<span class="badge ' + typeBadgeClass + '">' + escapeHtml(l.callType || "native") + '</span>' +
             '<span class="model-chip">' + escapeHtml(l.model) + '</span>' +
             '<span class="mono-tag">Key: <strong>' + escapeHtml(keyDisplay) + '</strong></span>' +
-            '<span class="mono-tag">Account: <strong>' + escapeHtml(l.accountEmail || "unknown") + '</strong></span>' +
-            '<span class="mono-tag">IP: <strong>' + escapeHtml(l.requesterIp || "-") + '</strong></span>' +
+            '<span class="mono-tag">Account: <strong>' + escapeHtml(displayAccount || "unknown") + '</strong></span>' +
+            '<span class="mono-tag">IP: <strong>' + escapeHtml(displayIp || "-") + '</strong></span>' +
           '</div>' +
           '<div class="inspector-req-id">' +
             '<span>ID: <code class="mono" style="color:var(--accent)">' + escapeHtml(l.requestId) + '</code></span>' +
@@ -422,10 +484,11 @@ function renderByKeySummary(byKey) {
     var avgDur = k.avgDurationMs ? Math.round(k.avgDurationMs) + "ms" : "-";
     var lastSeen = k.lastSeen ? new Date(k.lastSeen).toLocaleString() : "-";
     var keyName = k.keyAlias || k.keyName || (k.apiKeyHash ? k.apiKeyHash.slice(0, 14) + "..." : "unauthenticated");
+    keyName = maskKeyDisplay(keyName);
     var costStr = formatCost(k.totalCost);
 
     return '<tr>' +
-      '<td><strong style="color:var(--accent)" title="' + escapeHtml(k.apiKeyHash) + '">' + escapeHtml(keyName) + '</strong></td>' +
+      '<td><strong style="color:var(--accent)" title="' + escapeHtml(MASK_MODE ? "***" : (k.apiKeyHash || "")) + '">' + escapeHtml(keyName) + '</strong></td>' +
       '<td><strong>' + k.totalRequests.toLocaleString() + '</strong></td>' +
       '<td class="mono">' + k.totalPromptTokens.toLocaleString() + '</td>' +
       '<td class="mono" style="color:var(--green)">' + k.totalCompletionTokens.toLocaleString() + '</td>' +
@@ -439,6 +502,7 @@ function renderByKeySummary(byKey) {
 }
 
 function initLogsPage() {
+  updateMaskButton();
   loadColumnState();
   loadLogs(0);
   refreshHeaderStats();

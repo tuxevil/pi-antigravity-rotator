@@ -1,5 +1,4 @@
-import createHash from "node:crypto";
-import randomBytes from "node:crypto";
+import { pbkdf2Sync, randomBytes } from "node:crypto";
 import type { VirtualKey } from "./types.js";
 import { isDbConfigured, queryDb } from "./db-store.js";
 
@@ -19,8 +18,14 @@ const pendingLastActive = new Set<string>();
 let lastActiveFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function hashKey(rawKey: string): string {
-  // codeql [js/insufficient-password-hash] - High-entropy 256-bit API token hash (not user password)
-  return createHash.createHash("sha256").update(rawKey.trim()).digest("hex");
+  // Uses PBKDF2 with 10,000 iterations to derive a secure token hash
+  return pbkdf2Sync(
+    rawKey.trim(),
+    "pi-antigravity-rotator-vk-salt",
+    10_000,
+    32,
+    "sha256",
+  ).toString("hex");
 }
 
 export function maskKey(rawKey: string): string {
@@ -97,7 +102,7 @@ export async function generateVirtualKey(params: {
     );
   }
 
-  const randomHex = randomBytes.randomBytes(16).toString("hex");
+  const randomHex = randomBytes(16).toString("hex");
   const rawKey = `${KEY_PREFIX}${randomHex}`;
   const tokenHash = hashKey(rawKey);
   const keyName = maskKey(rawKey);

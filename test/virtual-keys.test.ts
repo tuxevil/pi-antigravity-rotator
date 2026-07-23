@@ -8,7 +8,7 @@ import {
   hasAnyVirtualKeys,
 } from "../src/virtual-keys.js";
 
-test("hashKey generates SHA-256 hex string", () => {
+test("hashKey generates deterministic 64-char hex string", () => {
   const hash1 = hashKey("rk-testkey123");
   const hash2 = hashKey("rk-testkey123");
   const hash3 = hashKey("rk-otherkey456");

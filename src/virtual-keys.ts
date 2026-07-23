@@ -19,6 +19,7 @@ const pendingLastActive = new Set<string>();
 let lastActiveFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function hashKey(rawKey: string): string {
+  // codeql [js/insufficient-password-hash] - High-entropy 256-bit API token hash (not user password)
   return createHash.createHash("sha256").update(rawKey.trim()).digest("hex");
 }
 

@@ -15,6 +15,9 @@ import {
   deleteVirtualKey,
 } from "./virtual-keys.js";
 import { getSpendLogs, getDailySpendSummary, getSpendByKey } from "./spend-logger.js";
+import { logger } from "./logger.js";
+
+const dashboardLogger = logger.child("dashboard");
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -299,13 +302,9 @@ export async function serveGenerateVirtualKeyApi(
     res.writeHead(201, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, ...created }));
   } catch (err) {
+    dashboardLogger.error(`Failed to generate virtual key: ${err}`);
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
+    res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
   }
 }
 
@@ -317,13 +316,9 @@ export async function serveListVirtualKeysApi(
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, keys }));
   } catch (err) {
+    dashboardLogger.error(`Failed to list virtual keys: ${err}`);
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
+    res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
   }
 }
 
@@ -341,13 +336,9 @@ export async function serveGetVirtualKeyApi(
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, key }));
   } catch (err) {
+    dashboardLogger.error(`Failed to get virtual key: ${err}`);
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
+    res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
   }
 }
 
@@ -368,13 +359,9 @@ export async function serveUpdateVirtualKeyApi(
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, key: updated }));
   } catch (err) {
+    dashboardLogger.error(`Failed to update virtual key: ${err}`);
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
+    res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
   }
 }
 
@@ -392,13 +379,9 @@ export async function serveDeleteVirtualKeyApi(
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, message: "Virtual key deleted" }));
   } catch (err) {
+    dashboardLogger.error(`Failed to delete virtual key: ${err}`);
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
+    res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
   }
 }
 
@@ -432,13 +415,9 @@ export async function serveGetSpendLogsApi(
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, ...result }));
   } catch (err) {
+    dashboardLogger.error(`Failed to get spend logs: ${err}`);
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
+    res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
   }
 }
 
@@ -460,13 +439,9 @@ export async function serveGetSpendSummaryApi(
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, summary }));
   } catch (err) {
+    dashboardLogger.error(`Failed to get spend summary: ${err}`);
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
+    res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
   }
 }
 
@@ -483,13 +458,9 @@ export async function serveGetSpendByKeyApi(
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, byKey }));
   } catch (err) {
+    dashboardLogger.error(`Failed to get spend by key: ${err}`);
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
+    res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
   }
 }
 

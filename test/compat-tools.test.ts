@@ -1,7 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { openAIToAntigravityBody, parseAntigravitySse, type OpenAIChatCompletionRequest } from "../src/compat.js";
-import { sanitizeClaudeViaGeminiSchema, sanitizeGeminiSchema } from "../src/compat/schema-sanitizer.js";
+import {
+	anthropicToAntigravityBody,
+	openAIToAntigravityBody,
+	parseAntigravitySse,
+	type OpenAIChatCompletionRequest,
+} from "../src/compat.js";
 
 describe("OpenAI Compat Tool Calling", () => {
 	it("converts basic messages without tools to multi-turn format", () => {
@@ -86,7 +90,7 @@ describe("OpenAI Compat Tool Calling", () => {
 		assert.ok(request.tools[0].functionDeclarations[0].parameters);
 	});
 
-	it("strips propertyNames from tool parameters for Gemini and Claude via Gemini", () => {
+	it("strips propertyNames from OpenAI tool parameters for Gemini", () => {
 		const schemaWithPropertyNames = {
 			type: "object",
 			properties: {
@@ -100,13 +104,52 @@ describe("OpenAI Compat Tool Calling", () => {
 			}
 		};
 
-		const geminiSanitized = sanitizeGeminiSchema(schemaWithPropertyNames) as any;
-		assert.strictEqual(geminiSanitized.properties.config.propertyNames, undefined);
-		assert.strictEqual(geminiSanitized.properties.config.properties.key.type, "string");
+		const result = openAIToAntigravityBody({
+			model: "gemini-3-flash",
+			messages: [{ role: "user", content: "Validate this config" }],
+			tools: [
+				{
+					type: "function",
+					function: {
+						name: "validate_config",
+						parameters: schemaWithPropertyNames,
+					},
+				},
+			],
+		});
+		const request = result.request as any;
+		const parameters = request.tools[0].functionDeclarations[0].parameters;
+		assert.strictEqual(parameters.properties.config.propertyNames, undefined);
+		assert.strictEqual(parameters.properties.config.properties.key.type, "string");
+	});
 
-		const claudeSanitized = sanitizeClaudeViaGeminiSchema(schemaWithPropertyNames) as any;
-		assert.strictEqual(claudeSanitized.properties.config.propertyNames, undefined);
-		assert.strictEqual(claudeSanitized.properties.config.properties.key.type, "string");
+	it("strips propertyNames from Anthropic tool input schemas for Claude via Gemini", () => {
+		const result = anthropicToAntigravityBody({
+			model: "claude-sonnet-4-6",
+			messages: [{ role: "user", content: "Validate this config" }],
+			tools: [
+				{
+					name: "validate_config",
+					input_schema: {
+						type: "object",
+						properties: {
+							config: {
+								type: "object",
+								propertyNames: { pattern: "^[a-zA-Z0-9_]+$" },
+								properties: {
+									key: { type: "string" },
+								},
+							},
+						},
+					},
+				},
+			],
+		});
+		const request = result.request as any;
+		const parameters = request.tools[0].functionDeclarations[0].parameters;
+
+		assert.strictEqual(parameters.properties.config.propertyNames, undefined);
+		assert.strictEqual(parameters.properties.config.properties.key.type, "string");
 	});
 
 	it("converts multi-turn conversation with tool calls and tool responses", () => {
@@ -387,4 +430,3 @@ data: [DONE]
 		assert.strictEqual(nameParam.nullable, undefined);
 	});
 });
-

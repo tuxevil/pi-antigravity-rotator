@@ -20,7 +20,7 @@ export function sanitizeGeminiSchema(schema: unknown): unknown {
 		"exclusiveMinimum", "exclusiveMaximum", "minimum", "maximum",
 		"multipleOf", "minLength", "maxLength", "pattern",
 		"minItems", "maxItems", "uniqueItems",
-		"minProperties", "maxProperties", "title", "default",
+		"minProperties", "maxProperties", "propertyNames", "title", "default",
 	]);
 
 	const out: Record<string, unknown> = {};
@@ -104,7 +104,7 @@ export function sanitizeClaudeViaGeminiSchema(schema: unknown): unknown {
 		"patternProperties", "unevaluatedProperties", "unevaluatedItems",
 		"contentEncoding", "contentMediaType",
 		// Gemini's protobuf layer rejects these regardless of target model
-		"exclusiveMinimum", "exclusiveMaximum",
+		"exclusiveMinimum", "exclusiveMaximum", "propertyNames",
 	]);
 
 	const out: Record<string, unknown> = {};

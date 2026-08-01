@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { openAIToAntigravityBody, parseAntigravitySse, type OpenAIChatCompletionRequest } from "../src/compat.js";
+import { sanitizeClaudeViaGeminiSchema, sanitizeGeminiSchema } from "../src/compat/schema-sanitizer.js";
 
 describe("OpenAI Compat Tool Calling", () => {
 	it("converts basic messages without tools to multi-turn format", () => {
@@ -83,6 +84,29 @@ describe("OpenAI Compat Tool Calling", () => {
 		const request = result.request as any;
 		assert.equal(request.tools[0].functionDeclarations[0].name, "complex_schema");
 		assert.ok(request.tools[0].functionDeclarations[0].parameters);
+	});
+
+	it("strips propertyNames from tool parameters for Gemini and Claude via Gemini", () => {
+		const schemaWithPropertyNames = {
+			type: "object",
+			properties: {
+				config: {
+					type: "object",
+					propertyNames: { pattern: "^[a-zA-Z0-9_]+$" },
+					properties: {
+						key: { type: "string" }
+					}
+				}
+			}
+		};
+
+		const geminiSanitized = sanitizeGeminiSchema(schemaWithPropertyNames) as any;
+		assert.strictEqual(geminiSanitized.properties.config.propertyNames, undefined);
+		assert.strictEqual(geminiSanitized.properties.config.properties.key.type, "string");
+
+		const claudeSanitized = sanitizeClaudeViaGeminiSchema(schemaWithPropertyNames) as any;
+		assert.strictEqual(claudeSanitized.properties.config.propertyNames, undefined);
+		assert.strictEqual(claudeSanitized.properties.config.properties.key.type, "string");
 	});
 
 	it("converts multi-turn conversation with tool calls and tool responses", () => {

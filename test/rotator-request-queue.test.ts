@@ -658,6 +658,40 @@ describe("Antigravity request queue", () => {
     assert.equal(admitted, cooling);
   });
 
+  it("rechecks a cooldown waiter when its wake timer fires before the deadline", async (t) => {
+    let nowMs = 1_000_000;
+    t.mock.method(Date, "now", () => nowMs);
+    t.mock.timers.enable({ apis: ["setTimeout"], now: nowMs });
+
+    try {
+      const { rotator, accounts } = makeRotator(
+        ["project-a", "project-b"],
+        { maxConcurrentRequestsPerAccount: 1 },
+      );
+      const active = await rotator.getActiveAccount(GEMINI_MODEL);
+      assert.ok(active);
+      const cooling = accounts.find((account) => account !== active)!;
+      cooling.cooldownsByModel.gemini = nowMs + 150;
+
+      const queued = rotator.getActiveAccount(GEMINI_MODEL);
+      await nextTurn();
+
+      // Simulate a platform timer callback that runs 1ms before its deadline.
+      nowMs += 149;
+      t.mock.timers.tick(150);
+      nowMs += 1;
+      await nextTurn();
+      t.mock.timers.tick(1);
+
+      const admitted = await queued;
+      rotator.finishRequest(active, "gemini");
+      if (admitted) rotator.finishRequest(admitted, "gemini");
+      assert.equal(admitted, cooling);
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
   it("wakes a waiter when replaceConfig raises the account capacity", async () => {
     const { rotator } = makeRotator(
       ["project-a"],

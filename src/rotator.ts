@@ -1937,6 +1937,14 @@ export class AccountRotator {
     this.requestWaiterWakeAt = wakeAt;
     this.requestWaiterWakeTimer = setTimeout(() => {
       this.requestWaiterWakeTimer = null;
+      if (this.requestWaiters.length === 0) {
+        this.requestWaiterWakeAt = 0;
+        return;
+      }
+      if (Date.now() < wakeAt) {
+        this.scheduleRequestWaiterWake(wakeAt);
+        return;
+      }
       this.requestWaiterWakeAt = 0;
       this.requestWaiterDrain();
     }, Math.max(1, wakeAt - Date.now()));

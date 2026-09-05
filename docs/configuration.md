@@ -295,6 +295,8 @@ Route a client-facing alias model (such as `gemini-3.8-flash`) to concrete Antig
 
 The rotator provides OpenAI-compatible audio transcription and bidirectional live streaming powered by the local Antigravity Language Server observer model (`models/proactive-observer-v10`).
 
+The Language Server uses a self-signed certificate on its loopback listener. The rotator keeps this TLS exception scoped to `127.0.0.1` and sends the detected process CSRF token on every request. Do not expose the Language Server port outside the local host.
+
 ### Endpoints
 
 - `POST /v1/audio/transcriptions`: OpenAI-compatible multipart audio transcription.
@@ -310,4 +312,3 @@ For real-time voice and streaming applications, client requests can bypass artif
 
 - `X-Skip-Safety-Jitter: true`
 - `X-Live-Request: true`
-

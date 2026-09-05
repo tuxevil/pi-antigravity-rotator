@@ -20,6 +20,13 @@ export const MAX_QUEUED_AUDIO_BYTES = 1024 * 1024;
 const MAX_QUEUED_AUDIO_CHUNKS = 1024;
 const MAX_WS_INCOMING_BUFFER_BYTES = 2 * MAX_QUEUED_AUDIO_BYTES;
 
+// Antigravity's local Language Server presents a self-signed certificate. Keep
+// the exception narrowly scoped to the loopback service and require its CSRF
+// token at the application layer instead of changing Node's global TLS policy.
+const LOCAL_LANGUAGE_SERVER_TLS_OPTIONS = Object.freeze({
+  rejectUnauthorized: false, // codeql[js/disabling-certificate-validation]
+});
+
 export interface AntigravityCredentials {
   port: number;
   csrf: string;
@@ -146,7 +153,7 @@ export async function transcribeAudioWithAntigravity(
         port: creds.port,
         path: "/exa.language_server_pb.LanguageServerService/StreamAudioTranscription",
         method: "POST",
-        rejectUnauthorized: false,
+        ...LOCAL_LANGUAGE_SERVER_TLS_OPTIONS,
         headers: {
           "Content-Type": "application/connect+json",
           "Connect-Protocol-Version": "1",
@@ -309,7 +316,7 @@ export async function transcribeAudioWithAntigravity(
               port: creds.port,
               path: "/exa.language_server_pb.LanguageServerService/SendAudioChunk",
               method: "POST",
-              rejectUnauthorized: false,
+              ...LOCAL_LANGUAGE_SERVER_TLS_OPTIONS,
               headers: {
                 "Content-Type": "application/json",
                 "X-Codeium-Csrf-Token": creds.csrf,
@@ -358,7 +365,7 @@ export async function transcribeAudioWithAntigravity(
             port: creds.port,
             path: "/exa.language_server_pb.LanguageServerService/EndAudioSession",
             method: "POST",
-            rejectUnauthorized: false,
+            ...LOCAL_LANGUAGE_SERVER_TLS_OPTIONS,
             headers: {
               "Content-Type": "application/json",
               "X-Codeium-Csrf-Token": creds.csrf,
@@ -685,7 +692,7 @@ export class AntigravityAudioSession {
           port: this.port,
           path: "/exa.language_server_pb.LanguageServerService/StreamAudioTranscription",
           method: "POST",
-          rejectUnauthorized: false,
+          ...LOCAL_LANGUAGE_SERVER_TLS_OPTIONS,
           headers: {
             "Content-Type": "application/connect+json",
             "Connect-Protocol-Version": "1",
@@ -835,7 +842,7 @@ export class AntigravityAudioSession {
           port: this.port,
           path: "/exa.language_server_pb.LanguageServerService/SendAudioChunk",
           method: "POST",
-          rejectUnauthorized: false,
+          ...LOCAL_LANGUAGE_SERVER_TLS_OPTIONS,
           headers: {
             "Content-Type": "application/json",
             "X-Codeium-Csrf-Token": this.csrf,
@@ -906,7 +913,7 @@ export class AntigravityAudioSession {
           port: this.port,
           path: "/exa.language_server_pb.LanguageServerService/EndAudioSession",
           method: "POST",
-          rejectUnauthorized: false,
+          ...LOCAL_LANGUAGE_SERVER_TLS_OPTIONS,
           headers: {
             "Content-Type": "application/json",
             "X-Codeium-Csrf-Token": this.csrf,

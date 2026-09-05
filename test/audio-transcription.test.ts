@@ -225,9 +225,9 @@ describe("models/proactive-observer-v10 audio transcription support", () => {
 
   it("rejects non-multipart requests with 400 Bad Request", async () => {
     const { server, url } = await listenServer((req, res) => {
-      handleOpenAIAudioTranscriptions(req, res).catch((err) => {
-        res.writeHead(500);
-        res.end(err.message);
+      handleOpenAIAudioTranscriptions(req, res).catch(() => {
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("internal error");
       });
     });
 
@@ -248,9 +248,9 @@ describe("models/proactive-observer-v10 audio transcription support", () => {
 
   it("rejects multipart requests missing the file field with 400 Bad Request", async () => {
     const { server, url } = await listenServer((req, res) => {
-      handleOpenAIAudioTranscriptions(req, res).catch((err) => {
-        res.writeHead(500);
-        res.end(err.message);
+      handleOpenAIAudioTranscriptions(req, res).catch(() => {
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("internal error");
       });
     });
 
@@ -276,9 +276,9 @@ describe("models/proactive-observer-v10 audio transcription support", () => {
     skip: !fs.existsSync("/tmp/test_hello.wav"),
   }, async () => {
     const { server, url } = await listenServer((req, res) => {
-      handleOpenAIAudioTranscriptions(req, res).catch((err) => {
-        res.writeHead(500);
-        res.end(err.message);
+      handleOpenAIAudioTranscriptions(req, res).catch(() => {
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("internal error");
       });
     });
 
@@ -307,9 +307,9 @@ describe("models/proactive-observer-v10 audio transcription support", () => {
     skip: !fs.existsSync("/tmp/test_hello.wav"),
   }, async () => {
     const { server, url } = await listenServer((req, res) => {
-      handleOpenAIAudioTranscriptions(req, res).catch((err) => {
-        res.writeHead(500);
-        res.end(err.message);
+      handleOpenAIAudioTranscriptions(req, res).catch(() => {
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("internal error");
       });
     });
 
@@ -792,9 +792,9 @@ describe("models/proactive-observer-v10 audio transcription support", () => {
   it("reports verbose metadata only when supplied or derivable from WAV data", async () => {
     const languageServer = mockSuccessfulLanguageServer();
     const { server, url } = await listenServer((req, res) => {
-      handleOpenAIAudioTranscriptions(req, res).catch((err) => {
-        res.writeHead(500);
-        res.end(err.message);
+      handleOpenAIAudioTranscriptions(req, res).catch(() => {
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("internal error");
       });
     });
 

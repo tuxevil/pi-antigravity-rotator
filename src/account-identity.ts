@@ -14,8 +14,7 @@ function credentialFingerprint(secret?: string): string {
   if (!secret) return "";
   // SHA-256 is intentional: this is a non-secret deduplication fingerprint, not a
   // password hash. It must be deterministic and fast (bcrypt/argon2 would be wrong here).
-  // codeql[js/insufficient-password-hash]
-  return createHash("sha256").update(secret).digest("hex").slice(0, 12);
+  return createHash("sha256").update(secret).digest("hex").slice(0, 12); // codeql[js/insufficient-password-hash]
 }
 
 export function getProviderCredentialDetails(
@@ -92,5 +91,5 @@ export function getCredentialGenerationFingerprint(
 ): string {
   return createHash("sha256")
     .update(getCredentialGeneration(account, providerId))
-    .digest("hex");
+    .digest("hex"); // codeql[js/insufficient-password-hash]
 }

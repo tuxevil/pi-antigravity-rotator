@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-09-07
+
 ### Added
 
 - **OpenAI-compatible audio transcription and live streaming**: Added `POST /v1/audio/transcriptions` and bidirectional WebSocket streaming through the local Antigravity observer model, including model aliases, transcript telemetry, CORS/preflight handling, low-latency headers, and lifecycle/security regression coverage ([#33](https://github.com/tuxevil/tuxevil-rotator/pull/33) by [@javargasm](https://github.com/javargasm)).

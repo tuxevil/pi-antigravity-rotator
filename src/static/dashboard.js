@@ -1211,6 +1211,8 @@ var MODEL_PRICING_CLIENT = {
   "nemotron-3-ultra-free": { input: 0.6, output: 1.8 },
   "mimo-v2.5-free": { input: 0.15, output: 0.6 },
   "hy3-free": { input: 0.25, output: 1.0 },
+  "muse-spark-1.3-contributor-free": { input: 1.25, output: 4.25 },
+  "ling-3.0-flash-fin-free": { input: 0, output: 0 },
   "ling-3.0-tiny-free": { input: 0.05, output: 0.2 },
   "laguna-s-2.1-free": { input: 0.2, output: 0.8 },
 };

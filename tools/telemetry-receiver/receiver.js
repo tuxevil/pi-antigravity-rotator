@@ -369,6 +369,8 @@ const MODEL_PRICING = {
 	"nemotron-3-ultra-free":       { inputPer1M: 0.60,  outputPer1M: 1.80 },
 	"mimo-v2.5-free":              { inputPer1M: 0.15,  outputPer1M: 0.60 },
 	"hy3-free":                    { inputPer1M: 0.25,  outputPer1M: 1.00 },
+	"muse-spark-1.3-contributor-free": { inputPer1M: 1.25, outputPer1M: 4.25 },
+	"ling-3.0-flash-fin-free":     { inputPer1M: 0.00,  outputPer1M: 0.00 },
 	"ling-3.0-tiny-free":          { inputPer1M: 0.05,  outputPer1M: 0.20 },
 	"laguna-s-2.1-free":           { inputPer1M: 0.20,  outputPer1M: 0.80 },
 

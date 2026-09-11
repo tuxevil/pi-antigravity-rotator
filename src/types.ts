@@ -943,6 +943,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "nemotron-3-ultra-free":       { inputPer1M: 0.60,   outputPer1M: 1.80 },
   "mimo-v2.5-free":              { inputPer1M: 0.15,   outputPer1M: 0.60 },
   "hy3-free":                    { inputPer1M: 0.25,   outputPer1M: 1.00 },
+  "muse-spark-1.3-contributor-free": { inputPer1M: 1.25, outputPer1M: 4.25 },
+  "ling-3.0-flash-fin-free":     { inputPer1M: 0.00,   outputPer1M: 0.00 },
 
 };
 

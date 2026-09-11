@@ -26,7 +26,7 @@ curl http://localhost:51200/v1/models
 | `gpt-5.6-terra` | GPT-5.6 | `openai-codex` | Safe base catalog, via Codex OAuth |
 | `gpt-5.6-luna` | GPT-5.6 | `openai-codex` | Safe base catalog, via Codex OAuth |
 | `gpt-5.6-sol` | GPT-5.6 | `openai-codex` | Reserved for paid Codex plans; upstream may reject on free-tier accounts |
-| `deepseek-v4-flash-free`, `nemotron-3.5-lightning-free`, `nemotron-3-ultra-free`, `mimo-v2.5-free`, `hy3-free` | OpenCode Zen | `opencode-zen` | Free-tier models via OpenCode Zen API (`https://opencode.ai/zen/v1`) |
+| `deepseek-v4-flash-free`, `nemotron-3.5-lightning-free`, `nemotron-3-ultra-free`, `mimo-v2.5-free`, `hy3-free`, `muse-spark-1.3-contributor-free`, `ling-3.0-flash-fin-free` | OpenCode Zen | `opencode-zen` | Free-tier models via OpenCode Zen API (`https://opencode.ai/zen/v1`) |
 | `gpt-oss:20b`, `gpt-oss:120b`, `gemma4:31b`, `kimi-k3`, `minimax-m3`, `deepseek-v4-pro`, ... | Ollama Cloud | `ollama` | Catalog fetched at startup from `https://ollama.com/api/tags` |
 
 Short aliases (e.g. `gemini-3.6-flash`, `gemini-3.1-pro`, `claude-sonnet`) are also accepted and resolve to sensible defaults. Gemini 3.8 uses the exact `-low`, `-medium`, or `-high` Antigravity model ID.

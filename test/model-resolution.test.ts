@@ -90,6 +90,8 @@ describe("model resolution", () => {
 		assert.ok(MODEL_PRICING["nemotron-3-ultra-free"]);
 		assert.ok(MODEL_PRICING["mimo-v2.5-free"]);
 		assert.ok(MODEL_PRICING["hy3-free"]);
+		assert.ok(MODEL_PRICING["muse-spark-1.3-contributor-free"]);
+		assert.ok(MODEL_PRICING["ling-3.0-flash-fin-free"]);
 
 	});
 

@@ -1196,6 +1196,105 @@ describe("v2 routing and status", () => {
     assert.equal(rotator.getStatus().accounts[0].tier, "plus");
   });
 
+  it("keeps tier-first preference for concurrent requests", async () => {
+    const config = makeConfig();
+    config.routingPolicy = "tier-first";
+    config.maxConcurrentRequestsPerAccount = 5;
+    config.maxConcurrentRequestsPerProjectModel = 5;
+    config.accounts = [
+      {
+        email: "plus@example.com",
+        refreshToken: "plus-refresh",
+        projectId: "plus-project",
+        tier: "plus",
+      },
+      {
+        email: "free@example.com",
+        refreshToken: "free-refresh",
+        projectId: "free-project",
+        tier: "free",
+      },
+    ];
+    const rotator = new AccountRotator(config) as any;
+    rotator.stopQuotaPolling();
+    rotator.ensureValidTokenForModel = async () => {};
+    rotator.modelState.delete("gemini");
+    rotator.defaultIndex = 0;
+    for (const account of rotator.accounts) {
+      account.quota = [
+        {
+          modelKey: "gemini",
+          displayName: "G3.1Pro",
+          percentRemaining: 80,
+          resetTime: null,
+          timerType: "7d",
+        },
+      ];
+    }
+
+    const first = await rotator.getActiveAccount("gemini-3.1-pro");
+    assert.equal(first?.config.email, "plus@example.com");
+    const second = await rotator.getActiveAccount("gemini-3.1-pro");
+    assert.equal(
+      second?.config.email,
+      "plus@example.com",
+      "an eligible Plus account must remain preferred over a less-loaded Free account",
+    );
+
+    rotator.finishRequest(first, "gemini-3.1-pro");
+    rotator.finishRequest(second, "gemini-3.1-pro");
+  });
+
+  it("re-evaluates a persisted lower-tier assignment when tier-first is idle", async () => {
+    const config = makeConfig();
+    config.routingPolicy = "tier-first";
+    config.maxConcurrentRequestsPerAccount = 5;
+    config.maxConcurrentRequestsPerProjectModel = 5;
+    config.accounts = [
+      {
+        email: "free@example.com",
+        refreshToken: "free-refresh",
+        projectId: "free-project",
+        tier: "free",
+      },
+      {
+        email: "plus@example.com",
+        refreshToken: "plus-refresh",
+        projectId: "plus-project",
+        tier: "plus",
+      },
+    ];
+    const rotator = new AccountRotator(config) as any;
+    rotator.stopQuotaPolling();
+    rotator.ensureValidTokenForModel = async () => {};
+    rotator.defaultIndex = 0;
+    rotator.modelState.set("gemini", {
+      activeAccountIndex: 0,
+      quotaAtRotationStart: 80,
+      requestsOnActiveAccount: 0,
+    });
+    for (const account of rotator.accounts) {
+      account.quota = [
+        {
+          modelKey: "gemini",
+          displayName: "G3.1Pro",
+          percentRemaining: 80,
+          resetTime: null,
+          timerType: "7d",
+        },
+      ];
+    }
+
+    const selected = await rotator.getActiveAccount("gemini-3.1-pro");
+    assert.equal(
+      selected?.config.email,
+      "plus@example.com",
+      "an idle tier-first request must replace a persisted Free assignment when Plus is eligible",
+    );
+
+    rotator.finishRequest(selected, "gemini-3.1-pro");
+  });
+
   it("debounces model assignment state writes on the request path", async () => {
     const rotator = new AccountRotator(makeConfig()) as any;
     rotator.stopQuotaPolling();

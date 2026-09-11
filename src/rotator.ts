@@ -1250,19 +1250,31 @@ export class AccountRotator {
     let best: AccountRuntime | null = null;
     let bestLoad = Infinity;
     let bestDistance = Infinity;
+    let bestTier = Infinity;
+    const policy = this.config.routingPolicy || "timer-first";
 
     for (let i = 0; i < this.accounts.length; i++) {
       const account = this.accounts[i];
       if (!this.isRoutableForModel(account, modelKey, now)) continue;
       const load = account.inFlightRequests;
+      const tier = this.getTierRank(account);
       const distance = this.requestCursorIndex < 0
         ? i
         : (i - this.requestCursorIndex + this.accounts.length) %
             this.accounts.length || this.accounts.length;
-      if (load < bestLoad || (load === bestLoad && distance < bestDistance)) {
+      // Concurrent balancing must keep tier-first's preference: load-balance
+      // within the best eligible tier, and use lower tiers only as fallback.
+      const betterTier = policy === "tier-first" && tier < bestTier;
+      const sameTier = policy !== "tier-first" || tier === bestTier;
+      if (
+        betterTier ||
+        (sameTier &&
+          (load < bestLoad || (load === bestLoad && distance < bestDistance)))
+      ) {
         best = account;
         bestLoad = load;
         bestDistance = distance;
+        bestTier = tier;
       }
     }
 
@@ -2086,6 +2098,16 @@ export class AccountRotator {
     const hasActiveRequests = this.accounts.some(
       (account) => account.inFlightRequests > 0,
     );
+    const policy = this.config.routingPolicy || "timer-first";
+    if (modelKey && policy === "tier-first" && !hasActiveRequests) {
+      const preferred = this.pickBestModelAccount(modelKey, now);
+      if (preferred && preferred !== current) {
+        // A persisted assignment may have been selected under a previous
+        // policy or before account tiers were corrected. Re-evaluate it while
+        // idle so tier-first does not keep serving a lower-tier account.
+        return this.rotateModelForRequest(modelKey, now, idx);
+      }
+    }
     if (modelKey && hasActiveRequests) {
       const leastLoaded = this.pickLeastLoadedModelAccount(modelKey, now);
       if (leastLoaded && leastLoaded !== current) {

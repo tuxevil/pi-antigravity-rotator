@@ -182,6 +182,7 @@ describe("OpenCode Zen Provider Adapter", () => {
       await fetchOpenCodeZenQuota(account, ctx);
       assert.equal(account.quota.length, 1);
       assert.equal(account.quota[0].providerId, OPENCODE_ZEN_PROVIDER_ID);
+      assert.equal(account.quota[0].displayName, "OpenCode");
       assert.equal(account.quota[0].percentRemaining, 100);
     } finally {
       globalThis.fetch = originalFetch;

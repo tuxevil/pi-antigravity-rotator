@@ -19,7 +19,7 @@ describe("Ollama monthly quota parsing", () => {
     assert.deepEqual(quotas, [
       {
         modelKey: "monthly",
-        displayName: "Monthly",
+        displayName: "Ollama",
         percentRemaining: 63,
         usageRaw: 0.37,
         resetTime: null,

@@ -130,7 +130,7 @@ export function extractUsagePools(
     if (Number.isFinite(usageFraction)) {
       quotas.push({
         modelKey: OLLAMA_QUOTA_POOL_KEY,
-        displayName: "Monthly",
+        displayName: "Ollama",
         percentRemaining: Math.max(
           0,
           Math.min(100, Math.round((1 - usageFraction) * 100)),

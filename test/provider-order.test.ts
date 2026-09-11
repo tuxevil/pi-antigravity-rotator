@@ -34,7 +34,7 @@ describe("provider pool and credential ordering", () => {
     const mixedPools = [
       { modelKey: "openai-codex", displayName: "Codex", percentRemaining: 100, resetTime: null, timerType: "fresh" as const, providerId: "openai-codex" },
       { modelKey: "session", displayName: "Ollama Session", percentRemaining: 100, resetTime: null, timerType: "fresh" as const, providerId: "ollama" },
-      { modelKey: "opencode-zen", displayName: "OpenCode Zen", percentRemaining: 100, resetTime: null, timerType: "fresh" as const, providerId: "opencode-zen" },
+      { modelKey: "opencode-zen", displayName: "OpenCode", percentRemaining: 100, resetTime: null, timerType: "fresh" as const, providerId: "opencode-zen" },
       { modelKey: "claude", displayName: "Claude Family", percentRemaining: 100, resetTime: null, timerType: "fresh" as const, providerId: "google-antigravity" },
       { modelKey: "gemini", displayName: "Gemini Family", percentRemaining: 100, resetTime: null, timerType: "fresh" as const, providerId: "google-antigravity" },
     ];

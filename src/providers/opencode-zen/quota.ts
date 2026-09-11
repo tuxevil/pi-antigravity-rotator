@@ -48,7 +48,7 @@ export async function fetchOpenCodeZenQuota(
 
     const freshQuota: ModelQuota = {
       modelKey: OPENCODE_ZEN_PROVIDER_ID,
-      displayName: "OpenCode Zen Free Pool",
+      displayName: "OpenCode",
       providerId: OPENCODE_ZEN_PROVIDER_ID,
       percentRemaining: 100,
       resetTime: null,

@@ -10,6 +10,11 @@ export const CODEX_SPARK_QUOTA_MODEL_KEY = "openai-codex-spark";
 export const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const CODEX_QUOTA_CACHE_TTL_MS = 60_000;
 export const CODEX_QUOTA_TIMEOUT_MS = 8_000;
+// The Codex usage API reports roughly 30 days for a window that has not been
+// started yet. Treat anything above 29d 23h 55m as that sentinel rather than
+// exposing a fictitious long-running timer.
+export const CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS =
+  30 * 24 * 60 * 60 - 5 * 60;
 
 export interface CodexQuotaWindow {
   usedPercent: number;
@@ -110,10 +115,25 @@ function dominantWindow(snapshot: CodexQuotaSnapshot): CodexQuotaWindow {
     : snapshot.secondary;
 }
 
+function remainingSeconds(window: CodexQuotaWindow): number | null {
+  if (window.resetAfterSeconds !== null) return window.resetAfterSeconds;
+  if (!window.resetAt) return null;
+  return Math.round((new Date(window.resetAt).getTime() - Date.now()) / 1000);
+}
+
 function timerType(window: CodexQuotaWindow): "fresh" | "5h" | "7d" {
-  if (!window.resetAt) return "fresh";
-  const remaining = new Date(window.resetAt).getTime() - Date.now();
-  return remaining > 24 * 60 * 60 * 1000 ? "7d" : "5h";
+  const remaining = remainingSeconds(window);
+  if (
+    remaining === null ||
+    remaining > CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS
+  ) {
+    return "fresh";
+  }
+  return remaining > 24 * 60 * 60 ? "7d" : "5h";
+}
+
+function visibleResetTime(window: CodexQuotaWindow): string | null {
+  return timerType(window) === "fresh" ? null : window.resetAt;
 }
 
 export function codexQuotaRows(snapshot: CodexQuotaSnapshot): ModelQuota[] {
@@ -123,7 +143,7 @@ export function codexQuotaRows(snapshot: CodexQuotaSnapshot): ModelQuota[] {
     displayName: "Codex",
     providerId: CODEX_PROVIDER_ID,
     percentRemaining: dominant.percentRemaining,
-    resetTime: dominant.resetAt,
+    resetTime: visibleResetTime(dominant),
     timerType: timerType(dominant),
   }];
   if (snapshot.spark) {
@@ -135,7 +155,7 @@ export function codexQuotaRows(snapshot: CodexQuotaSnapshot): ModelQuota[] {
       displayName: "Codex Spark",
       providerId: CODEX_PROVIDER_ID,
       percentRemaining: spark.percentRemaining,
-      resetTime: spark.resetAt,
+      resetTime: visibleResetTime(spark),
       timerType: timerType(spark),
     });
   }
@@ -161,7 +181,13 @@ function cacheKey(account: AccountRuntime): string {
   return `${account.config.email.toLowerCase()}:${getCodexAccountId(account.config) ?? "unknown"}`;
 }
 
-export function clearCodexQuotaCache(): void { quotaCache.clear(); }
+export function clearCodexQuotaCache(account?: AccountRuntime): void {
+  if (account) {
+    quotaCache.delete(cacheKey(account));
+    return;
+  }
+  quotaCache.clear();
+}
 
 export async function fetchCodexQuota(
   account: AccountRuntime,

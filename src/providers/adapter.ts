@@ -130,6 +130,15 @@ export interface ProviderAdapter {
   /** Accumulator matching this provider's stream format. */
   createStreamAccumulator(): StreamAccumulator;
 
+  /** Provider-native minimal request used to start an idle quota timer. */
+  forwardKickstartRequest?(
+    account: AccountRuntime,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<ForwardedResponse>;
+  /** Drop provider-local quota cache after a state-changing kickstart. */
+  clearQuotaCache?(account: AccountRuntime): void;
+
   // --- Catalog / helpers ---
   /** Whether a model belongs to this provider. */
   ownsModel?(

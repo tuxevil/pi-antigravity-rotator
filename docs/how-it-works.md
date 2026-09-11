@@ -67,6 +67,13 @@ Within the same priority tier, the account with the most remaining quota for tha
 - `5h` — `resetTime` is less than 6 hours away.
 - `7d` — `resetTime` is 6 hours or more away.
 
+OpenAI Codex has one additional provider-specific rule: its usage endpoint can
+return a roughly 30-day reset sentinel before a window has ever been started.
+The rotator treats values above `29d 23h 55m` as `fresh`/`idle`, hides that
+reset time, and makes the pool eligible for the Codex kickstart request. Once
+the reported time is at or below that threshold, the timer is considered
+started and is classified normally.
+
 ## Routing Policies
 
 Six routing policies are available via `routingPolicy` in `accounts.json`:

@@ -18,7 +18,11 @@ import {
   extractCodexUsage,
   forwardCodexRequest,
 } from "./forward.js";
-import { fetchCodexQuota, CODEX_QUOTA_MODEL_KEY } from "./quota.js";
+import {
+  clearCodexQuotaCache,
+  fetchCodexQuota,
+  CODEX_QUOTA_MODEL_KEY,
+} from "./quota.js";
 import { isCodexRequestModel, isCodexProviderModelId } from "./catalog.js";
 
 const providerLog = logger.child("provider/openai-codex");
@@ -122,7 +126,22 @@ export const openaiCodexAdapter: ProviderAdapter = {
   forwardRequest: forwardCodexRequest,
   createStreamAccumulator: () => new CodexSseAccumulator(),
 
-  getKickstartModelForPool(): string | undefined { return undefined; },
+  async forwardKickstartRequest(account, model, signal) {
+    return forwardCodexRequest(
+      account,
+      {
+        project: "",
+        model,
+        request: { input: ".", stream: true, store: false },
+      },
+      {},
+      signal,
+    );
+  },
+
+  clearQuotaCache: clearCodexQuotaCache,
+
+  getKickstartModelForPool(): string | undefined { return "gpt-5.6-luna"; },
 
   ownsModel(model: string, context?: { codexModels?: Set<string> }): boolean {
     if (isCodexRequestModel(model)) return true;

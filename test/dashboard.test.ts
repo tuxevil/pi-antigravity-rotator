@@ -544,7 +544,7 @@ describe("dashboard", () => {
     assert.equal(savings.byModel["gemini-3.8-flash-high"].totalUsd, 4.5);
   });
 
-  it("does not offer kickstart controls for Codex quota pools", () => {
+  it("offers kickstart controls for idle Codex quota pools", () => {
     const js = readDashboardJs();
     const sandbox: Record<string, unknown> = {
       window: { location: { search: "" } } as Record<string, unknown>,
@@ -576,7 +576,7 @@ describe("dashboard", () => {
 
     assert.equal(
       isKickstartSupported({ modelKey: "openai-codex", providerId: "openai-codex" }),
-      false,
+      true,
     );
     assert.equal(
       isKickstartSupported({ modelKey: "opencode-zen", providerId: "opencode-zen" }),
@@ -610,6 +610,30 @@ describe("dashboard", () => {
       }),
       false,
     );
+    assert.equal(
+      isIdleForKickstart({
+        timerType: "7d",
+        resetTime: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        percentRemaining: 100,
+      }),
+      false,
+    );
+
+    const codexCard = renderAccountCards([
+      {
+        ...accountCardFixture(0, "openai-codex"),
+        quota: [{
+          modelKey: "openai-codex",
+          displayName: "Codex",
+          providerId: "openai-codex",
+          percentRemaining: 100,
+          resetTime: null,
+          timerType: "fresh",
+        }],
+      },
+    ], 5);
+    assert.match(codexCard, />▶ Start</);
+    assert.match(codexCard, />Start Idle Timers</);
   });
 
   it("includes optional admin-token client support", () => {

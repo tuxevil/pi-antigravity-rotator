@@ -32,13 +32,10 @@ function isIdleForKickstart(q) {
 
 function isKickstartSupported(q) {
   if (!q) return false;
-  if (q.providerId === "openai-codex" || q.providerId === "opencode-zen") return false;
+  if (q.providerId === "opencode-zen") return false;
   if (q.providerId === "ollama" && q.modelKey !== "session") return false;
   var key = String(q.modelKey || "");
   return (
-    key !== "openai-codex" &&
-    key !== "openai-codex-spark" &&
-    key.indexOf("openai-codex:") !== 0 &&
     key !== "opencode-zen" &&
     key.indexOf("opencode-zen:") !== 0 &&
     key !== "weekly"

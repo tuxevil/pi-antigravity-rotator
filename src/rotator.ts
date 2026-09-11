@@ -192,6 +192,7 @@ interface AccountRequestWaiter {
 const QUOTA_POOL_FOR_KICKSTART_MODEL: Record<string, string> = {
   "gpt-oss-120b-medium": "claude",
   "gemini-3-flash": "gemini",
+  "gpt-5.6-luna": CODEX_QUOTA_MODEL_KEY,
   // Legacy manual kickstart compatibility. New Ollama quota polling/routes
   // use `monthly`; this alias is only for callers that still name `session`.
   "gpt-oss:20b": "session",
@@ -1082,8 +1083,8 @@ export class AccountRotator {
 
   /**
    * Resolve kickstart by quota-pool owner, never by the account's primary
-   * provider. Parent accounts may hold several credentials, and Codex pools
-   * deliberately have no kickstart implementation.
+   * provider. Parent accounts may hold several credentials, and each provider
+   * supplies its own kickstart implementation.
    */
   private getKickstartTarget(
     account: AccountRuntime,
@@ -4433,8 +4434,8 @@ export class AccountRotator {
   }
 
   /**
-   * Send a minimal single-token request to the upstream Antigravity endpoint for a specific
-   * quota pool key on a given account. Uses the cheapest model in that pool to minimise cost.
+   * Send a provider-native minimal request for a specific quota pool key on a given account.
+   * Uses the cheapest model in that pool to minimise cost.
    * Applies normal error handling (markExhausted, markFlagged, markError) so the account state
    * stays consistent with regular traffic.
    */
@@ -4479,7 +4480,8 @@ export class AccountRotator {
 
     const kickstartAdapter = target.adapter;
     const isOllamaAccount = kickstartAdapter.id === "ollama";
-    if (!account.accessToken && !isOllamaAccount) {
+    const hasNativeKickstart = Boolean(kickstartAdapter.forwardKickstartRequest);
+    if (!account.accessToken && !isOllamaAccount && !hasNativeKickstart) {
       return { ok: false, status: 401, upstreamModel: "", error: "no access token" };
     }
 
@@ -4503,7 +4505,22 @@ export class AccountRotator {
     const timeout = setTimeout(() => controller.abort(), 15_000);
 
     let response: Response;
-    if (isOllamaAccount) {
+    if (kickstartAdapter.forwardKickstartRequest) {
+      try {
+        const forwarded = await kickstartAdapter.forwardKickstartRequest(
+          account,
+          upstreamModel,
+          controller.signal,
+        );
+        response = forwarded.response;
+      } catch (err) {
+        clearTimeout(timeout);
+        const msg = `kickstart network error: ${err instanceof Error ? err.message : String(err)}`;
+        this.markError(account, msg);
+        return { ok: false, status: 0, upstreamModel, error: msg };
+      }
+      clearTimeout(timeout);
+    } else if (isOllamaAccount) {
       const ollamaBody: RequestBody = {
         project: "",
         model: upstreamModel,
@@ -4613,11 +4630,12 @@ export class AccountRotator {
     }
 
     if (response.status === 401 || response.status === 403) {
-      this.markFlagged(
-        account,
-        `kickstart ${response.status} on ${upstreamModel}`,
-        { triggerProtectivePause: false },
-      );
+      const reason = `kickstart ${response.status} on ${upstreamModel}`;
+      if (target.providerId === "openai-codex") {
+        this.markProviderInvalid(account, target.providerId, reason);
+      } else {
+        this.markFlagged(account, reason, { triggerProtectivePause: false });
+      }
       return { ok: false, status: response.status, upstreamModel };
     }
 
@@ -4628,6 +4646,7 @@ export class AccountRotator {
 
     if (response.ok) {
       this.recordRequest(account, poolKey);
+      target.adapter.clearQuotaCache?.(account);
       this.log(
         `${label} [${poolKey}]: kickstart sent via ${upstreamModel} — ${refreshQuota ? "refreshing quota" : "bulk quota refresh pending"}`,
       );

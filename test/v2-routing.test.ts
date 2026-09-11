@@ -25,6 +25,7 @@ const { AccountRotator } = await import("../src/rotator.js");
 const { initDb, closeDb } = await import("../src/db-store.js");
 const { setPersistedAdminToken } = await import("../src/admin-auth.js");
 const { getProviderAdapter } = await import("../src/providers/registry.js");
+const { clearCodexQuotaCache, CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS } = await import("../src/providers/openai-codex/quota.js");
 const { providerAdapterForModel } = await import("../src/proxy.js");
 
 function makeConfig(): Config {
@@ -772,6 +773,139 @@ describe("v2 routing and status", () => {
       assert.deepEqual(result.results, []);
       assert.equal(account.flagged, false);
       assert.equal(fetchCalled, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("kickstarts idle Codex timers with gpt-5.6-luna and refreshes past the quota cache", async () => {
+    const rotator = new AccountRotator({
+      ...makeConfig(),
+      accounts: [
+        {
+          email: "codex-real-kickstart@example.com",
+          credentials: [
+            {
+              provider: "openai-codex",
+              refreshToken: "refresh",
+              providerAccountId: "acct-codex",
+            },
+          ],
+        },
+      ],
+    }) as any;
+    rotator.stopQuotaPolling();
+    const account = rotator.accounts[0];
+    account.providerTokens = {
+      "openai-codex": {
+        accessToken: "codex-access-token",
+        tokenExpires: Date.now() + 120_000,
+      },
+    };
+
+    let quotaPolls = 0;
+    let request: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
+    const originalFetch = globalThis.fetch;
+    clearCodexQuotaCache();
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/responses")) {
+        request = {
+          url,
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        };
+        return new Response("", { status: 200 });
+      }
+      if (url.includes("/wham/usage")) {
+        quotaPolls++;
+        const seconds = quotaPolls === 1
+          ? CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS + 1
+          : 60;
+        return new Response(JSON.stringify({
+          rate_limit: {
+            primary_window: { used_percent: 0, reset_after_seconds: seconds },
+            secondary_window: { used_percent: 0, reset_after_seconds: seconds },
+          },
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch in Codex kickstart test: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      await rotator.pollAccountQuota(account);
+      assert.equal(account.quota[0]?.timerType, "fresh");
+
+      const result = await rotator.kickstartAllFreshTimers(
+        "codex-real-kickstart@example.com",
+      );
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.results.map((entry: any) => ({
+        quotaPools: entry.quotaPools,
+        upstreamModel: entry.upstreamModel,
+        ok: entry.ok,
+      })), [{
+        quotaPools: ["openai-codex"],
+        upstreamModel: "gpt-5.6-luna",
+        ok: true,
+      }]);
+      assert.equal(request?.url.endsWith("/responses"), true);
+      assert.equal(request?.headers.get("authorization"), "Bearer codex-access-token");
+      assert.equal(request?.headers.get("chatgpt-account-id"), "acct-codex");
+      assert.equal(request?.body.model, "gpt-5.6-luna");
+      assert.equal(quotaPolls, 2, "kickstart must bypass the stale Codex quota cache");
+      assert.equal(account.quota[0]?.timerType, "5h");
+      assert.ok(account.quota[0]?.resetTime);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearCodexQuotaCache();
+    }
+  });
+
+  it("keeps a failed Codex kickstart provider-scoped", async () => {
+    const rotator = new AccountRotator({
+      ...makeConfig(),
+      accounts: [{
+        email: "codex-kickstart-auth@example.com",
+        credentials: [{
+          provider: "openai-codex",
+          refreshToken: "refresh",
+          providerAccountId: "acct-codex",
+        }],
+      }],
+    }) as any;
+    rotator.stopQuotaPolling();
+    const account = rotator.accounts[0];
+    account.providerTokens = {
+      "openai-codex": {
+        accessToken: "codex-access-token",
+        tokenExpires: Date.now() + 120_000,
+      },
+    };
+    account.quota = [{
+      modelKey: "openai-codex",
+      displayName: "Codex",
+      providerId: "openai-codex",
+      percentRemaining: 100,
+      resetTime: null,
+      timerType: "fresh",
+    }];
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.endsWith("/responses")) return new Response("unauthorized", { status: 401 });
+      throw new Error(`Unexpected fetch in Codex auth kickstart test: ${url}`);
+    }) as typeof fetch;
+    try {
+      const result = await rotator.kickstartTimerForAccount(
+        "codex-kickstart-auth@example.com",
+        "openai-codex",
+        false,
+      );
+      assert.equal(result.status, 401);
+      assert.equal(account.flagged, false);
+      assert.ok(account.invalidProviders?.["openai-codex"]);
     } finally {
       globalThis.fetch = originalFetch;
     }

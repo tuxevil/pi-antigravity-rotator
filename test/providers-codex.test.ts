@@ -24,6 +24,7 @@ import {
 import { isCodexModelForRotator } from "../src/compat.js";
 import {
   CODEX_QUOTA_MODEL_KEY,
+  CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS,
   codexQuotaRows,
   parseCodexUsageResponse,
 } from "../src/providers/openai-codex/quota.js";
@@ -231,6 +232,40 @@ describe("openai-codex import and payload", () => {
     const rows = codexQuotaRows(snapshot!);
     assert.equal(rows[0]?.modelKey, CODEX_QUOTA_MODEL_KEY);
     assert.equal(rows[0]?.percentRemaining, 20);
+  });
+
+  it("treats the Codex 30-day reset sentinel as an unstarted timer", () => {
+    const unstarted = parseCodexUsageResponse({
+      rate_limit: {
+        primary_window: {
+          used_percent: 0,
+          reset_after_seconds: CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS + 1,
+        },
+        secondary_window: {
+          used_percent: 0,
+          reset_after_seconds: CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS + 1,
+        },
+      },
+    });
+    const [unstartedRow] = codexQuotaRows(unstarted!);
+    assert.equal(unstartedRow?.timerType, "fresh");
+    assert.equal(unstartedRow?.resetTime, null);
+
+    const started = parseCodexUsageResponse({
+      rate_limit: {
+        primary_window: {
+          used_percent: 0,
+          reset_after_seconds: CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS,
+        },
+        secondary_window: {
+          used_percent: 0,
+          reset_after_seconds: CODEX_UNSTARTED_TIMER_THRESHOLD_SECONDS,
+        },
+      },
+    });
+    const [startedRow] = codexQuotaRows(started!);
+    assert.equal(startedRow?.timerType, "7d");
+    assert.ok(startedRow?.resetTime);
   });
 
   it("forwards only Codex authentication and the provider-scoped account id", async () => {

@@ -113,6 +113,12 @@ returns it. The pool exposes two quota keys on `/api/status`:
 `openai-codex` (primary Codex quota bucket) and `openai-codex-spark` (Spark
 plan bucket when present).
 
+Before a Codex timer is started, the usage endpoint may report a reset more
+than `29d 23h 55m` away. The rotator treats that value as an idle sentinel,
+offers the pool's kickstart action, and sends the minimal request through
+`gpt-5.6-luna`. A reset at or below that threshold is treated as a real active
+timer.
+
 Failure handling is provider-local:
 
 - `401` or `403` invalidates only the Codex credential and surfaces a

@@ -544,6 +544,85 @@ describe("dashboard", () => {
     assert.equal(savings.byModel["gemini-3.8-flash-high"].totalUsd, 4.5);
   });
 
+  it("uses the supplied Ollama pricing and labels the monthly forecast pool Ollama", () => {
+    const js = readDashboardJs();
+    const elements = new Map<string, {
+      innerHTML: string;
+      style: Record<string, string>;
+      addEventListener: () => void;
+    }>();
+    const getElementById = (id: string) => {
+      let element = elements.get(id);
+      if (!element) {
+        element = { innerHTML: "", style: {}, addEventListener: () => {} };
+        elements.set(id, element);
+      }
+      return element;
+    };
+    const sandbox: Record<string, unknown> = {
+      window: { location: { search: "" } },
+      URLSearchParams: globalThis.URLSearchParams,
+      EventSource: function () {},
+      fetch: () => Promise.resolve(),
+      setInterval: () => {},
+      clearInterval: () => {},
+      setTimeout: () => {},
+      clearTimeout: () => {},
+      localStorage: { getItem: () => null, setItem: () => {} },
+      document: {
+        getElementById,
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        addEventListener: () => {},
+      },
+    };
+    const script = new Script(
+      js +
+        "\nthis.getModelPricingClient = getModelPricingClient;" +
+        "\nthis.renderForecastPanel = renderForecastPanel;",
+    );
+    script.runInNewContext(sandbox);
+
+    const getModelPricingClient = sandbox.getModelPricingClient as (
+      model: string,
+    ) => { input: number; output: number } | null;
+    const expectedPricing = {
+      "gemma4:31b": { input: 0.14, output: 0.40 },
+      "nemotron-3-ultra": { input: 0.10, output: 3.00 },
+      "nemotron-3-super": { input: 0.015, output: 0.60 },
+      "nemotron-3-nano:30b": { input: 0.06, output: 0.24 },
+      "gpt-oss:120b": { input: 0.15, output: 0.60 },
+      "gpt-oss:20b": { input: 0.07, output: 0.30 },
+    };
+    for (const [model, pricing] of Object.entries(expectedPricing)) {
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(getModelPricingClient(model))),
+        pricing,
+      );
+    }
+
+    const renderForecastPanel = sandbox.renderForecastPanel as (
+      data: Record<string, unknown>,
+    ) => void;
+    renderForecastPanel({
+      accounts: [{
+        status: "active",
+        tier: "free",
+        quota: [{
+          modelKey: "monthly",
+          percentRemaining: 100,
+          resetTime: null,
+          timerType: "monthly",
+          providerId: "ollama",
+        }],
+      }],
+      tokenUsage: { minutes: [] },
+    });
+    const forecastHtml = elements.get("forecastGrid")?.innerHTML ?? "";
+    assert.match(forecastHtml, />Ollama<\/td>/);
+    assert.doesNotMatch(forecastHtml, />monthly<\/td>/);
+  });
+
   it("offers kickstart controls for idle Codex quota pools", () => {
     const js = readDashboardJs();
     const sandbox: Record<string, unknown> = {

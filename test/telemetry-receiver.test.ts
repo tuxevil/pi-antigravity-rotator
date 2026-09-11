@@ -294,9 +294,9 @@ describe("telemetry receiver", () => {
 		const stats = (await statsRes.json()) as any;
 		assert.ok(stats.savings);
 		assert.ok(stats.savings.byModel["gpt-oss:20b"]);
-		assert.equal(stats.savings.byModel["gpt-oss:20b"].totalUsd, 0.38);
+		assert.equal(stats.savings.byModel["gpt-oss:20b"].totalUsd, 0.37);
 		assert.ok(stats.savings.byModel["gemma4:31b"]);
-		assert.equal(stats.savings.byModel["gemma4:31b"].totalUsd, 1.53);
+		assert.equal(stats.savings.byModel["gemma4:31b"].totalUsd, 0.54);
 		assert.ok(stats.savings.byModel["deepseek-v4-pro"]);
 		assert.equal(stats.savings.byModel["deepseek-v4-pro"].totalUsd, 1.31);
 		assert.ok(stats.savings.byModel["kimi-k3"]);

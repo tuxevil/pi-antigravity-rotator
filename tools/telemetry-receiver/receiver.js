@@ -343,8 +343,8 @@ const MODEL_PRICING = {
 	"gemini-3.8-flash-high":    { inputPer1M: 0.75,  outputPer1M: 3.75 },
 	"gpt-oss-120b-medium":      { inputPer1M: 2.00,  outputPer1M: 10.00 },
 
-	// Ollama Cloud models — mirrors MODEL_PRICING in src/types.ts
-	"gpt-oss:20b":                 { inputPer1M: 0.075, outputPer1M: 0.30 },
+	// Ollama Cloud free-tier models — mirrors MODEL_PRICING in src/types.ts
+	"gpt-oss:20b":                 { inputPer1M: 0.07,  outputPer1M: 0.30 },
 	"gpt-oss:120b":                { inputPer1M: 0.15,  outputPer1M: 0.60 },
 	"deepseek-v4-flash:preview":   { inputPer1M: 0.14,  outputPer1M: 0.28 },
 	"deepseek-v4-flash:0731":      { inputPer1M: 0.14,  outputPer1M: 0.28 },
@@ -352,16 +352,16 @@ const MODEL_PRICING = {
 	"qwen3.5:397b":                { inputPer1M: 0.60,  outputPer1M: 3.60 },
 	"glm-5.1":                     { inputPer1M: 0.80,  outputPer1M: 2.56 },
 	"glm-5.2":                     { inputPer1M: 0.80,  outputPer1M: 2.56 },
-	"gemma4:31b":                  { inputPer1M: 0.38,  outputPer1M: 1.15 },
+	"gemma4:31b":                  { inputPer1M: 0.14,  outputPer1M: 0.40 },
 	"kimi-k2.6":                   { inputPer1M: 0.95,  outputPer1M: 4.00 },
 	"kimi-k2.7-code":              { inputPer1M: 0.95,  outputPer1M: 4.00 },
 	"kimi-k3":                     { inputPer1M: 0.95,  outputPer1M: 4.00 },
 	"minimax-m2.7":                { inputPer1M: 0.30,  outputPer1M: 1.20 },
 	"minimax-m3":                  { inputPer1M: 0.30,  outputPer1M: 1.20 },
 	"mistral-large-3:675b":        { inputPer1M: 0.50,  outputPer1M: 1.50 },
-	"nemotron-3-nano:30b":         { inputPer1M: 0.50,  outputPer1M: 1.50 },
-	"nemotron-3-super":            { inputPer1M: 0.60,  outputPer1M: 1.80 },
-	"nemotron-3-ultra":            { inputPer1M: 0.60,  outputPer1M: 1.80 },
+	"nemotron-3-nano:30b":         { inputPer1M: 0.06,  outputPer1M: 0.24 },
+	"nemotron-3-super":            { inputPer1M: 0.015, outputPer1M: 0.60 },
+	"nemotron-3-ultra":            { inputPer1M: 0.10,  outputPer1M: 3.00 },
 
 	// OpenCode Zen free models — mirrors MODEL_PRICING in src/types.ts
 	"deepseek-v4-flash-free":      { inputPer1M: 0.14,  outputPer1M: 0.28 },

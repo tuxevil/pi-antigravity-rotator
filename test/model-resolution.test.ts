@@ -111,6 +111,38 @@ describe("model resolution", () => {
 		});
 	});
 
+	it("uses the supplied Ollama Cloud free-tier pricing", () => {
+		assert.deepEqual(MODEL_PRICING["gemma4:31b"], {
+			inputPer1M: 0.14,
+			outputPer1M: 0.40,
+			cachingPer1M: 0.05,
+		});
+		assert.deepEqual(MODEL_PRICING["nemotron-3-ultra"], {
+			inputPer1M: 0.10,
+			outputPer1M: 3.00,
+			cachingPer1M: 0.10,
+		});
+		assert.deepEqual(MODEL_PRICING["nemotron-3-super"], {
+			inputPer1M: 0.015,
+			outputPer1M: 0.60,
+			cachingPer1M: 0.015,
+		});
+		assert.deepEqual(MODEL_PRICING["nemotron-3-nano:30b"], {
+			inputPer1M: 0.06,
+			outputPer1M: 0.24,
+		});
+		assert.deepEqual(MODEL_PRICING["gpt-oss:120b"], {
+			inputPer1M: 0.15,
+			outputPer1M: 0.60,
+			cachingPer1M: 0.014,
+		});
+		assert.deepEqual(MODEL_PRICING["gpt-oss:20b"], {
+			inputPer1M: 0.07,
+			outputPer1M: 0.30,
+			cachingPer1M: 0.035,
+		});
+	});
+
 	it("uses the official Gemini 3.6 Flash pricing", () => {
 		const p = MODEL_PRICING["gemini-3.6-flash-high"];
 		assert.ok(p);

@@ -913,11 +913,12 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     cachingPer1M: 0.02,
   },
 
-  // Ollama Cloud model pricing (USD per 1M tokens). Sourced from LiteLLM
-  // (https://models.litellm.ai/) and verified 2026-08-30 via /api/tags
-  // discovery + /api/chat probes. Run scripts/verify_ollama_models.ts to refresh.
-  "gpt-oss:20b":                 { inputPer1M: 0.075,  outputPer1M: 0.30 },
-  "gpt-oss:120b":                { inputPer1M: 0.15,   outputPer1M: 0.60 },
+  // Ollama Cloud free-tier model pricing (USD per 1M tokens), supplied by
+  // the operator from Ollama Cloud's published rates. Cached-input rates are
+  // retained for spend metadata; aggregate token logs currently price input
+  // tokens at the regular input rate because they do not expose cache hits.
+  "gpt-oss:20b":                 { inputPer1M: 0.07,   outputPer1M: 0.30, cachingPer1M: 0.035 },
+  "gpt-oss:120b":                { inputPer1M: 0.15,   outputPer1M: 0.60, cachingPer1M: 0.014 },
   "deepseek-v4-flash:0731":      { inputPer1M: 0.14,   outputPer1M: 0.28,  cachingPer1M: 0.0028 },
   "deepseek-v4-pro:0813":        { inputPer1M: 1.74,   outputPer1M: 3.48 },
   "qwen3.5:397b":                { inputPer1M: 0.60,   outputPer1M: 3.60 },
@@ -925,16 +926,16 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "glm-5.2":                     { inputPer1M: 0.80,   outputPer1M: 2.56 },
   "glm-5.3":                     { inputPer1M: 1.40,   outputPer1M: 4.40 },
   "glm-5.3-flash":               { inputPer1M: 0.15,   outputPer1M: 0.50 },
-  "gemma4:31b":                  { inputPer1M: 0.38,   outputPer1M: 1.15 },
+  "gemma4:31b":                  { inputPer1M: 0.14,   outputPer1M: 0.40, cachingPer1M: 0.05 },
   "kimi-k2.6":                   { inputPer1M: 0.95,   outputPer1M: 4.00 },
   "kimi-k2.7-code":              { inputPer1M: 0.95,   outputPer1M: 4.00 },
   "kimi-k3":                     { inputPer1M: 0.95,   outputPer1M: 4.00 },
   "minimax-m2.7":                { inputPer1M: 0.30,   outputPer1M: 1.20 },
   "minimax-m3":                  { inputPer1M: 0.30,   outputPer1M: 1.20 },
   "mistral-large-3:675b":        { inputPer1M: 0.50,   outputPer1M: 1.50 },
-  "nemotron-3-nano:30b":         { inputPer1M: 0.50,   outputPer1M: 1.50 },
-  "nemotron-3-super":            { inputPer1M: 0.60,   outputPer1M: 1.80 },
-  "nemotron-3-ultra":            { inputPer1M: 0.60,   outputPer1M: 1.80 },
+  "nemotron-3-nano:30b":         { inputPer1M: 0.06,   outputPer1M: 0.24 },
+  "nemotron-3-super":            { inputPer1M: 0.015,  outputPer1M: 0.60, cachingPer1M: 0.015 },
+  "nemotron-3-ultra":            { inputPer1M: 0.10,   outputPer1M: 3.00, cachingPer1M: 0.10 },
 
   // OpenCode Zen free models — equivalent market rates (USD per 1M tokens) for savings tracking
   "deepseek-v4-flash-free":      { inputPer1M: 0.14,   outputPer1M: 0.28,  cachingPer1M: 0.0028 },

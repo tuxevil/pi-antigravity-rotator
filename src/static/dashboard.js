@@ -1187,7 +1187,7 @@ var MODEL_PRICING_CLIENT = {
   "gpt-5.6-terra": { input: 2.0, output: 12.0 },
   "gpt-5.6-luna": { input: 0.2, output: 1.2 },
   // Ollama Cloud models — mirrors MODEL_PRICING in src/types.ts
-  "gpt-oss:20b": { input: 0.075, output: 0.3 },
+  "gpt-oss:20b": { input: 0.07, output: 0.3 },
   "gpt-oss:120b": { input: 0.15, output: 0.6 },
   "deepseek-v4-flash:preview": { input: 0.14, output: 0.28 },
   "deepseek-v4-flash:0731": { input: 0.14, output: 0.28 },
@@ -1195,16 +1195,16 @@ var MODEL_PRICING_CLIENT = {
   "qwen3.5:397b": { input: 0.6, output: 3.6 },
   "glm-5.1": { input: 0.8, output: 2.56 },
   "glm-5.2": { input: 0.8, output: 2.56 },
-  "gemma4:31b": { input: 0.38, output: 1.15 },
+  "gemma4:31b": { input: 0.14, output: 0.4 },
   "kimi-k2.6": { input: 0.95, output: 4.0 },
   "kimi-k2.7-code": { input: 0.95, output: 4.0 },
   "kimi-k3": { input: 0.95, output: 4.0 },
   "minimax-m2.7": { input: 0.3, output: 1.2 },
   "minimax-m3": { input: 0.3, output: 1.2 },
   "mistral-large-3:675b": { input: 0.5, output: 1.5 },
-  "nemotron-3-nano:30b": { input: 0.5, output: 1.5 },
-  "nemotron-3-super": { input: 0.6, output: 1.8 },
-  "nemotron-3-ultra": { input: 0.6, output: 1.8 },
+  "nemotron-3-nano:30b": { input: 0.06, output: 0.24 },
+  "nemotron-3-super": { input: 0.015, output: 0.6 },
+  "nemotron-3-ultra": { input: 0.1, output: 3.0 },
   // OpenCode Zen free models — mirrors MODEL_PRICING in src/types.ts
   "deepseek-v4-flash-free": { input: 0.14, output: 0.28 },
   "nemotron-3.5-lightning-free": { input: 0.35, output: 1.05 },
@@ -1994,6 +1994,7 @@ function renderForecastPanel(data) {
     var rate = burnByPool[m] || 0;
     var rateLabel = rate > 0 ? rate.toFixed(1) + " req/h" : "idle";
     var displayName = m;
+    if (m === "monthly") displayName = "Ollama";
     if (m === "claude-opus-4-6-thinking") displayName = "claude";
     if (m === "gemini-3.1-pro") displayName = "gemini-3.1-pro";
     if (m === "gemini-3-flash") displayName = "gemini-3-flash";

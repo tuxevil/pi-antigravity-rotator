@@ -3,15 +3,19 @@
 export const OPENCODE_ZEN_BASE_URL = "https://opencode.ai/zen/v1";
 export const OPENCODE_ZEN_MODELS_URL = "https://opencode.ai/zen/v1/models";
 export const OPENCODE_ZEN_CHAT_URL = "https://opencode.ai/zen/v1/chat/completions";
+export const OPENCODE_ZEN_RESPONSES_URL = "https://opencode.ai/zen/v1/responses";
 
 export const OPENCODE_ZEN_FREE_MODELS = [
-  "deepseek-v4-flash-free",
-  "nemotron-3.5-lightning-free",
-  "nemotron-3-ultra-free",
+  "big-pickle",
   "mimo-v2.5-free",
-  "hy3-free",
-  "muse-spark-1.3-contributor-free",
   "ling-3.0-flash-fin-free",
+  "nemotron-3-ultra-free",
+  "nemotron-3.5-lightning-free",
+  "muse-spark-1.3-contributor-free",
+] as const;
+
+export const OPENCODE_ZEN_RESPONSES_MODELS = [
+  "muse-spark-1.3-contributor-free",
 ] as const;
 
 export type OpenCodeZenModel = (typeof OPENCODE_ZEN_FREE_MODELS)[number];
@@ -43,9 +47,14 @@ export function getOpenCodeZenContextWindow(_model: string): number {
 }
 
 const OPENCODE_ZEN_MODEL_SET = new Set<string>(OPENCODE_ZEN_FREE_MODELS);
+const OPENCODE_ZEN_RESPONSES_MODEL_SET = new Set<string>(OPENCODE_ZEN_RESPONSES_MODELS);
 
 export function isOpenCodeZenModel(model: string): boolean {
   if (!model) return false;
   if (OPENCODE_ZEN_MODEL_SET.has(model)) return true;
   return model.endsWith("-free");
+}
+
+export function isOpenCodeZenResponsesModel(model: string): boolean {
+  return OPENCODE_ZEN_RESPONSES_MODEL_SET.has(model);
 }

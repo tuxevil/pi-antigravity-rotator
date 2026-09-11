@@ -41,6 +41,19 @@ describe("model resolution", () => {
 		assert.equal(resolveQuotaModelKey("gpt-oss-120b"), "claude");
 	});
 
+	it("maps all current OpenCode Zen free models to their provider pool", () => {
+		for (const model of [
+			"big-pickle",
+			"mimo-v2.5-free",
+			"ling-3.0-flash-fin-free",
+			"nemotron-3-ultra-free",
+			"nemotron-3.5-lightning-free",
+			"muse-spark-1.3-contributor-free",
+		]) {
+			assert.equal(resolveQuotaModelKey(model), "opencode-zen");
+		}
+	});
+
 	it("maps Claude variants to the Claude quota pool", () => {
 		assert.equal(resolveQuotaModelKey("claude-opus-4-6-thinking"), "claude");
 		assert.equal(resolveQuotaModelKey("claude-sonnet-4-6"), "claude");
@@ -85,13 +98,16 @@ describe("model resolution", () => {
 		assert.ok(MODEL_PRICING["gpt-5.6-sol"]);
 		assert.ok(MODEL_PRICING["gpt-5.6-terra"]);
 		assert.ok(MODEL_PRICING["gpt-5.6-luna"]);
-		assert.ok(MODEL_PRICING["deepseek-v4-flash-free"]);
+		assert.ok(MODEL_PRICING["big-pickle"]);
 		assert.ok(MODEL_PRICING["nemotron-3.5-lightning-free"]);
 		assert.ok(MODEL_PRICING["nemotron-3-ultra-free"]);
 		assert.ok(MODEL_PRICING["mimo-v2.5-free"]);
-		assert.ok(MODEL_PRICING["hy3-free"]);
 		assert.ok(MODEL_PRICING["muse-spark-1.3-contributor-free"]);
 		assert.ok(MODEL_PRICING["ling-3.0-flash-fin-free"]);
+		assert.deepEqual(MODEL_PRICING["big-pickle"], { inputPer1M: 0, outputPer1M: 0 });
+		assert.deepEqual(MODEL_PRICING["muse-spark-1.3-contributor-free"], { inputPer1M: 0, outputPer1M: 0 });
+		assert.equal(MODEL_PRICING["deepseek-v4-flash-free"], undefined);
+		assert.equal(MODEL_PRICING["hy3-free"], undefined);
 
 	});
 

@@ -381,11 +381,7 @@ export function isStaticAntigravityModel(model: string): boolean {
 export function resolveQuotaModelKey(requestModel: string): string | null {
   const lower = requestModel.toLowerCase();
   if (
-    lower === "deepseek-v4-flash-free" ||
-    lower === "nemotron-3.5-lightning-free" ||
-    lower === "nemotron-3-ultra-free" ||
-    lower === "mimo-v2.5-free" ||
-    lower === "hy3-free" ||
+    lower === "big-pickle" ||
     lower.endsWith("-free")
   ) {
     return "opencode-zen";
@@ -937,14 +933,13 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "nemotron-3-super":            { inputPer1M: 0.015,  outputPer1M: 0.60, cachingPer1M: 0.015 },
   "nemotron-3-ultra":            { inputPer1M: 0.10,   outputPer1M: 3.00, cachingPer1M: 0.10 },
 
-  // OpenCode Zen free models — equivalent market rates (USD per 1M tokens) for savings tracking
-  "deepseek-v4-flash-free":      { inputPer1M: 0.14,   outputPer1M: 0.28,  cachingPer1M: 0.0028 },
-  "nemotron-3.5-lightning-free": { inputPer1M: 0.35,   outputPer1M: 1.05 },
-  "nemotron-3-ultra-free":       { inputPer1M: 0.60,   outputPer1M: 1.80 },
-  "mimo-v2.5-free":              { inputPer1M: 0.15,   outputPer1M: 0.60 },
-  "hy3-free":                    { inputPer1M: 0.25,   outputPer1M: 1.00 },
-  "muse-spark-1.3-contributor-free": { inputPer1M: 1.25, outputPer1M: 4.25 },
-  "ling-3.0-flash-fin-free":     { inputPer1M: 0.00,   outputPer1M: 0.00 },
+  // OpenCode Zen free models — zero provider cost (USD per 1M tokens)
+  "big-pickle":                    { inputPer1M: 0.00, outputPer1M: 0.00 },
+  "mimo-v2.5-free":                { inputPer1M: 0.00, outputPer1M: 0.00 },
+  "ling-3.0-flash-fin-free":       { inputPer1M: 0.00, outputPer1M: 0.00 },
+  "nemotron-3-ultra-free":         { inputPer1M: 0.00, outputPer1M: 0.00 },
+  "nemotron-3.5-lightning-free":   { inputPer1M: 0.00, outputPer1M: 0.00 },
+  "muse-spark-1.3-contributor-free": { inputPer1M: 0.00, outputPer1M: 0.00 },
 
 };
 

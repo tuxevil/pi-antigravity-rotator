@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **OpenCode Zen catalog**: Synced the free-model list with OpenCode Zen by adding `big-pickle` and removing the retired `deepseek-v4-flash-free` and `hy3-free` entries.
+- **Muse Spark routing**: Forwarded `muse-spark-1.3-contributor-free` through OpenCode Zen's Responses endpoint while preserving Chat, Responses, and Anthropic compatibility surfaces.
+
 ## [3.7.0] - 2026-09-07
 
 ### Added

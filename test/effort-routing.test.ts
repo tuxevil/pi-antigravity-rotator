@@ -603,14 +603,14 @@ describe("effortRouting config validation", () => {
 		const openCodeZenResult = validateConfig({
 			...baseValidConfig,
 			effortRouting: {
-				"deepseek-v4-flash-free": {
+				"big-pickle": {
 					targets: { medium: "target-model" },
 				},
 			},
 		});
 		assert.equal(openCodeZenResult.ok, false);
 		assert.ok(
-			openCodeZenResult.errors.includes('config.effortRouting.deepseek-v4-flash-free collides with non-Antigravity model "deepseek-v4-flash-free"'),
+			openCodeZenResult.errors.includes('config.effortRouting.big-pickle collides with non-Antigravity model "big-pickle"'),
 		);
 
 		const ollamaResult = validateConfig({

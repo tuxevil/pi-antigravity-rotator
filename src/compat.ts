@@ -73,7 +73,11 @@ import {
   anthropicToOllamaBody,
   parseOllamaNdjson,
 } from "./providers/ollama/translators.js";
-import { OPENCODE_ZEN_CATALOG, isOpenCodeZenModel } from "./providers/opencode-zen/catalog.js";
+import {
+  OPENCODE_ZEN_CATALOG,
+  isOpenCodeZenModel,
+  isOpenCodeZenResponsesModel,
+} from "./providers/opencode-zen/catalog.js";
 import { OPENCODE_ZEN_PROVIDER_ID } from "./providers/opencode-zen/index.js";
 import type {
   ChatMessage,
@@ -1260,7 +1264,7 @@ async function streamResponsesSse(
   context?: RotationAttemptContext,
   rotator?: AccountRotator,
   compressionStats?: CompressionStats | null,
-  upstream: "google" | "ollama" = "google",
+  upstream: "google" | "ollama" | "opencode-zen" = "google",
 ): Promise<CompatCompletion> {
   const nodeStream = Readable.fromWeb(
     body as import("node:stream/web").ReadableStream,
@@ -1281,6 +1285,7 @@ async function streamResponsesSse(
   let reasoningDone = false;
   let reqClosed = false;
   let streamError: string | undefined;
+  let upstreamFinishReason: string | undefined;
   const closeUpstreamForClient = (): void => {
     reqClosed = true;
     if (!nodeStream.destroyed) nodeStream.destroy();
@@ -1338,6 +1343,200 @@ async function streamResponsesSse(
       previousResponseId,
     ),
   });
+
+  interface OpenCodeStreamingToolState {
+    id: string;
+    name: string;
+    arguments: string;
+    itemId: string;
+    outputIndex: number;
+  }
+  const openCodeStreamingTools = new Map<number, OpenCodeStreamingToolState>();
+  const closeReasoning = (): void => {
+    if (reasoningOutputIndex === -1 || reasoningDone) return;
+    reasoningDone = true;
+    writeResponsesEvent(res, {
+      type: "response.reasoning_summary_text.done",
+      item_id: reasoningItemId,
+      output_index: reasoningOutputIndex,
+      summary_index: 0,
+      text: thinkingText,
+    });
+    writeResponsesEvent(res, {
+      type: "response.output_item.done",
+      output_index: reasoningOutputIndex,
+      item: {
+        id: reasoningItemId,
+        type: "reasoning",
+        status: "completed",
+        summary: [{ type: "summary_text", text: thinkingText }],
+      },
+    });
+  };
+  const ensureMessage = (): void => {
+    if (messageOutputIndex !== -1) return;
+    messageOutputIndex = nextOutputIndex++;
+    messageItemId = makeCompatId("msg");
+    writeResponsesEvent(res, {
+      type: "response.output_item.added",
+      output_index: messageOutputIndex,
+      item: {
+        id: messageItemId,
+        type: "message",
+        status: "in_progress",
+        role: "assistant",
+        content: [{ type: "output_text", text: "", annotations: [] }],
+      },
+    });
+  };
+  const emitOpenCodeZenLine = (line: string): void => {
+    if (!line.startsWith("data:")) return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") return;
+    try {
+      const parsed = JSON.parse(payload) as Record<string, unknown>;
+      if (!isRecord(parsed)) return;
+      const usage = isRecord(parsed.usage) ? parsed.usage : null;
+      if (usage) {
+        if (typeof usage.prompt_tokens === "number") inputTokens = usage.prompt_tokens;
+        if (typeof usage.completion_tokens === "number") outputTokens = usage.completion_tokens;
+        if (typeof usage.input_tokens === "number") inputTokens = usage.input_tokens;
+        if (typeof usage.output_tokens === "number") outputTokens = usage.output_tokens;
+      }
+      if (!Array.isArray(parsed.choices) || parsed.choices.length === 0) return;
+      const choice = parsed.choices[0];
+      if (!isRecord(choice)) return;
+      if (typeof choice.finish_reason === "string" && choice.finish_reason) {
+        upstreamFinishReason = choice.finish_reason;
+      }
+      const delta = isRecord(choice.delta) ? choice.delta : {};
+      const reasoningDelta = typeof delta.reasoning_content === "string"
+        ? delta.reasoning_content
+        : "";
+      if (reasoningDelta) {
+        if (reasoningOutputIndex === -1) {
+          reasoningOutputIndex = nextOutputIndex++;
+          reasoningItemId = makeCompatId("rs");
+          writeResponsesEvent(res, {
+            type: "response.output_item.added",
+            output_index: reasoningOutputIndex,
+            item: {
+              id: reasoningItemId,
+              type: "reasoning",
+              status: "in_progress",
+              summary: [],
+            },
+          });
+        }
+        thinkingText += reasoningDelta;
+        writeResponsesEvent(res, {
+          type: "response.reasoning_summary_text.delta",
+          item_id: reasoningItemId,
+          output_index: reasoningOutputIndex,
+          summary_index: 0,
+          delta: reasoningDelta,
+        });
+      }
+
+      const contentDelta = typeof delta.content === "string" ? delta.content : "";
+      if (contentDelta) {
+        closeReasoning();
+        ensureMessage();
+        text += contentDelta;
+        writeResponsesEvent(res, {
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          output_index: messageOutputIndex,
+          content_index: 0,
+          delta: contentDelta,
+        });
+      }
+
+      if (Array.isArray(delta.tool_calls)) {
+        for (const rawToolCall of delta.tool_calls) {
+          if (!isRecord(rawToolCall) || !isRecord(rawToolCall.function)) continue;
+          const index = typeof rawToolCall.index === "number"
+            ? rawToolCall.index
+            : openCodeStreamingTools.size;
+          const fn = rawToolCall.function;
+          const name = typeof fn.name === "string" && fn.name ? fn.name : "unknown";
+          const args = typeof fn.arguments === "string" ? fn.arguments : "";
+          let state = openCodeStreamingTools.get(index);
+          if (!state) {
+            closeReasoning();
+            const id = typeof rawToolCall.id === "string" && rawToolCall.id
+              ? rawToolCall.id
+              : `call_${Date.now().toString(36)}_${toolCallIndex++}`;
+            state = {
+              id,
+              name,
+              arguments: "",
+              itemId: makeCompatId("fc"),
+              outputIndex: nextOutputIndex++,
+            };
+            openCodeStreamingTools.set(index, state);
+            toolCalls.push({
+              id,
+              type: "function",
+              function: { name, arguments: "" },
+            });
+            writeResponsesEvent(res, {
+              type: "response.output_item.added",
+              output_index: state.outputIndex,
+              item: {
+                id: state.itemId,
+                type: "function_call",
+                status: "in_progress",
+                call_id: state.id,
+                name: state.name,
+                arguments: "",
+              },
+            });
+          } else if (name !== "unknown") {
+            state.name = name;
+            const call = toolCalls.find((candidate) => candidate.id === state?.id);
+            if (call) call.function.name = name;
+          }
+          if (args) {
+            state.arguments += args;
+            const call = toolCalls.find((candidate) => candidate.id === state?.id);
+            if (call) call.function.arguments = state.arguments;
+            writeResponsesEvent(res, {
+              type: "response.function_call_arguments.delta",
+              item_id: state.itemId,
+              output_index: state.outputIndex,
+              delta: args,
+            });
+          }
+        }
+      }
+    } catch {
+      // Ignore malformed compatibility chunks; the normal stream finaliser
+      // still returns a valid Responses envelope when possible.
+    }
+  };
+  const closeOpenCodeTools = (): void => {
+    for (const state of openCodeStreamingTools.values()) {
+      writeResponsesEvent(res, {
+        type: "response.function_call_arguments.done",
+        item_id: state.itemId,
+        output_index: state.outputIndex,
+        arguments: state.arguments,
+      });
+      writeResponsesEvent(res, {
+        type: "response.output_item.done",
+        output_index: state.outputIndex,
+        item: {
+          id: state.itemId,
+          type: "function_call",
+          status: "completed",
+          call_id: state.id,
+          name: state.name,
+          arguments: state.arguments,
+        },
+      });
+    }
+  };
 
   let tailBuffer = "";
   const emitOllamaLine = (line: string): void => {
@@ -1469,6 +1668,10 @@ async function streamResponsesSse(
         tailBuffer = tailBuffer.slice(newlineIdx + 1);
         if (upstream === "ollama") {
           if (line) emitOllamaLine(line);
+          continue;
+        }
+        if (upstream === "opencode-zen") {
+          emitOpenCodeZenLine(line);
           continue;
         }
         if (!line.startsWith("data:")) continue;
@@ -1676,6 +1879,7 @@ async function streamResponsesSse(
     firstByteMs,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     streamError,
+    finishReason: upstreamFinishReason,
     rawResponse: {
       id: responseId,
       object: "response",
@@ -1715,6 +1919,7 @@ async function streamResponsesSse(
         },
       });
     }
+    if (upstream === "opencode-zen") closeOpenCodeTools();
     if (messageOutputIndex !== -1) {
       writeResponsesEvent(res, {
         type: "response.output_text.done",
@@ -1797,9 +2002,11 @@ async function completeResponsesViaRotator(
         context,
         rotator,
         options?.compressionStats,
-        (rotator?.getOllamaModels?.() ?? []).includes(body.model)
-          ? "ollama"
-          : "google",
+        isOpenCodeZenResponsesModel(body.model)
+          ? "opencode-zen"
+          : (rotator?.getOllamaModels?.() ?? []).includes(body.model)
+            ? "ollama"
+            : "google",
       );
       if (completion.inputTokens > 0 || completion.outputTokens > 0) {
         rotator.recordTokenUsage(
@@ -2584,7 +2791,7 @@ export async function handleOpenAIChatCompletions(
   const started = Date.now();
   const streamMode = validation.value.stream ? "openai" : "none";
   const bodyToForward: RequestBody = isOpenCodeZenModel(chatReq.model)
-    ? { project: "", model: chatReq.model, request: chatReq }
+    ? { project: "", model: chatReq.model, request: chatReq, requestType: "openai-chat" }
     : (rotator?.getOllamaModels?.().includes(chatReq.model) ? openAIToOllamaBody(chatReq) : openAIToAntigravityBody(chatReq));
   const result = await completeViaRotator(
     req,
@@ -2749,7 +2956,7 @@ export async function handleOpenAIResponsesCreate(
     : converted.chatRequest;
 
   const requestBody: RequestBody = isOpenCodeZenModel(chatRequest.model)
-    ? { project: "", model: chatRequest.model, request: chatRequest }
+    ? { project: "", model: chatRequest.model, request: chatRequest, requestType: "openai-responses" }
     : (rotator?.getOllamaModels?.().includes(chatRequest.model) ? openAIToOllamaBody(chatRequest) : openAIToAntigravityBody(chatRequest));
   requestBody.requestId = responseId;
 
@@ -3003,7 +3210,7 @@ export async function handleAnthropicMessages(
   const started = Date.now();
   const streamMode = validation.value.stream ? "anthropic" : "none";
   const bodyToForward: RequestBody = isOpenCodeZenModel(anthropicReq.model)
-    ? { project: "", model: anthropicReq.model, request: anthropicToOpenAIChatRequest(anthropicReq) }
+    ? { project: "", model: anthropicReq.model, request: anthropicToOpenAIChatRequest(anthropicReq), requestType: "anthropic" }
     : (rotator?.getOllamaModels?.().includes(anthropicReq.model) ? anthropicToOllamaBody(anthropicReq) : anthropicToAntigravityBody(anthropicReq));
   const result = await completeViaRotator(
     req,

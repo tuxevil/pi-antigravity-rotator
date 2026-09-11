@@ -65,7 +65,7 @@ Originally built as a multi-account rotator for Google Antigravity. It now gener
 ## v3.2 Highlights
 
 - **Gemini 3.7 Flash Support**: Full support for Google's Gemini 3.7 Flash models (`gemini-3.7-flash`, `gemini-3.7-flash-tiered`, `gemini-3.7-flash-high`, `gemini-3.7-flash-medium`, `gemini-3.7-flash-low`) with reasoning effort / thinking level translation, pricing, dashboard visualization, and telemetry.
-- **OpenCode Zen Provider**: Added `opencode-zen` provider support (`deepseek-v4-flash-free`, `nemotron-3.5-lightning-free`, `nemotron-3-ultra-free`, `mimo-v2.5-free`, `hy3-free`, `muse-spark-1.3-contributor-free`, `ling-3.0-flash-fin-free`) with static API key validation, onboarding UI tabs in `/login` and `/login-cli`, real-time quota tracking, and market-based cost savings estimates.
+- **OpenCode Zen Provider**: Added `opencode-zen` provider support (`big-pickle`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, `muse-spark-1.3-contributor-free`) with static API key validation, onboarding UI tabs in `/login` and `/login-cli`, real-time quota tracking, and cost tracking.
 - **Streaming Tool Call Reliability**: Stateful preservation of tool call names and IDs across fragmented SSE chunks in multi-turn tool calling sessions.
 - **Standardized Rate-Limit Retries**: Error responses for 429 now provide `retryAfterMs` and `retry_after_seconds` headers and payload data for fine-grained cooldown handling.
 - **Provider Precedence Order**: Standardized provider order across quota pools, credentials, and UI displays (`google-antigravity` -> `ollama` -> `opencode-zen` -> `openai-codex`).

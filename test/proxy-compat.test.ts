@@ -23,6 +23,7 @@ import { stopVersionChecker } from "../src/version-check.js";
 import { stopNotificationPoller } from "../src/notification-poller.js";
 import type { AccountRotator } from "../src/rotator.js";
 import { logger } from "../src/logger.js";
+import { OPENCODE_ZEN_RESPONSES_URL } from "../src/providers/opencode-zen/catalog.js";
 
 type Capture = {
 	url: string;
@@ -903,6 +904,93 @@ describe("effort-based routing endpoint e2e", () => {
 			proxy.closeAllConnections?.();
 			await closeServer(proxy);
 			await closeServer(upstream.server);
+		}
+	});
+
+	it("routes Muse Spark through OpenCode Responses for local Responses clients", async () => {
+		const account = createAccount();
+		account.config.credentials = [
+			{ provider: "opencode-zen", apiKey: "zen-secret" },
+		];
+		const tracking: Tracking = { requestLogs: [], latencies: [], tokenUsage: [] };
+		const upstreamBodies: Array<Record<string, unknown>> = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input, init) => {
+			if (String(input) !== OPENCODE_ZEN_RESPONSES_URL) {
+				return originalFetch(input, init);
+			}
+			const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+			upstreamBodies.push(body);
+			const headers = new Headers(init?.headers);
+			assert.ok(headers.get("x-opencode-session"));
+			assert.ok(headers.get("x-opencode-request"));
+			if (body.stream === true) {
+				return new Response([
+					"event: response.output_text.delta\n",
+					'data: {"type":"response.output_text.delta","delta":"streamed"}\n\n',
+					"event: response.completed\n",
+					'data: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":1}}}\n\n',
+				].join(""), { status: 200, headers: { "content-type": "text/event-stream" } });
+			}
+			return new Response(JSON.stringify({
+				id: "resp_upstream",
+				object: "response",
+				status: "completed",
+				output: [{ type: "message", content: [{ type: "output_text", text: "non-streamed" }] }],
+				output_text: "non-streamed",
+				usage: { input_tokens: 3, output_tokens: 2 },
+			}), { status: 200, headers: { "content-type": "application/json" } });
+		}) as typeof fetch;
+
+		const rotator = createE2eRotator(account, tracking);
+		const proxy = startProxy(rotator, 0, "127.0.0.1");
+		await once(proxy, "listening");
+		const port = (proxy.address() as AddressInfo).port;
+		try {
+			const nonStream = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					model: "muse-spark-1.3-contributor-free",
+					input: "Hello",
+					store: false,
+				}),
+			});
+			assert.equal(nonStream.status, 200);
+			const nonStreamJson = await nonStream.json() as {
+				object: string;
+				output_text: string;
+				id: string;
+			};
+			assert.equal(nonStreamJson.object, "response");
+			assert.equal(nonStreamJson.output_text, "non-streamed");
+			assert.match(nonStreamJson.id, /^resp_/);
+
+			const stream = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					model: "muse-spark-1.3-contributor-free",
+					input: "Hello",
+					stream: true,
+					store: false,
+				}),
+			});
+			assert.equal(stream.status, 200);
+			const streamText = await stream.text();
+			assert.match(streamText, /response\.created/);
+			assert.match(streamText, /response\.output_text\.delta/);
+			assert.match(streamText, /"delta":"streamed"/);
+			assert.match(streamText, /response\.completed/);
+			assert.equal(upstreamBodies.length, 2);
+			assert.deepEqual(upstreamBodies.map((body) => body.input), [
+				[{ role: "user", content: [{ type: "input_text", text: "Hello" }] }],
+				[{ role: "user", content: [{ type: "input_text", text: "Hello" }] }],
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+			proxy.closeAllConnections?.();
+			await closeServer(proxy);
 		}
 	});
 

@@ -82,7 +82,7 @@ tuxevil-rotator login --provider opencode-zen
 The CLI prompts for an optional email/label and your OpenCode Zen API key. The account is stored with
 `provider: "opencode-zen"` (or added to an existing email row under `credentials: [{ provider: "opencode-zen", apiKey }]`) and is validated against the model catalog before saving. The dashboard page at `/login-cli` also includes an **OpenCode Zen** tab for web-based key entry.
 
-Supported models: `deepseek-v4-flash-free`, `nemotron-3.5-lightning-free`, `nemotron-3-ultra-free`, `mimo-v2.5-free`, `hy3-free`, `muse-spark-1.3-contributor-free`, and `ling-3.0-flash-fin-free`. Rate limits are tracked on a per-model basis to prevent temporary 429s on one model from blocking others.
+Supported models: `big-pickle`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, and `muse-spark-1.3-contributor-free`. Muse Spark 1.3 is forwarded through OpenCode Zen's `/responses` endpoint. Rate limits are tracked on a per-model basis to prevent temporary 429s on one model from blocking others.
 
 ## Migrating from the Legacy Ollama Rotator
 

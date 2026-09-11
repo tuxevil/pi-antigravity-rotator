@@ -1206,13 +1206,12 @@ var MODEL_PRICING_CLIENT = {
   "nemotron-3-super": { input: 0.015, output: 0.6 },
   "nemotron-3-ultra": { input: 0.1, output: 3.0 },
   // OpenCode Zen free models — mirrors MODEL_PRICING in src/types.ts
-  "deepseek-v4-flash-free": { input: 0.14, output: 0.28 },
-  "nemotron-3.5-lightning-free": { input: 0.35, output: 1.05 },
-  "nemotron-3-ultra-free": { input: 0.6, output: 1.8 },
-  "mimo-v2.5-free": { input: 0.15, output: 0.6 },
-  "hy3-free": { input: 0.25, output: 1.0 },
-  "muse-spark-1.3-contributor-free": { input: 1.25, output: 4.25 },
+  "big-pickle": { input: 0, output: 0 },
+  "mimo-v2.5-free": { input: 0, output: 0 },
   "ling-3.0-flash-fin-free": { input: 0, output: 0 },
+  "nemotron-3-ultra-free": { input: 0, output: 0 },
+  "nemotron-3.5-lightning-free": { input: 0, output: 0 },
+  "muse-spark-1.3-contributor-free": { input: 0, output: 0 },
   "ling-3.0-tiny-free": { input: 0.05, output: 0.2 },
   "laguna-s-2.1-free": { input: 0.2, output: 0.8 },
 };

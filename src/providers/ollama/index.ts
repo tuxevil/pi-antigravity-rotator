@@ -1,7 +1,7 @@
 // Ollama Cloud provider adapter.
 //
 // Implements the ProviderAdapter contract for Ollama Cloud (ollama.com):
-// static API keys, NDJSON `/api/chat` forwarding, and session/weekly
+// static API keys, NDJSON `/api/chat` forwarding, and monthly
 // usage-fraction quota pools with exhaustion prediction.
 //
 // Ported from the ollama-rotator project (same author) into the
@@ -18,6 +18,7 @@ import { runLogin } from "./login.js";
 import { getOllamaApiKey, validateCredentials } from "./credentials.js";
 import { UsagePredictor, type ExhaustionPrediction } from "./prediction.js";
 import type { AccountRuntime } from "../../types.js";
+import { OLLAMA_QUOTA_POOL_KEY } from "../credential-helpers.js";
 
 const OLLAMA_TIER_RANKING = {
   max: 0,
@@ -75,7 +76,8 @@ export const ollamaAdapter: ProviderAdapter = {
   createStreamAccumulator: () => new OllamaNdjsonAccumulator(),
 
   getKickstartModelForPool(quotaModelKey: string): string | undefined {
-    // Only the session pool can be kickstarted for Ollama accounts.
+    // The current monthly pool has no idle timer to start. Keep the legacy
+    // session path for operators upgrading from the old API shape.
     return quotaModelKey === "session" ? OLLAMA_KICKSTART_MODEL : undefined;
   },
 
@@ -85,7 +87,7 @@ export const ollamaAdapter: ProviderAdapter = {
   },
 
   getPoolKey(): string {
-    return "session";
+    return OLLAMA_QUOTA_POOL_KEY;
   },
 
   getBenchmark() {

@@ -23,6 +23,7 @@ describe("provider pool and credential ordering", () => {
     assert.equal(getProviderIdForPoolKey("gemini"), "google-antigravity");
     assert.equal(getProviderIdForPoolKey("session"), "ollama");
     assert.equal(getProviderIdForPoolKey("weekly"), "ollama");
+    assert.equal(getProviderIdForPoolKey("monthly"), "ollama");
     assert.equal(getProviderIdForPoolKey("opencode-zen"), "opencode-zen");
     assert.equal(getProviderIdForPoolKey("opencode-zen:free"), "opencode-zen");
     assert.equal(getProviderIdForPoolKey("openai-codex"), "openai-codex");

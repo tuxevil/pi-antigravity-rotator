@@ -104,10 +104,21 @@ export const PROVIDER_ORDER_RANK: Record<string, number> = {
   "openai-codex": 4,
 };
 
+// Ollama Cloud currently exposes one account-wide usage pool. Keep the old
+// names as aliases so persisted state and older API responses remain readable
+// during the transition.
+export const OLLAMA_QUOTA_POOL_KEY = "monthly";
+
+export function isOllamaQuotaPoolKey(poolKey: string): boolean {
+  return poolKey === OLLAMA_QUOTA_POOL_KEY ||
+    poolKey === "session" ||
+    poolKey === "weekly";
+}
+
 export function getProviderIdForPoolKey(poolKey: string): string {
   if (poolKey.startsWith("codex:") || poolKey.startsWith("openai-codex")) return "openai-codex";
   if (poolKey.startsWith("opencode-zen:") || poolKey === "opencode-zen") return "opencode-zen";
-  if (poolKey === "session" || poolKey === "weekly") return "ollama";
+  if (isOllamaQuotaPoolKey(poolKey)) return "ollama";
   if (poolKey === "claude" || poolKey === "gemini") return "google-antigravity";
   if (PROVIDER_ORDER_RANK[poolKey] !== undefined) return poolKey;
   return DEFAULT_PROVIDER;

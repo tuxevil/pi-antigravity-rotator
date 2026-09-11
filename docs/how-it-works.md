@@ -124,7 +124,7 @@ never served by an Antigravity or Ollama account (and vice versa):
 | Pool | Provider id | Models | Quota keys | Project breaker | Provider-local cooldown |
 |------|-------------|--------|------------|-----------------|-------------------------|
 | Google Antigravity | `google-antigravity` | Gemini, Claude, gpt-oss variants | `claude`, `gemini` | Yes (`projectId` + model) | Yes (per-account) |
-| Ollama Cloud | `ollama` | Ollama Cloud catalog from `/api/tags` | `session`, `weekly` | No (Ollama has no project concept) | Yes (per-account) |
+| Ollama Cloud | `ollama` | Ollama Cloud catalog from `/api/tags` | `monthly` | No (Ollama has no project concept) | Yes (per-account) |
 | OpenAI Codex | `openai-codex` | `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.6-sol` (paid plans only) | `openai-codex`, `openai-codex-spark` (when present) | **Disabled** — Codex has no `projectId` | Yes (per-account, 30 s–5 min from `Retry-After`) |
 
 Codex-specific behaviour worth remembering:
@@ -147,7 +147,7 @@ Codex-specific behaviour worth remembering:
 
 Three mechanisms trigger rotation, scoped to the specific model:
 
-1. **Quota-based** (primary) — Polls each provider's quota API on its own cadence (Antigravity and Ollama every 5 minutes by default; Codex `${CODEX_USAGE_URL}` with a 60 s cache). When a model's remaining quota drops by `rotateOnQuotaDrop` percentage points (default: 20%), that model rotates to the next eligible account in the same provider pool. Other models stay on their current accounts. Codex has its own quota keys (`openai-codex` and `openai-codex-spark`); Ollama tracks `session` and `weekly`; Antigravity tracks `claude` and `gemini`.
+1. **Quota-based** (primary) — Polls each provider's quota API on its own cadence (Antigravity and Ollama every 5 minutes by default; Codex `${CODEX_USAGE_URL}` with a 60 s cache). When a model's remaining quota drops by `rotateOnQuotaDrop` percentage points (default: 20%), that model rotates to the next eligible account in the same provider pool. Other models stay on their current accounts. Codex has its own quota keys (`openai-codex` and `openai-codex-spark`); Ollama tracks `monthly`; Antigravity tracks `claude` and `gemini`.
 
 2. **Request-count** (fallback) — Before forwarding a request, the rotator checks how many requests the current account has already served for that specific model and rotates once it reaches `requestsPerRotation` (default: 5). Per-model counters are persisted so restarts do not reset the threshold. By default this fallback is only used when quota data for that model is still unknown; set `useRequestCountRotationWhenQuotaUnknownOnly` to `false` to keep request-count rotation active even when quota telemetry exists.
 

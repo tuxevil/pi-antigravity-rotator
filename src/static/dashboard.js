@@ -50,7 +50,7 @@ function getQuotaItemProviderRank(q) {
   if (!p) {
     var k = String(q.modelKey || "");
     if (k === "claude" || k === "gemini") p = "google-antigravity";
-    else if (k === "session" || k === "weekly") p = "ollama";
+    else if (k === "monthly" || k === "session" || k === "weekly") p = "ollama";
     else if (k.indexOf("opencode") === 0 || k === "opencode-zen") p = "opencode-zen";
     else if (k.indexOf("codex") === 0 || k.indexOf("openai-codex") === 0) p = "openai-codex";
     else p = "google-antigravity";

@@ -7,18 +7,19 @@
 // that window. The rotator rounds these to whole percents for routing;
 // this store keeps the raw values so operators can correlate tokens
 // (from `rotator_spend_logs`) against usage fractions over time and
-// calibrate the real per-model session/weekly budgets without burning
+// calibrate the real per-model monthly budget without burning
 // quota (see docs/usage-calibration.md).
 //
 // Postgres-only, like spend logs: when no database is configured the
 // store is a silent no-op.
 //
 // The table is created lazily on first write. A typical deployment
-// produces ~2 rows per account per poll (session + weekly), which at the
+// current API produces ~1 row per account per poll (monthly), which at the
 // default 5-minute poll interval is ~576 rows/account/day.
 
 import { rotatorEnv } from "../../env.js";
 import type { OllamaUsageResponse } from "./quota.js";
+import { OLLAMA_QUOTA_POOL_KEY } from "../credential-helpers.js";
 
 const RETENTION_DEFAULT_DAYS = 14;
 
@@ -27,7 +28,7 @@ let schemaReady: Promise<void> | null = null;
 export interface QuotaPollRecord {
   accountEmail: string;
   polledAt: string;
-  pool: "session" | "weekly";
+  pool: "monthly" | "session" | "weekly";
   usageRaw: number;
   percentRemaining: number;
   /** Per-model request counts observed inside this pool's window. */
@@ -93,8 +94,9 @@ export async function recordQuotaPoll(record: QuotaPollRecord): Promise<void> {
 }
 
 /**
- * Persist both pools from a parsed `GET /api/usage` response. No-op when
- * the response lacks the expected shape.
+ * Persist the current monthly pool, or both legacy pools when talking to an
+ * older `GET /api/usage` response. No-op when the response lacks the expected
+ * shape.
  */
 export async function recordUsagePoll(
   accountEmail: string,
@@ -104,7 +106,13 @@ export async function recordUsagePoll(
   const limits = data?.limits;
   if (!limits || typeof limits !== "object") return;
 
-  for (const pool of ["session", "weekly"] as const) {
+  const monthlyLimit = limits[OLLAMA_QUOTA_POOL_KEY];
+  const pools: Array<"monthly" | "session" | "weekly"> =
+    monthlyLimit && typeof monthlyLimit === "object"
+      ? [OLLAMA_QUOTA_POOL_KEY]
+      : ["session", "weekly"];
+
+  for (const pool of pools) {
     const info = limits[pool] as
       | { usage?: number | string; models?: unknown[] }
       | undefined;

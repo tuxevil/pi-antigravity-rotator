@@ -112,4 +112,4 @@ Returns full JSON status including:
 - Circuit breaker states
 - Daily budget counters
 - Token usage statistics
-- Per-provider quota keys: Antigravity `claude` / `gemini`, Ollama `session` / `weekly`, Codex `openai-codex` (and `openai-codex-spark` when the endpoint exposes it)
+- Per-provider quota keys: Antigravity `claude` / `gemini`, Ollama `monthly`, Codex `openai-codex` (and `openai-codex-spark` when the endpoint exposes it)

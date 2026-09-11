@@ -59,6 +59,7 @@ import {
   primaryProviderId,
   findProviderForModel,
   getProviderIdForPoolKey,
+  isOllamaQuotaPoolKey,
   PROVIDER_ORDER,
 } from "./providers/registry.js";
 import type { QuotaFetchContext } from "./providers/adapter.js";
@@ -191,6 +192,8 @@ interface AccountRequestWaiter {
 const QUOTA_POOL_FOR_KICKSTART_MODEL: Record<string, string> = {
   "gpt-oss-120b-medium": "claude",
   "gemini-3-flash": "gemini",
+  // Legacy manual kickstart compatibility. New Ollama quota polling/routes
+  // use `monthly`; this alias is only for callers that still name `session`.
   "gpt-oss:20b": "session",
 };
 
@@ -1044,10 +1047,9 @@ export class AccountRotator {
           ? account.quota.find((candidate) => candidate.providerId === OPENCODE_ZEN_PROVIDER_ID)
           : undefined);
     if (!q) return -1;
-    // Ollama: the session pool is gated by the weekly pool. If the weekly
-    // quota is fully exhausted (0%), the account cannot accept any requests
-    // regardless of how much session quota remains. Treat it as 0 so the
-    // account is skipped at all call sites that check `quota === 0`.
+    // Legacy Ollama state used a session pool gated by a weekly pool. Keep
+    // that compatibility rule only for old in-memory state; current Ollama
+    // accounts expose one monthly pool and need no secondary gate.
     if (quotaKey === "session") {
       const weekly = account.quota.find((w) => w.modelKey === "weekly");
       if (weekly && weekly.percentRemaining === 0) return 0;
@@ -1059,7 +1061,7 @@ export class AccountRotator {
   private getModelTimerType(
     account: AccountRuntime,
     modelKey: string,
-  ): "fresh" | "5h" | "7d" {
+  ): ModelQuota["timerType"] {
     const quotaKey = isStaticAntigravityModel(modelKey)
       ? modelKey
       : dynamicCatalog.resolveQuotaPool(modelKey) ?? modelKey;
@@ -1096,12 +1098,7 @@ export class AccountRotator {
     const quota = account.quota.find((candidate) => candidate.modelKey === poolKey);
     const providerId =
       quota?.providerId ??
-      (poolKey === "session"
-        ? "ollama"
-        : poolKey === CODEX_QUOTA_MODEL_KEY ||
-            poolKey.startsWith(`${CODEX_QUOTA_MODEL_KEY}:`)
-          ? "openai-codex"
-          : DEFAULT_PROVIDER);
+      getProviderIdForPoolKey(poolKey);
     if (!hasCredential(account.config, providerId)) return null;
 
     const adapter = getProviderAdapter(providerId);
@@ -1494,13 +1491,13 @@ export class AccountRotator {
       account.cooldownsByModel[this.resolveQuotaStateKey(modelKey)] ?? 0;
     if (modelCooldown > now)
       return { reason: "cooldown", detail: "model cooldown active" };
-    // Ollama Cloud (pool key "session") imposes no per-account
+    // Ollama Cloud quota pools impose no per-account
     // concurrency limit — the in-flight check would otherwise wedge
     // long-running streams while the same model on another account is
     // still serving. Antigravity keeps the per-account limit.
     if (
       !ignoreConcurrency &&
-      modelKey !== "session" &&
+      !isOllamaQuotaPoolKey(modelKey) &&
       account.inFlightRequests >=
       (this.config.maxConcurrentRequestsPerAccount ?? 5)
     ) {
@@ -2615,11 +2612,14 @@ export class AccountRotator {
     }
   }
 
-    getPredictionSummary(): Record<string, ExhaustionPrediction> {
+  getPredictionSummary(): Record<string, ExhaustionPrediction> {
     const result: Record<string, ExhaustionPrediction> = {};
     const now = Date.now();
     for (const account of this.accounts) {
       if (!hasCredential(account.config, "ollama")) continue;
+      // The predictor is calibrated for the legacy dual-window response.
+      // Current monthly usage remains routable, but has no calibrated token
+      // budget yet, so do not publish a misleading forecast for it.
       const session = account.quota.find((q) => q.modelKey === "session");
       const weekly = account.quota.find((q) => q.modelKey === "weekly");
       if (
@@ -2994,12 +2994,18 @@ export class AccountRotator {
       const quota = account.quota.find(
         (candidate) =>
           candidate.modelKey === modelKey &&
-          candidate.providerId === DEFAULT_PROVIDER,
+          (candidate.providerId === DEFAULT_PROVIDER ||
+            candidate.providerId === "ollama" ||
+            candidate.providerId === undefined),
       );
       if (quota) {
         quota.percentRemaining = 0;
         quota.resetTime = new Date(now + cooldownMs).toISOString();
-        quota.timerType = cooldownMs < 6 * 60 * 60 * 1000 ? "5h" : "7d";
+        quota.timerType = quota.modelKey === "monthly"
+          ? "monthly"
+          : cooldownMs < 6 * 60 * 60 * 1000
+            ? "5h"
+            : "7d";
       }
     }
 
@@ -3025,7 +3031,9 @@ export class AccountRotator {
     const poolKey = model ? this.resolveAccountPoolKey(account, model) : null;
     const isAccountScopedProvider =
       providerResourceExhausted ||
-      (poolKey && (poolKey.startsWith("opencode-zen") || poolKey.startsWith("session")));
+      (poolKey &&
+        (poolKey.startsWith("opencode-zen") ||
+          getProviderIdForPoolKey(poolKey) === "ollama"));
 
     if (isAccountScopedProvider) {
       // Account-level daily/weekly quota exhaustion or per-key rate limit is not a model outage:
@@ -3514,11 +3522,11 @@ export class AccountRotator {
     const modelCooldown =
       account.cooldownsByModel[this.resolveQuotaStateKey(modelKey)] ?? 0;
     if (modelCooldown > now) return false;
-    // Ollama Cloud (pool key "session") imposes no per-account concurrency
+    // Ollama Cloud quota pools impose no per-account concurrency
     // limit. Antigravity keeps it so long streams don't pile up on a
     // single account while siblings sit idle.
     if (
-      modelKey !== "session" &&
+      !isOllamaQuotaPoolKey(modelKey) &&
       account.inFlightRequests >=
       (this.config.maxConcurrentRequestsPerAccount ?? 5)
     )
@@ -3556,9 +3564,9 @@ export class AccountRotator {
   startRequest(account: AccountRuntime, modelKey?: string): void {
     const key = modelKey ?? "__default__";
     // Ollama Cloud imposes no per-account concurrency limit, so its
-    // requests must not activate in-flight tracking at all (pool key
-    // "session" and raw ollama model names from benchmark probes).
-    if (key === "session" || this.ollamaModels.has(key)) {
+    // requests must not activate in-flight tracking at all (the monthly
+    // pool and raw ollama model names from benchmark probes).
+    if (isOllamaQuotaPoolKey(key) || this.ollamaModels.has(key)) {
       this.consumeTokenBucket(account, Date.now());
       return;
     }
@@ -3570,7 +3578,7 @@ export class AccountRotator {
 
   finishRequest(account: AccountRuntime, modelKey?: string): void {
     const key = modelKey ?? "__default__";
-    if (key === "session" || this.ollamaModels.has(key)) return;
+    if (isOllamaQuotaPoolKey(key) || this.ollamaModels.has(key)) return;
     account.inFlightByModel[key] = Math.max(
       0,
       (account.inFlightByModel[key] ?? 0) - 1,
@@ -3667,10 +3675,10 @@ export class AccountRotator {
   private resolvePoolKey(account: AccountRuntime, key: string): string {
     if (
       hasCredential(account.config, "ollama") &&
-      key !== "session" &&
+      !isOllamaQuotaPoolKey(key) &&
       this.ollamaModels.has(key)
     ) {
-      return "session";
+      return "monthly";
     }
     return key;
   }

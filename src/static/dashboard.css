@@ -416,6 +416,7 @@
   .timer-fresh { background: rgba(52, 211, 153, 0.1); color: var(--green); }
   .timer-7d { background: rgba(96, 165, 250, 0.1); color: var(--blue); }
   .timer-5h { background: rgba(251, 191, 36, 0.1); color: var(--yellow); }
+  .timer-monthly { background: rgba(96, 165, 250, 0.1); color: var(--blue); }
 
   .quota-bar-bg {
     flex: 1;

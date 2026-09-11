@@ -591,6 +591,10 @@ describe("dashboard", () => {
       false,
     );
     assert.equal(
+      isKickstartSupported({ modelKey: "monthly", providerId: "ollama" }),
+      false,
+    );
+    assert.equal(
       isKickstartSupported({ modelKey: "gemini", providerId: "google-antigravity" }),
       true,
     );

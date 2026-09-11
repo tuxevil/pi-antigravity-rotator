@@ -319,9 +319,9 @@ export interface ModelQuota {
   /** Raw usage fraction (0..1) when the provider reports one (Ollama). */
   usageRaw?: number;
   resetTime: string | null;
-  // Timer classification based on resetTime duration
-  // "fresh" = no active timer, "5h" = short timer, "7d" = long timer
-  timerType: "fresh" | "5h" | "7d";
+  // Timer classification based on resetTime duration. Ollama's current
+  // account-wide pool is monthly and has no provider-supplied reset time.
+  timerType: "fresh" | "5h" | "7d" | "monthly";
 }
 
 // Model key mapping for the quota API. One entry per family: all Claude

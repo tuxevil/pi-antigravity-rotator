@@ -141,7 +141,7 @@ Existing `enc:v1` records remain decryptable during migration; newly written rec
 - **Multi-account load balancing** — Distributes traffic across a pool of accounts with per-model independent routing
 - **One-command account setup** — `tuxevil-rotator login` auto-discovers (or provisions) the Cloud Code companion project for brand-new Google accounts; `login --provider ollama` adds an Ollama Cloud API key to an existing email or creates a new one
 - **Smart rotation & health scoring** — Six routing policies (`timer-first`, `tier-first`, `quota-first`, `hybrid`, `sequential-quota`, `sticky-quota`) with composite health scores per account
-- **Real-time quota monitoring** — Polls each provider's quota API on its own cadence; Antigravity quota pools are consolidated by family (`claude`, `gemini`) and Ollama reports session/weekly usage
+- **Real-time quota monitoring** — Polls each provider's quota API on its own cadence; Antigravity quota pools are consolidated by family (`claude`, `gemini`) and Ollama reports monthly usage
 - **Infringement & abuse detection** — Flags accounts on enforcement signals and triggers protective pause to preserve the rest of the pool
 - **Virtual Keys & access control** — Issue scoped `rk-...` keys for teams, agents, or CI pipelines with per-key model restrictions
 - **Spend logging & audit inspector** — Full request/response audit trail with 6-decimal USD cost estimates for both Antigravity and Ollama traffic (requires PostgreSQL)
@@ -264,7 +264,7 @@ After starting the proxy, open `http://localhost:51200/dashboard`.
 
 The dashboard shows:
 - **Routing state** — real-time status, uptime, requests, protective pause timers
-- **Account cards** — quota bars (Antigravity family buckets `claude` / `gemini`; Ollama session/weekly usage), per-model timers, health scores, flagged alerts
+- **Account cards** — quota bars (Antigravity family buckets `claude` / `gemini`; Ollama monthly usage), per-model timers, health scores, flagged alerts
 - **Token usage & savings** — interactive chart with time ranges and CSV/JSON export (real USD for both providers)
 - **Latency (p50/p95)** — per-model TTFB and total duration
 - **Activity heatmap** — 60-day GitHub-style request intensity grid

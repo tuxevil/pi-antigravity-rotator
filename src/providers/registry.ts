@@ -27,6 +27,8 @@ export {
   type AccountLike as ProviderCredentialLike,
   PROVIDER_ORDER,
   PROVIDER_ORDER_RANK,
+  OLLAMA_QUOTA_POOL_KEY,
+  isOllamaQuotaPoolKey,
   getProviderIdForPoolKey,
   getQuotaItemProviderId,
   sortQuotaPools,

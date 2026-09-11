@@ -1,4 +1,4 @@
-// Ollama Cloud quota polling: `GET /api/usage` → session/weekly pools.
+// Ollama Cloud quota polling: `GET /api/usage` → monthly pool.
 //
 // Ported from the ollama-rotator project (same author) into the
 // tuxevil-rotator provider layer.
@@ -16,6 +16,7 @@ import {
 } from "./usage-windows.js";
 import { getAccountProxyDispatcher } from "../proxy-dispatcher.js";
 import { sortQuotaPools } from "../registry.js";
+import { OLLAMA_QUOTA_POOL_KEY } from "../credential-helpers.js";
 
 /**
  * Poll `GET /api/usage` for one account and store the parsed pool quotas.
@@ -103,10 +104,11 @@ export interface OllamaUsageResponse {
 }
 
 /**
- * Parse `GET /api/usage` into the two Ollama quota pools (session + weekly).
- * The API reports each pool's usage as a fraction (0..1); reset times are
- * computed from the window rules in ./usage-windows.ts, anchored at the
- * first observed usage for the session pool.
+ * Parse `GET /api/usage` into Ollama quota pools.
+ *
+ * Current Ollama Cloud responses expose one account-wide `monthly` pool. The
+ * legacy session/weekly parser remains as a fallback for older responses so
+ * an upgrade does not make an account temporarily unroutable.
  */
 export function extractUsagePools(
   data: OllamaUsageResponse,
@@ -116,6 +118,30 @@ export function extractUsagePools(
   const now = Date.now();
   const limits = data?.limits;
   if (!limits || typeof limits !== "object") return quotas;
+
+  const monthly = limits[OLLAMA_QUOTA_POOL_KEY];
+  if (monthly && typeof monthly === "object") {
+    const usageFraction =
+      typeof monthly.usage === "number"
+        ? monthly.usage
+        : typeof monthly.usage === "string"
+          ? parseFloat(monthly.usage)
+          : NaN;
+    if (Number.isFinite(usageFraction)) {
+      quotas.push({
+        modelKey: OLLAMA_QUOTA_POOL_KEY,
+        displayName: "Monthly",
+        percentRemaining: Math.max(
+          0,
+          Math.min(100, Math.round((1 - usageFraction) * 100)),
+        ),
+        usageRaw: usageFraction,
+        resetTime: null,
+        timerType: "monthly",
+      });
+      return quotas;
+    }
+  }
 
   for (const pool of ["session", "weekly"] as const) {
     const info = limits[pool];

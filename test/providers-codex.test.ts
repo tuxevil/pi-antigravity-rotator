@@ -12,6 +12,7 @@ import {
 import { parseCodexAuthImport } from "../src/providers/openai-codex/login.js";
 import {
   buildCodexPayload,
+  consumeCodexKickstartResponse,
   extractCodexUsage,
   forwardCodexRequest,
   sanitizeCodexResponsesRequest,
@@ -223,6 +224,24 @@ describe("openai-codex import and payload", () => {
       { role: "user", content: [{ type: "input_text", text: "hello" }] },
     ]);
     assert.equal("max_output_tokens" in stringInputRequest, false);
+  });
+
+  it("drains successful kickstart SSE and surfaces streamed failures", async () => {
+    const completed = new Response([
+      "event: response.completed\n",
+      'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
+    ].join(""), { status: 200 });
+    await consumeCodexKickstartResponse(completed);
+    assert.equal(completed.bodyUsed, true);
+
+    const failed = new Response([
+      "event: response.failed\n",
+      'data: {"type":"response.failed","error":{"message":"model unavailable"}}\n\n',
+    ].join(""), { status: 200 });
+    await assert.rejects(
+      consumeCodexKickstartResponse(failed),
+      /model unavailable/,
+    );
   });
 
   it("extracts Responses usage and chooses the worst quota window", () => {

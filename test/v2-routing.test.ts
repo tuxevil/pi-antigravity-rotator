@@ -815,7 +815,10 @@ describe("v2 routing and status", () => {
           headers: new Headers(init?.headers),
           body: JSON.parse(String(init?.body)) as Record<string, unknown>,
         };
-        return new Response("", { status: 200 });
+        return new Response([
+          "event: response.completed\n",
+          'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
+        ].join(""), { status: 200 });
       }
       if (url.includes("/wham/usage")) {
         quotaPolls++;

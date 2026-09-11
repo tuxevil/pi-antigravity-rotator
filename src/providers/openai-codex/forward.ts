@@ -158,6 +158,54 @@ export async function forwardCodexRequest(
   return { response, endpoint: codexResponsesEndpoint() };
 }
 
+function codexStreamErrorMessage(value: Record<string, unknown>): string {
+  const error = value.error;
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (isRecord(error) && typeof error.message === "string" && error.message.trim()) {
+    return error.message.trim();
+  }
+  return "Codex Responses stream failed";
+}
+
+/**
+ * A kickstart must let Codex finish its Responses stream. Receiving HTTP 200
+ * only means that the stream was accepted; cancelling it before a terminal
+ * event can prevent the provider from recording quota consumption.
+ */
+export async function consumeCodexKickstartResponse(response: Response): Promise<void> {
+  if (!response.body) throw new Error("Codex kickstart returned an empty response body");
+  const raw = await response.text();
+  if (!raw.trim()) throw new Error("Codex kickstart returned an empty stream");
+
+  let terminal = false;
+  for (const line of raw.split(/\r?\n/)) {
+    const payload = line.startsWith("data:") ? line.slice(5).trim() : line.trim();
+    if (!payload) continue;
+    if (payload === "[DONE]") {
+      terminal = true;
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed)) continue;
+    const type = typeof parsed.type === "string" ? parsed.type : "";
+    if (type === "error" || type === "response.error" || type === "response.failed") {
+      throw new Error(codexStreamErrorMessage(parsed));
+    }
+    if (type === "response.completed" || type === "response.incomplete") {
+      terminal = true;
+    }
+  }
+
+  if (!terminal) {
+    throw new Error("Codex kickstart stream ended before a terminal response event");
+  }
+}
+
 function usageFromRecord(record: Record<string, unknown>): TokenUsage | null {
   const usage = isRecord(record.usage)
     ? record.usage

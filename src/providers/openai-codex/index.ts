@@ -15,6 +15,7 @@ import {
 import { runCodexLogin } from "./login.js";
 import {
   CodexSseAccumulator,
+  consumeCodexKickstartResponse,
   extractCodexUsage,
   forwardCodexRequest,
 } from "./forward.js";
@@ -127,7 +128,7 @@ export const openaiCodexAdapter: ProviderAdapter = {
   createStreamAccumulator: () => new CodexSseAccumulator(),
 
   async forwardKickstartRequest(account, model, signal) {
-    return forwardCodexRequest(
+    const forwarded = await forwardCodexRequest(
       account,
       {
         project: "",
@@ -137,6 +138,10 @@ export const openaiCodexAdapter: ProviderAdapter = {
       {},
       signal,
     );
+    if (forwarded.response.ok) {
+      await consumeCodexKickstartResponse(forwarded.response);
+    }
+    return forwarded;
   },
 
   clearQuotaCache: clearCodexQuotaCache,

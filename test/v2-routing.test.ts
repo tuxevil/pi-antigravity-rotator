@@ -171,6 +171,39 @@ describe("v2 routing and status", () => {
     );
   });
 
+  it("does not spam provider-mismatch warnings while a provider is cooling down", async () => {
+    const rotator = new AccountRotator({
+      ...makeConfig(),
+      accounts: [{
+        email: "codex-cooling@example.com",
+        credentials: [{ provider: "openai-codex", refreshToken: "codex-refresh" }],
+      }],
+    }) as any;
+    rotator.stopQuotaPolling();
+    const account = rotator.accounts[0];
+    account.providerCooldowns = { "openai-codex": Date.now() + 60_000 };
+    account.quota = [{
+      modelKey: "openai-codex",
+      displayName: "Codex",
+      providerId: "openai-codex",
+      percentRemaining: 0,
+      resetTime: new Date(Date.now() + 60_000).toISOString(),
+      timerType: "5h",
+    }];
+    rotator.modelState.set("openai-codex:gpt-5.6-luna", {
+      activeAccountIndex: 0,
+      quotaAtRotationStart: 0,
+      requestsOnActiveAccount: 0,
+    });
+    const logs: string[] = [];
+    rotator.log = (message: string) => logs.push(message);
+
+    await rotator.getActiveAccount("gpt-5.6-luna");
+    await rotator.getActiveAccount("gpt-5.6-luna");
+
+    assert.equal(logs.filter((message) => message.includes("provider mismatch")).length, 0);
+  });
+
   it("kickstarts the Gemini pool through the shared Gemini 3 upstream model", async () => {
     const originalFetch = globalThis.fetch;
     let requestBody: { model?: string } | undefined;

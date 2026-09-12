@@ -2161,12 +2161,32 @@ export class AccountRotator {
       }
     }
 
-    if (current && modelKey && !this.isProviderEligibleForKey(current, modelKey)) {
-      this.log(
-        `${current.config.label || current.config.email}: provider mismatch for model, rotating`,
-        "warn",
+    if (current && modelKey) {
+      const providerRejection = this.getProviderEligibilityRejection(
+        current,
+        modelKey,
+        now,
       );
-      return this.rotateModelForRequest(modelKey, now, idx);
+      if (providerRejection) {
+        // A cooldown is expected after a provider 429 and can be hit by many
+        // concurrent callers. Keep that path quiet; diagnostics already show
+        // the cooldown and the generic no-route warning is deduplicated below.
+        if (providerRejection.reason === "provider-ineligible") {
+          const warningKey = `${modelKey}:provider-ineligible`;
+          const lastLoggedAt = this.routingWarningLastLoggedAt.get(warningKey);
+          if (
+            lastLoggedAt === undefined ||
+            now - lastLoggedAt >= AccountRotator.ROUTING_WARNING_DEDUP_MS
+          ) {
+            this.routingWarningLastLoggedAt.set(warningKey, now);
+            this.log(
+              `${current.config.label || current.config.email}: provider unavailable for model (${providerRejection.detail}), rotating`,
+              "warn",
+            );
+          }
+        }
+        return this.rotateModelForRequest(modelKey, now, idx);
+      }
     }
     if (
       current &&

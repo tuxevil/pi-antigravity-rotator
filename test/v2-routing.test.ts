@@ -157,8 +157,12 @@ describe("v2 routing and status", () => {
     }
     const logs: Array<{ message: string; level?: string }> = [];
     rotator.log = (message: string, level?: string) => logs.push({ message, level });
+    rotator.activateModelAccount = async () => rotator.accounts[0];
 
     await rotator.rotateModel("gemini", Date.now(), -1);
+    rotator.accounts[0].quota[0].percentRemaining = 100;
+    await rotator.rotateModel("gemini", Date.now(), -1);
+    rotator.accounts[0].quota[0].percentRemaining = 0;
     await rotator.rotateModel("gemini", Date.now(), -1);
 
     assert.equal(

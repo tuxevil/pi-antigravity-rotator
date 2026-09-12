@@ -2272,7 +2272,6 @@ export class AccountRotator {
       : this.pickBestModelAccount(modelKey, now, excludeIdx);
 
     if (best) {
-      this.routingWarningLastLoggedAt.delete(modelKey);
       const previous = this.modelState.get(modelKey);
       let stickyAccountIndex: number | undefined;
       if (this.isQuotaAwarePolicy() && previous) {

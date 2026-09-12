@@ -16,6 +16,8 @@ import {
   handleOpenAIChatCompletions,
   handleOpenAIResponsesCreate,
   resetResponsesStoreForTests,
+  streamCompatSse,
+  streamResponsesSse,
 } from "../src/compat.js";
 import { startProxy } from "../src/proxy.js";
 import { stopNotificationPoller } from "../src/notification-poller.js";
@@ -941,6 +943,58 @@ describe("compat observability", () => {
       input: "hold the stream open",
       stream: true,
     });
+  });
+
+  it("terminates compatibility streams that stay idle after headers", async () => {
+    const silentBody = new ReadableStream<Uint8Array>({
+      start() {
+        // Keep the upstream open without producing any data.
+      },
+    });
+
+    const chatRes = responseStub();
+    const chatCompletion = await streamCompatSse(
+      silentBody,
+      new PassThrough() as unknown as IncomingMessage,
+      chatRes,
+      "gemini-3.8-flash-medium",
+      "openai",
+      undefined,
+      undefined,
+      undefined,
+      "google",
+      { idleTimeoutMs: 10 },
+    );
+    assert.match(chatCompletion.streamError ?? "", /idle timeout/);
+    assert.equal(chatRes.writableEnded, true);
+    assert.match(chatRes.body, /server_error/);
+
+    const responsesRes = responseStub();
+    const responsesCompletion = await streamResponsesSse(
+      new ReadableStream<Uint8Array>({
+        start() {
+          // Keep the upstream open without producing any data.
+        },
+      }),
+      new PassThrough() as unknown as IncomingMessage,
+      responsesRes,
+      {
+        model: "gemini-3.8-flash-medium",
+        input: "ping",
+        stream: true,
+      },
+      "resp_idle_test",
+      null,
+      Math.floor(Date.now() / 1000),
+      undefined,
+      undefined,
+      undefined,
+      "google",
+      { idleTimeoutMs: 10 },
+    );
+    assert.match(responsesCompletion.streamError ?? "", /idle timeout/);
+    assert.equal(responsesRes.writableEnded, true);
+    assert.match(responsesRes.body, /stream_error/);
   });
 
   it("cancels a queued non-stream compat request before it can be admitted", async () => {

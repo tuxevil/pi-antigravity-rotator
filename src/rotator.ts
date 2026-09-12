@@ -180,6 +180,7 @@ function projectModelKey(projectId: string, modelKey: string): string {
 const REQUEST_QUEUE_TIMEOUT_MS = 300_000;
 
 interface AccountRequestWaiter {
+  queueKey: string;
   model?: string;
   signal?: AbortSignal;
   timer: ReturnType<typeof setTimeout>;
@@ -1864,26 +1865,39 @@ export class AccountRotator {
     signal?: AbortSignal,
   ): Promise<AccountRuntime | null> {
     if (signal?.aborted) return null;
+    const queueKey = this.getRequestQueueKey(model);
     if (
-      this.requestWaiters.length > 0 ||
+      this.hasQueuedRequest(queueKey) ||
       this.isConcurrencySaturated(model)
     ) {
-      return this.enqueueAccountRequest(model, signal);
+      return this.enqueueAccountRequest(model, signal, queueKey);
     }
 
     const account = await this.tryGetActiveAccount(model);
     if (account || !this.isConcurrencySaturated(model)) return account;
-    return this.enqueueAccountRequest(model, signal);
+    return this.enqueueAccountRequest(model, signal, queueKey);
+  }
+
+  /** Keep fairness within a provider pool without making unrelated providers wait. */
+  private getRequestQueueKey(model?: string): string {
+    if (!model) return DEFAULT_PROVIDER;
+    return getProviderIdForPoolKey(this.resolveRequestPoolKey(model));
+  }
+
+  private hasQueuedRequest(queueKey: string): boolean {
+    return this.requestWaiters.some((waiter) => waiter.queueKey === queueKey);
   }
 
   private enqueueAccountRequest(
     model?: string,
     signal?: AbortSignal,
+    queueKey = this.getRequestQueueKey(model),
   ): Promise<AccountRuntime | null> {
     if (signal?.aborted) return Promise.resolve(null);
 
     return new Promise<AccountRuntime | null>((resolve, reject) => {
       const waiter = {} as AccountRequestWaiter;
+      waiter.queueKey = queueKey;
       waiter.model = model;
       waiter.signal = signal;
       waiter.resolve = resolve;
@@ -1978,11 +1992,18 @@ export class AccountRotator {
       do {
         this.requestWaiterDrainRequested = false;
         progressed = false;
-        for (const waiter of [...this.requestWaiters]) {
+        const queueKeys = [
+          ...new Set(this.requestWaiters.map((waiter) => waiter.queueKey)),
+        ];
+        for (const queueKey of queueKeys) {
+          const waiter = this.requestWaiters.find(
+            (candidate) => candidate.queueKey === queueKey,
+          );
+          if (!waiter) continue;
           if (waiter.signal?.aborted) {
             this.settleAccountRequestWaiter(waiter, null);
             progressed = true;
-            break;
+            continue;
           }
 
           let account: AccountRuntime | null;
@@ -1991,7 +2012,7 @@ export class AccountRotator {
           } catch (error) {
             this.rejectAccountRequestWaiter(waiter, error);
             progressed = true;
-            break;
+            continue;
           }
 
           if (!this.requestWaiters.includes(waiter)) {
@@ -2004,16 +2025,16 @@ export class AccountRotator {
               );
             }
             progressed = true;
-            break;
+            continue;
           }
           if (account) {
             this.settleAccountRequestWaiter(waiter, account);
             progressed = true;
-            break;
+            continue;
           }
           if (this.requestWaiterDrainRequested) {
             progressed = true;
-            break;
+            continue;
           }
           const wakeAt = this.getNextRequestAvailabilityAt(waiter.model);
           if (wakeAt !== null) this.scheduleRequestWaiterWake(wakeAt);
@@ -2021,7 +2042,6 @@ export class AccountRotator {
             this.settleAccountRequestWaiter(waiter, null);
             progressed = true;
           }
-          break;
         }
       } while (progressed || this.requestWaiterDrainRequested);
     } finally {

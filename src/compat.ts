@@ -15,6 +15,10 @@ import { logSpend } from "./spend-logger.js";
 import { hashKey } from "./virtual-keys.js";
 import { PayloadTooLargeError, readLimitedBody } from "./body-limit.js";
 import { logger, redactSensitive } from "./logger.js";
+import {
+  createStreamIdleGuard,
+  waitForResponseDrain,
+} from "./stream-guards.js";
 import type { AccountRotator } from "./rotator.js";
 import {
   withRotation,
@@ -145,6 +149,11 @@ export type {
 const compatLogger = logger.child("compat");
 
 const VALIDATION_LOG_MAX_CHARS = 200;
+
+export interface CompatStreamOptions {
+  idleTimeoutMs?: number;
+  backpressureTimeoutMs?: number;
+}
 
 export function logValidationFailure(scope: string, payload: unknown): void {
   const truncated = redactSensitive(JSON.stringify(payload));
@@ -592,7 +601,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
-async function streamCompatSse(
+export async function streamCompatSse(
   body: unknown,
   req: IncomingMessage,
   res: ServerResponse,
@@ -602,6 +611,7 @@ async function streamCompatSse(
   rotator?: AccountRotator,
   compressionStats?: CompressionStats | null,
   upstream: "google" | "ollama" | "opencode-zen" = "google",
+  options: CompatStreamOptions = {},
 ): Promise<CompatCompletion> {
   const nodeStream = Readable.fromWeb(
     body as import("node:stream/web").ReadableStream,
@@ -938,12 +948,17 @@ async function streamCompatSse(
   };
   req.once("close", closeUpstreamForClient);
   responseEvents.once?.("close", closeUpstreamForClient);
+  const idleGuard = createStreamIdleGuard((error) => {
+    streamError = error.message;
+    if (!nodeStream.destroyed) nodeStream.destroy(error);
+  }, options.idleTimeoutMs);
 
   try {
     for await (const chunk of nodeStream) {
       if (reqClosed) {
         break;
       }
+      idleGuard.reset();
       if (firstByteMs === undefined) firstByteMs = Date.now() - streamStartMs;
       const str = chunk.toString();
       tailBuffer += str;
@@ -1114,15 +1129,18 @@ async function streamCompatSse(
           // Ignore malformed JSON chunks
         }
       }
+      await waitForResponseDrain(res, options.backpressureTimeoutMs);
     }
   } catch (err) {
     if (!reqClosed) {
-      streamError = redactSensitive(String(err)).slice(0, 200);
+      streamError ??= redactSensitive(String(err)).slice(0, 200);
       compatLogger.warn(
         `Stream read error: ${streamError}`,
       );
+      if (!nodeStream.destroyed) nodeStream.destroy();
     }
   } finally {
+    idleGuard.clear();
     req.off("close", closeUpstreamForClient);
     responseEvents.off?.("close", closeUpstreamForClient);
   }
@@ -1253,7 +1271,7 @@ async function streamCompatSse(
   };
 }
 
-async function streamResponsesSse(
+export async function streamResponsesSse(
   body: unknown,
   req: IncomingMessage,
   res: ServerResponse,
@@ -1265,6 +1283,7 @@ async function streamResponsesSse(
   rotator?: AccountRotator,
   compressionStats?: CompressionStats | null,
   upstream: "google" | "ollama" | "opencode-zen" = "google",
+  options: CompatStreamOptions = {},
 ): Promise<CompatCompletion> {
   const nodeStream = Readable.fromWeb(
     body as import("node:stream/web").ReadableStream,
@@ -1296,6 +1315,10 @@ async function streamResponsesSse(
   };
   req.once("close", closeUpstreamForClient);
   responseEvents.once?.("close", closeUpstreamForClient);
+  const idleGuard = createStreamIdleGuard((error) => {
+    streamError = error.message;
+    if (!nodeStream.destroyed) nodeStream.destroy(error);
+  }, options.idleTimeoutMs);
 
   const rotatorHeaders = buildRotatorResponseHeaders({
     accountLabel: context?.label,
@@ -1660,6 +1683,7 @@ async function streamResponsesSse(
       if (reqClosed) {
         break;
       }
+      idleGuard.reset();
       if (firstByteMs === undefined) firstByteMs = Date.now() - streamStartMs;
       tailBuffer += chunk.toString();
       let newlineIdx;
@@ -1858,15 +1882,18 @@ async function streamResponsesSse(
           // Ignore malformed JSON chunks
         }
       }
+      await waitForResponseDrain(res, options.backpressureTimeoutMs);
     }
   } catch (err) {
     if (!reqClosed) {
-      streamError = redactSensitive(String(err)).slice(0, 200);
+      streamError ??= redactSensitive(String(err)).slice(0, 200);
       compatLogger.warn(
         `Responses stream read error: ${streamError}`,
       );
+      if (!nodeStream.destroyed) nodeStream.destroy();
     }
   } finally {
+    idleGuard.clear();
     req.off("close", closeUpstreamForClient);
     responseEvents.off?.("close", closeUpstreamForClient);
   }

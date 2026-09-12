@@ -183,6 +183,7 @@ import {
 import { authenticateVirtualKey, sendAuthErrorResponse } from "./key-auth.js";
 import { logSpend } from "./spend-logger.js";
 import { hashKey } from "./virtual-keys.js";
+import { STREAM_BACKPRESSURE_TIMEOUT_MS } from "./stream-guards.js";
 
 const proxyLogger = logger.child("proxy");
 const GENERIC_UPSTREAM_ERROR = "Upstream request failed";
@@ -815,9 +816,12 @@ async function streamResponseBody(
   } | null>((resolve, reject) => {
     let settled = false;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let backpressureTimer: ReturnType<typeof setTimeout> | null = null;
+    let waitingForDrain = false;
 
     const cleanup = (): void => {
       if (idleTimer) clearTimeout(idleTimer);
+      if (backpressureTimer) clearTimeout(backpressureTimer);
       nodeStream.off("data", onData);
       nodeStream.off("end", onEnd);
       nodeStream.off("error", onError);
@@ -825,6 +829,8 @@ async function streamResponseBody(
       req.off("close", onClientClose);
       res.off("close", onResponseClose);
       res.off("error", onResponseError);
+      res.off("drain", onDrain);
+      waitingForDrain = false;
     };
 
     const finish = (reason?: string): void => {
@@ -861,6 +867,31 @@ async function streamResponseBody(
       );
     };
 
+    const onDrain = (): void => {
+      if (!waitingForDrain) return;
+      waitingForDrain = false;
+      if (backpressureTimer) clearTimeout(backpressureTimer);
+      backpressureTimer = null;
+      if (!settled && !nodeStream.destroyed) nodeStream.resume();
+    };
+
+    const pauseForBackpressure = (): void => {
+      if (waitingForDrain || settled) return;
+      waitingForDrain = true;
+      nodeStream.pause();
+      backpressureTimer = setTimeout(() => {
+        backpressureTimer = null;
+        if (!waitingForDrain || settled) return;
+        const error = new Error(
+          `client backpressure timeout after ${Math.round(STREAM_BACKPRESSURE_TIMEOUT_MS / 1000)}s`,
+        );
+        emitStreamError(error);
+        finish(error.message);
+        if (!nodeStream.destroyed) nodeStream.destroy();
+      }, STREAM_BACKPRESSURE_TIMEOUT_MS);
+      res.once("drain", onDrain);
+    };
+
     const resetIdleTimer = (): void => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
@@ -882,7 +913,7 @@ async function streamResponseBody(
       if (!res.destroyed && !res.writableEnded) {
         if (!res.headersSent) res.writeHead(responseStatus, responseHeaders);
         hasForwardedBytes = true;
-        res.write(chunk);
+        if (!res.write(chunk)) pauseForBackpressure();
       }
       // Extract usage from any newly-completed SSE events
       if (!firstUsage) {
@@ -1191,6 +1222,7 @@ export async function withRotation<T>(
   const maxAttempts = maxRetries + 1;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const admissionStartedMs = Date.now();
     const account = await rotator.getActiveAccount(model, signal);
     if (!account) {
       if (signal?.aborted) {
@@ -1206,6 +1238,7 @@ export async function withRotation<T>(
       body.displayModel || model,
       body.model,
     );
+    const queueWaitMs = Date.now() - admissionStartedMs;
     const requestId = `${modelKey}-${Date.now().toString(36)}-${attempt + 1}`;
     const requestStartMs = Date.now();
     let accountReleased = false;
@@ -1228,7 +1261,7 @@ export async function withRotation<T>(
     };
 
     log(
-      `[${requestId}] START account=${label} model=${model} attempt=${attempt + 1}`,
+      `[${requestId}] START account=${label} model=${model} attempt=${attempt + 1} queueMs=${queueWaitMs}`,
       rotator,
     );
 
@@ -1634,6 +1667,7 @@ async function handleProxyRequest(
   const maxRetries = getStreamRecoveryMaxRetries(rotator);
   const maxAttempts = maxRetries + 1;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const admissionStartedMs = Date.now();
     const account = await rotator.getActiveAccount(
       body.model,
       clientController.signal,
@@ -1647,6 +1681,7 @@ async function handleProxyRequest(
     const label = account.config.label || account.config.email;
     const modelKey = rotator.resolveQuotaModelKeyForDisplay(body.model) ?? body.model; // quota routing
     const displayModelKey = observedModelKey(rotator, body.model); // metrics/logs
+    const queueWaitMs = Date.now() - admissionStartedMs;
     const requestId = `${modelKey}-${Date.now().toString(36)}-${attempt + 1}`;
     let accountReleased = false;
     const releaseCurrentAccount = (): void => {
@@ -1663,7 +1698,7 @@ async function handleProxyRequest(
       return nextAccount;
     };
     proxyLog(
-      `[${requestId}] START account=${label} model=${body.model} attempt=${attempt + 1}`,
+      `[${requestId}] START account=${label} model=${body.model} attempt=${attempt + 1} queueMs=${queueWaitMs}`,
     );
     const requestStartMs = Date.now();
     const logRequestEnd = (status: string | number, extra = ""): void => {

@@ -544,6 +544,61 @@ describe("Antigravity request queue", () => {
     assert.deepEqual(order, ["head", "tail"]);
   });
 
+  it("does not let a saturated Codex queue block an available Gemini account", async () => {
+    const { rotator, accounts } = makeRotatorFromAccounts(
+      [
+        {
+          email: "codex@example.com",
+          credentials: [{
+            provider: "openai-codex",
+            refreshToken: "codex-refresh",
+            providerAccountId: "codex-account",
+          }],
+        },
+        {
+          email: "gemini@example.com",
+          credentials: [{
+            provider: "google-antigravity",
+            refreshToken: "google-refresh",
+            projectId: "gemini-project",
+          }],
+        },
+      ],
+      {
+        maxConcurrentRequestsPerAccount: 1,
+        maxConcurrentRequestsPerProjectModel: 1,
+      },
+    );
+    accounts[0].providerTokens = {
+      "openai-codex": {
+        accessToken: "codex-access",
+        tokenExpires: Date.now() + 3_600_000,
+      },
+    };
+
+    const codexModel = "gpt-5.6-luna";
+    const activeCodex = await rotator.getActiveAccount(codexModel);
+    assert.equal(activeCodex, accounts[0]);
+
+    let codexWaiterSettled = false;
+    const queuedCodex = rotator.getActiveAccount(codexModel).then((account) => {
+      codexWaiterSettled = true;
+      return account;
+    });
+    await nextTurn();
+    assert.equal(codexWaiterSettled, false);
+
+    const activeGemini = await rotator.getActiveAccount(GEMINI_MODEL);
+    assert.equal(activeGemini, accounts[1]);
+    assert.equal(codexWaiterSettled, false, "the Codex waiter must remain queued");
+
+    rotator.finishRequest(activeCodex!, rotator.resolveQuotaModelKeyForDisplay(codexModel));
+    const admittedCodex = await queuedCodex;
+    assert.equal(admittedCodex, accounts[0]);
+    rotator.finishRequest(admittedCodex!, rotator.resolveQuotaModelKeyForDisplay(codexModel));
+    rotator.finishRequest(activeGemini!, "gemini");
+  });
+
   it("expires a saturated waiter after exactly 300 seconds without waiting in real time", async (t) => {
     const { rotator, accounts } = makeRotator();
     const leases = await fillCapacity(rotator);

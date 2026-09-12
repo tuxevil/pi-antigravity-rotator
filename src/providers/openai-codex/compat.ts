@@ -11,6 +11,11 @@ import type { AccountRotator } from "../../rotator.js";
 import type { OpenAIChatCompletionRequest, OpenAIResponsesRequest, CompatCompletion, OpenAIToolCall } from "../google-antigravity/translators.js";
 import { buildRotatorResponseHeaders } from "../../response-headers.js";
 import { logSpend } from "../../spend-logger.js";
+import { redactSensitive } from "../../logger.js";
+import {
+  createStreamIdleGuard,
+  waitForResponseDrain,
+} from "../../stream-guards.js";
 import {
   buildCodexPayload,
   createCodexStreamAccumulator,
@@ -384,16 +389,31 @@ async function pipeNativeResponses(
   const accumulator = createCodexStreamAccumulator();
   const streamStartMs = Date.now();
   let firstByteMs: number | undefined;
+  let streamError: string | undefined;
   const close = (): void => { if (!stream.destroyed) stream.destroy(); };
   req.once("close", close);
+  res.once("close", close);
+  const idleGuard = createStreamIdleGuard((error) => {
+    streamError = error.message;
+    if (!stream.destroyed) stream.destroy(error);
+  });
   try {
     for await (const chunk of stream) {
+      idleGuard.reset();
       if (firstByteMs === undefined) firstByteMs = Date.now() - streamStartMs;
       accumulator.append(chunk.toString());
       if (!res.writableEnded) res.write(chunk);
+      await waitForResponseDrain(res);
+    }
+  } catch (error) {
+    streamError ??= redactSensitive(String(error)).slice(0, 200);
+    if (!res.writableEnded && !res.destroyed) {
+      res.write(`event: error\ndata: ${JSON.stringify({ type: "error", error: { code: "stream_error", message: streamError } })}\n\n`);
     }
   } finally {
+    idleGuard.clear();
     req.off("close", close);
+    res.off("close", close);
     if (!res.writableEnded) res.end();
   }
   const usage = accumulator.final();
@@ -402,6 +422,7 @@ async function pipeNativeResponses(
     inputTokens: usage?.inputTokens ?? 0,
     outputTokens: usage?.outputTokens ?? 0,
     firstByteMs,
+    streamError,
   };
 }
 
@@ -432,8 +453,14 @@ async function pipeCodexAsChat(
   let toolIndex = 0;
   const streamStartMs = Date.now();
   let firstByteMs: number | undefined;
+  let streamError: string | undefined;
   const close = (): void => { if (!stream.destroyed) stream.destroy(); };
   req.once("close", close);
+  res.once("close", close);
+  const idleGuard = createStreamIdleGuard((error) => {
+    streamError = error.message;
+    if (!stream.destroyed) stream.destroy(error);
+  });
   const handle = (payload: string, event: string): void => {
     let data: Record<string, unknown>;
     try { data = JSON.parse(payload) as Record<string, unknown>; } catch { return; }
@@ -454,6 +481,7 @@ async function pipeCodexAsChat(
   };
   try {
     for await (const chunk of stream) {
+      idleGuard.reset();
       if (firstByteMs === undefined) firstByteMs = Date.now() - streamStartMs;
       buffer += chunk.toString();
       let newline = buffer.indexOf("\n");
@@ -464,12 +492,25 @@ async function pipeCodexAsChat(
         else if (line.startsWith("data:")) handle(line.slice(5).trim(), eventName);
         newline = buffer.indexOf("\n");
       }
+      await waitForResponseDrain(res);
     }
-  } finally { req.off("close", close); }
-  emitChatChunk(res, model, id, {}, toolIndex > 0 ? "tool_calls" : "stop");
-  if (inputTokens > 0 || outputTokens > 0) emitChatChunk(res, model, id, {}, null, { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens });
-  res.end("data: [DONE]\n\n");
-  return { text: "", inputTokens, outputTokens, firstByteMs };
+  } catch (error) {
+    streamError ??= redactSensitive(String(error)).slice(0, 200);
+    if (!res.writableEnded && !res.destroyed) {
+      res.write(`data: ${JSON.stringify({ error: { message: streamError, type: "server_error" } })}\n\n`);
+      res.end("data: [DONE]\n\n");
+    }
+  } finally {
+    idleGuard.clear();
+    req.off("close", close);
+    res.off("close", close);
+  }
+  if (!streamError && !res.writableEnded) {
+    emitChatChunk(res, model, id, {}, toolIndex > 0 ? "tool_calls" : "stop");
+    if (inputTokens > 0 || outputTokens > 0) emitChatChunk(res, model, id, {}, null, { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens });
+    res.end("data: [DONE]\n\n");
+  }
+  return { text: "", inputTokens, outputTokens, firstByteMs, streamError };
 }
 
 export async function serveCodexResponses(
@@ -489,7 +530,14 @@ export async function serveCodexResponses(
       if (request.stream) {
         const completion = await pipeNativeResponses(response, req, res, context, request.model);
         recordCodexTokenUsage(rotator, request.model, completion);
-        recordCodexOutcome(rotator, body, context, response.status, completion, options);
+        recordCodexOutcome(
+          rotator,
+          body,
+          context,
+          completion.streamError ? 502 : response.status,
+          completion,
+          options,
+        );
         return completion;
       }
       const raw = await response.text();
@@ -529,7 +577,14 @@ export async function serveCodexChat(
       if (request.stream) {
         const completion = await pipeCodexAsChat(response, req, res, request.model, context);
         recordCodexTokenUsage(rotator, request.model, completion);
-        recordCodexOutcome(rotator, body, context, response.status, completion, options);
+        recordCodexOutcome(
+          rotator,
+          body,
+          context,
+          completion.streamError ? 502 : response.status,
+          completion,
+          options,
+        );
         return completion;
       }
       const raw = await response.text();

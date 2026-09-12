@@ -209,6 +209,49 @@ describe("429 RESOURCE_EXHAUSTED resilience and in-flight lifecycle", () => {
     rotator.stopQuotaPolling();
   });
 
+  it("publishes a Codex 429 as zero quota and keeps its provider cooldown", () => {
+    const account = makeAccount("codex-quota@example.com", "codex-project", "openai-codex", 42);
+    account.config = {
+      email: account.config.email,
+      credentials: [{ provider: "openai-codex", refreshToken: "codex-refresh" }],
+      label: account.config.label,
+    };
+    account.quota = [{
+      modelKey: "openai-codex",
+      displayName: "Codex",
+      providerId: "openai-codex",
+      percentRemaining: 42,
+      resetTime: null,
+      timerType: "5h",
+    }];
+
+    const rotator = new AccountRotator({
+      proxyPort: 51228,
+      rotateOnQuotaDrop: 20,
+      routingPolicy: "timer-first",
+      quotaPollIntervalMs: 300000,
+      requestsPerRotation: 5,
+      accounts: [account.config],
+    });
+    rotator.stopQuotaPolling();
+    (rotator as any).accounts = [account];
+
+    const cooldownMs = 2_447_512_000;
+    const before = Date.now();
+    rotator.markExhausted(
+      account,
+      "gpt-5.6-luna",
+      cooldownMs,
+      "usage_limit_reached",
+    );
+
+    const quota = account.quota.find((candidate) => candidate.modelKey === "openai-codex");
+    assert.equal(quota?.percentRemaining, 0);
+    assert.ok(new Date(quota?.resetTime ?? 0).getTime() >= before + cooldownMs);
+    assert.ok((account.providerCooldowns?.["openai-codex"] ?? 0) >= before + cooldownMs);
+    rotator.stopQuotaPolling();
+  });
+
   it("preserves a Google pool when a partial response omits it", async () => {
     const originalFetch = globalThis.fetch;
     let rotator: InstanceType<typeof AccountRotator> | undefined;

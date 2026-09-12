@@ -359,6 +359,22 @@ describe("classifyUpstreamResponse", () => {
 		}
 	});
 
+	it("uses the Codex reset duration from usage_limit_reached", async () => {
+		const action = await classifyUpstreamResponse(
+			response(429, `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_in_seconds":2447511}}`),
+			"https://api.example.com",
+			fakeAccount,
+			"gpt-5.6-luna",
+			"openai-codex:gpt-5.6-luna",
+			"openai-codex",
+		);
+		assert.equal(action.kind, "rate-limited");
+		if (action.kind === "rate-limited") {
+			assert.equal(action.providerResourceExhausted, true);
+			assert.equal(action.cooldownMs, 2_447_512_000);
+		}
+	});
+
 	it("keeps RESOURCE_EXHAUSTED reset-duration semantics scoped to Antigravity", async () => {
 		const action = await classifyUpstreamResponse(
 			response(429, `{"error":{"status":"RESOURCE_EXHAUSTED","message":"Resets in 1h20m14s"}}`),

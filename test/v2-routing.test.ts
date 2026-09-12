@@ -103,6 +103,70 @@ describe("v2 routing and status", () => {
     assert.equal(best?.config.email, "b@example.com");
   });
 
+  it("skips empty Codex credentials and reports the actual rejection", () => {
+    const rotator = new AccountRotator({
+      ...makeConfig(),
+      accounts: [
+        {
+          email: "empty-codex@example.com",
+          credentials: [{ provider: "openai-codex", refreshToken: "" }],
+          tier: "free",
+        },
+        {
+          email: "valid-codex@example.com",
+          credentials: [{ provider: "openai-codex", refreshToken: "codex-refresh" }],
+          tier: "free",
+        },
+      ],
+    }) as any;
+    rotator.stopQuotaPolling();
+    for (const account of rotator.accounts) {
+      account.quota = [{
+        modelKey: "openai-codex",
+        displayName: "Codex",
+        providerId: "openai-codex",
+        percentRemaining: 100,
+        resetTime: null,
+        timerType: "fresh",
+      }];
+    }
+
+    const modelKey = "openai-codex:gpt-5.6-luna";
+    const best = rotator.pickBestModelAccount(modelKey, Date.now(), -1);
+    assert.equal(best?.config.email, "valid-codex@example.com");
+
+    const diagnostics = rotator.buildRoutingDiagnostics(modelKey, Date.now());
+    const empty = diagnostics.accounts.find(
+      (account: any) => account.email === "empty-codex@example.com",
+    );
+    assert.equal(empty?.rejectedReason, "provider-ineligible");
+    assert.equal(empty?.rejectedDetail, "Codex credential is missing or empty");
+  });
+
+  it("deduplicates repeated no-route warnings for the same model", async () => {
+    const rotator = new AccountRotator(makeConfig()) as any;
+    rotator.stopQuotaPolling();
+    for (const account of rotator.accounts) {
+      account.quota = [{
+        modelKey: "gemini",
+        displayName: "Gemini",
+        percentRemaining: 0,
+        resetTime: null,
+        timerType: "5h",
+      }];
+    }
+    const logs: Array<{ message: string; level?: string }> = [];
+    rotator.log = (message: string, level?: string) => logs.push({ message, level });
+
+    await rotator.rotateModel("gemini", Date.now(), -1);
+    await rotator.rotateModel("gemini", Date.now(), -1);
+
+    assert.equal(
+      logs.filter((entry) => entry.message.includes("All accounts disabled or unavailable")).length,
+      1,
+    );
+  });
+
   it("kickstarts the Gemini pool through the shared Gemini 3 upstream model", async () => {
     const originalFetch = globalThis.fetch;
     let requestBody: { model?: string } | undefined;

@@ -24,6 +24,8 @@ export function classifyRateLimitReason(errorText: string, status?: number): Rat
 		lower.includes("quotaresettimestamp") ||
 		lower.includes("resource_exhausted") ||
 		lower.includes("resource exhausted") ||
+		lower.includes("usage_limit_reached") ||
+		lower.includes("usage limit reached") ||
 		lower.includes("daily limit") ||
 		lower.includes("quota exceeded")
 	) {
@@ -86,6 +88,33 @@ export function parseRetryAfterMs(
 	if (resetAfter) {
 		const seconds = Number(resetAfter);
 		if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds * 1000 + 1000);
+	}
+
+	const codexResetSecondsMatch = errorText.match(
+		/["']?resets_in_seconds["']?\s*:\s*["']?(\d+(?:\.\d+)?)/i,
+	);
+	if (codexResetSecondsMatch?.[1]) {
+		const seconds = Number(codexResetSecondsMatch[1]);
+		if (Number.isFinite(seconds) && seconds > 0) {
+			return Math.ceil(seconds * 1000 + 1000);
+		}
+	}
+
+	const codexResetAtMatch = errorText.match(
+		/["']?resets_at["']?\s*:\s*(?:["']([^"']+)["']|(\d{10,13}))/i,
+	);
+	if (codexResetAtMatch) {
+		const rawResetAt = codexResetAtMatch[1] ?? codexResetAtMatch[2];
+		const numericResetAt = Number(rawResetAt);
+		const resetAt = Number.isFinite(numericResetAt)
+			? numericResetAt < 1_000_000_000_000
+				? numericResetAt * 1000
+				: numericResetAt
+			: Date.parse(rawResetAt ?? "");
+		if (Number.isFinite(resetAt)) {
+			const delta = resetAt - Date.now();
+			if (delta > 0) return Math.ceil(delta + 1000);
+		}
 	}
 
 	const quotaDelayMatch = errorText.match(/quotaResetDelay[:\s"]+(\d+(?:\.\d+)?)(ms|s)/i);

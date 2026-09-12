@@ -123,9 +123,10 @@ Failure handling is provider-local:
 
 - `401` or `403` invalidates only the Codex credential and surfaces a
   `reloginRequired` signal so the operator is prompted to re-authenticate.
-- `429` or `5xx` applies a Codex-local cooldown — 30 s minimum, 5 min maximum,
-  derived from `Retry-After` with a 60 s fallback — and lets the next Codex
-  account serve the request.
+- `429` applies a Codex-local cooldown and lets the next eligible Codex account
+  serve the request. `usage_limit_reached` honors the provider's
+  `resets_in_seconds`/`resets_at` window; generic rate limits use `Retry-After`
+  with a 60 s fallback and a 30 min cap.
 - Google Antigravity and Ollama state is never modified by these failures.
 
 The OAuth host and backend endpoints are internal/no-garantizados and may change.

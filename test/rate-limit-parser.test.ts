@@ -47,4 +47,31 @@ describe("rate limit parser", () => {
 		assert.equal(classifyRateLimitReason("too many requests", 429), "rate-limit");
 		assert.equal(classifyRateLimitReason("weird", 429), "unknown");
 	});
+
+	it("classifies the Codex usage limit payload as quota exhaustion", () => {
+		assert.equal(
+			classifyRateLimitReason(
+				'{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}',
+				429,
+			),
+			"quota-exhausted",
+		);
+	});
+
+	it("parses Codex resets_in_seconds from a 429 body", () => {
+		const ms = parseRetryAfterMs(
+			'{"error":{"resets_in_seconds":2447511}}',
+			new Headers(),
+		);
+		assert.equal(ms, 2_447_512_000);
+	});
+
+	it("parses Codex resets_at epoch seconds from a 429 body", () => {
+		const resetAt = Math.floor(Date.now() / 1000) + 120;
+		const ms = parseRetryAfterMs(
+			`{"error":{"resets_at":${resetAt}}}`,
+			new Headers(),
+		);
+		assert.ok(ms >= 120_000 && ms <= 122_000, `unexpected reset duration: ${ms}`);
+	});
 });

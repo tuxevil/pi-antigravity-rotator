@@ -334,6 +334,8 @@ export class AccountRotator {
     account: string;
   }> = [];
   private routingDiagnostics: Record<string, RoutingModelDiagnostics> = {};
+  private routingWarningLastLoggedAt = new Map<string, number>();
+  private static readonly ROUTING_WARNING_DEDUP_MS = 60_000;
   private autoWarmupEnabled = false;
   // Debounced state writer: batches multiple saveState() calls within a 1s window
   // to a single disk write. Hot paths (markError, recordRequest, etc.) call
@@ -1492,11 +1494,12 @@ export class AccountRotator {
       return { reason: "disabled", detail: "account disabled" };
     if (account.flagged)
       return { reason: "flagged", detail: "account quarantined or flagged" };
-    if (!this.isProviderEligibleForKey(account, modelKey))
-      return {
-        reason: "provider-ineligible",
-        detail: "account lacks a credential for this provider pool",
-      };
+    const providerRejection = this.getProviderEligibilityRejection(
+      account,
+      modelKey,
+      now,
+    );
+    if (providerRejection) return providerRejection;
     const defaultCooldown = account.cooldownsByModel["__default__"] ?? 0;
     if (defaultCooldown > now)
       return { reason: "cooldown", detail: "default cooldown active" };
@@ -2269,6 +2272,7 @@ export class AccountRotator {
       : this.pickBestModelAccount(modelKey, now, excludeIdx);
 
     if (best) {
+      this.routingWarningLastLoggedAt.delete(modelKey);
       const previous = this.modelState.get(modelKey);
       let stickyAccountIndex: number | undefined;
       if (this.isQuotaAwarePolicy() && previous) {
@@ -2351,10 +2355,17 @@ export class AccountRotator {
     } else {
       const diagnostics = this.buildRoutingDiagnostics(modelKey, now);
       this.routingDiagnostics[modelKey] = diagnostics;
-      this.log(
-        `[${modelKey}] All accounts disabled or unavailable: ${diagnostics.reason}`,
-        "warn",
-      );
+      const lastLoggedAt = this.routingWarningLastLoggedAt.get(modelKey);
+      if (
+        lastLoggedAt === undefined ||
+        now - lastLoggedAt >= AccountRotator.ROUTING_WARNING_DEDUP_MS
+      ) {
+        this.routingWarningLastLoggedAt.set(modelKey, now);
+        this.log(
+          `[${modelKey}] All accounts disabled or unavailable: ${diagnostics.reason}`,
+          "warn",
+        );
+      }
     }
     return null;
   }
@@ -3005,7 +3016,7 @@ export class AccountRotator {
     const modelKey = model
       ? this.resolveAccountPoolKey(account, model)
       : "__default__";
-    if (model && (modelKey.startsWith(`${CODEX_QUOTA_MODEL_KEY}:`) || isCodexRequestModel(model))) {
+    if (model && (this.isCodexPoolKey(modelKey) || isCodexRequestModel(model))) {
       this.setProviderCooldown(account, "openai-codex", cooldownMs);
     }
     account.cooldownsByModel[modelKey] = now + cooldownMs;
@@ -3019,6 +3030,7 @@ export class AccountRotator {
           candidate.modelKey === modelKey &&
           (candidate.providerId === DEFAULT_PROVIDER ||
             candidate.providerId === "ollama" ||
+            candidate.providerId === "openai-codex" ||
             candidate.providerId === undefined),
       );
       if (quota) {
@@ -3047,11 +3059,11 @@ export class AccountRotator {
     providerResourceExhausted = false,
   ): void {
     const now = Date.now();
-    if (model && isCodexRequestModel(model)) {
+    const poolKey = model ? this.resolveAccountPoolKey(account, model) : null;
+    if (model && (isCodexRequestModel(model) || (poolKey && this.isCodexPoolKey(poolKey)))) {
       this.setProviderCooldown(account, "openai-codex", cooldownMs);
       return;
     }
-    const poolKey = model ? this.resolveAccountPoolKey(account, model) : null;
     const isAccountScopedProvider =
       providerResourceExhausted ||
       (poolKey &&
@@ -3482,7 +3494,8 @@ export class AccountRotator {
   }
 
   private isCodexPoolKey(modelKey: string): boolean {
-    return modelKey.startsWith(`${CODEX_QUOTA_MODEL_KEY}:`);
+    return modelKey === CODEX_QUOTA_MODEL_KEY ||
+      modelKey.startsWith(`${CODEX_QUOTA_MODEL_KEY}:`);
   }
 
   private async ensureValidTokenForModel(
@@ -3622,18 +3635,54 @@ export class AccountRotator {
     account: AccountRuntime,
     modelKey: string,
   ): boolean {
+    return this.getProviderEligibilityRejection(account, modelKey) === null;
+  }
+
+  private getProviderEligibilityRejection(
+    account: AccountRuntime,
+    modelKey: string,
+    now = Date.now(),
+  ): { reason: RoutingRejectionReason; detail: string } | null {
     const accountId = getAccountIdentity(account);
     if (
       !isStaticAntigravityModel(modelKey) &&
       dynamicCatalog.hasOwnershipForModel(modelKey) &&
       !dynamicCatalog.hasModelForAccount(accountId, modelKey)
     ) {
-      return false;
+      return {
+        reason: "provider-ineligible",
+        detail: "account does not own this provider model",
+      };
     }
     const providerId = getProviderIdForPoolKey(modelKey);
-    return hasCredential(account.config, providerId) &&
-      !account.invalidProviders?.[providerId] &&
-      (account.providerCooldowns?.[providerId] ?? 0) <= Date.now();
+    if (!hasCredential(account.config, providerId)) {
+      return {
+        reason: "provider-ineligible",
+        detail: `account has no ${providerId} credential for this provider pool`,
+      };
+    }
+    if (account.invalidProviders?.[providerId]) {
+      return {
+        reason: "provider-ineligible",
+        detail: `${providerId} credential is invalid; re-authentication required`,
+      };
+    }
+    if (
+      providerId === "openai-codex" &&
+      !getProviderAdapter(providerId).hasValidCredentials(account)
+    ) {
+      return {
+        reason: "provider-ineligible",
+        detail: "Codex credential is missing or empty",
+      };
+    }
+    if ((account.providerCooldowns?.[providerId] ?? 0) > now) {
+      return {
+        reason: "cooldown",
+        detail: "provider cooldown active",
+      };
+    }
+    return null;
   }
 
   /** Public pool-key resolution for quota routing display/logging. */
@@ -4621,7 +4670,7 @@ export class AccountRotator {
       const providerResourceExhausted =
         classifyRateLimitReason(errorText, response.status) === "quota-exhausted";
       const cooldownMs = providerResourceExhausted
-        ? target.providerId === DEFAULT_PROVIDER
+        ? target.providerId === DEFAULT_PROVIDER || target.providerId === "openai-codex"
           ? parseRetryAfterMs(
               errorText,
               response.headers,

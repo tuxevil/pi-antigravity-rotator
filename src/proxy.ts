@@ -334,7 +334,7 @@ export async function classifyUpstreamResponse(
     const rateLimitReason = classifyRateLimitReason(errorText, response.status);
     const providerResourceExhausted = rateLimitReason === "quota-exhausted";
     const cooldownMs = providerResourceExhausted
-      ? providerId === DEFAULT_PROVIDER
+      ? providerId === DEFAULT_PROVIDER || providerId === "openai-codex"
         ? parseRetryAfterMs(
             errorText,
             response.headers,

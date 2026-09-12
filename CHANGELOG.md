@@ -2,10 +2,20 @@
 
 ## [Unreleased]
 
-### Changed
+## [3.7.1] - 2026-09-12
 
-- **OpenCode Zen catalog**: Synced the free-model list with OpenCode Zen by adding `big-pickle` and removing the retired `deepseek-v4-flash-free` and `hy3-free` entries.
-- **Muse Spark routing**: Forwarded `muse-spark-1.3-contributor-free` through OpenCode Zen's Responses endpoint while preserving Chat, Responses, and Anthropic compatibility surfaces.
+### Added
+
+- **OpenCode Zen free-model catalog update**: Added `big-pickle` to the OpenCode Zen catalog and removed the retired `deepseek-v4-flash-free` and `hy3-free` entries.
+
+### Fixed
+
+- **Muse Spark routing**: `muse-spark-1.3-contributor-free` is now forwarded through the OpenCode Zen Responses endpoint while Chat, Responses, and Anthropic compatibility surfaces are all preserved.
+- **Tier-first routing under concurrency**: Concurrent least-loaded account selection now respects tier priority, and persisted lower-tier assignments are re-evaluated while idle.
+- **Ollama monthly quota parsing**: The Ollama monthly quota pool is correctly parsed when the provider reports monthly-style usage.
+- **Provider quota labels**: Simplified and aligned provider-level quota display labels for Ollama, Codex, and OpenCode Zen.
+- **Codex kickstart lifecycle**: Unstarted Codex quota timers are now kicked off on startup; stale kickstart responses are drained to avoid blocking subsequent requests.
+- **Ollama pricing and forecast label**: Corrected the Ollama pricing entry and aligned the forecast label shown in the dashboard.
 
 ## [3.7.0] - 2026-09-07
 

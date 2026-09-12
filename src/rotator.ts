@@ -178,6 +178,10 @@ function projectModelKey(projectId: string, modelKey: string): string {
 }
 
 const REQUEST_QUEUE_TIMEOUT_MS = 300_000;
+// Node clamps delays above the signed 32-bit millisecond limit to 1ms. Long
+// provider cooldowns (for example Codex weekly resets) must be rechecked in
+// safe-sized timer slices instead of creating a hot timer loop.
+const MAX_NODE_TIMEOUT_MS = 2_147_483_647;
 
 interface AccountRequestWaiter {
   queueKey: string;
@@ -1962,6 +1966,10 @@ export class AccountRotator {
     }
     this.clearRequestWaiterWake();
     this.requestWaiterWakeAt = wakeAt;
+    const delayMs = Math.min(
+      MAX_NODE_TIMEOUT_MS,
+      Math.max(1, wakeAt - Date.now()),
+    );
     this.requestWaiterWakeTimer = setTimeout(() => {
       this.requestWaiterWakeTimer = null;
       if (this.requestWaiters.length === 0) {
@@ -1974,7 +1982,7 @@ export class AccountRotator {
       }
       this.requestWaiterWakeAt = 0;
       this.requestWaiterDrain();
-    }, Math.max(1, wakeAt - Date.now()));
+    }, delayMs);
   }
 
   private requestWaiterDrain(): void {

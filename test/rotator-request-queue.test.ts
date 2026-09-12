@@ -747,6 +747,29 @@ describe("Antigravity request queue", () => {
     }
   });
 
+  it("caps long cooldown wake timers at Node's maximum delay", () => {
+    const { rotator } = makeRotator(["project-a"]);
+    const delays: number[] = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    const mockedSetTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      delays.push(Number(timeout ?? 0));
+      return originalSetTimeout(handler, timeout, ...args);
+    }) as typeof setTimeout;
+
+    // Replace only for this synchronous private-scheduler check. The timer is
+    // cleared below, so the test does not leave a 24-day handle behind.
+    globalThis.setTimeout = mockedSetTimeout;
+    try {
+      (rotator as unknown as { scheduleRequestWaiterWake(wakeAt: number): void })
+        .scheduleRequestWaiterWake(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      assert.equal(delays.length, 1);
+      assert.ok(delays[0] <= 2_147_483_647);
+    } finally {
+      (rotator as unknown as { clearRequestWaiterWake(): void }).clearRequestWaiterWake();
+      globalThis.setTimeout = originalSetTimeout;
+    }
+  });
+
   it("wakes a waiter when replaceConfig raises the account capacity", async () => {
     const { rotator } = makeRotator(
       ["project-a"],

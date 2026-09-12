@@ -15,7 +15,10 @@ import { logger } from "../../logger.js";
 import type { TokenUsage } from "../adapter.js";
 import { DEFAULT_PROVIDER, getProviderProjectId } from "../credential-helpers.js";
 import { getAccountProxyDispatcher } from "../proxy-dispatcher.js";
-import type { RequestInitWithDispatcher } from "../../fetch-with-retry.js";
+import {
+  fetchWithHeadersTimeout,
+  type RequestInitWithDispatcher,
+} from "../../fetch-with-retry.js";
 
 const forwardLogger = logger.child("google-forward");
 
@@ -381,7 +384,7 @@ export async function forwardRequest(
           ? AbortSignal.any([controller.signal, signal])
           : signal ?? controller?.signal;
 
-      const response = await fetch(url, {
+      const response = await fetchWithHeadersTimeout(url, {
         method: "POST",
         headers: forwardHeaders,
         body: requestBody,

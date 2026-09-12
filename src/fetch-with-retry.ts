@@ -15,6 +15,23 @@ export interface FetchWithRetryOptions extends RequestInit {
 export type RequestInitWithDispatcher = RequestInit & { dispatcher?: Dispatcher };
 
 export const DEFAULT_RETRY_STATUSES = [408, 429, 500, 502, 503, 504] as const;
+export const DEFAULT_HEADERS_TIMEOUT_MS = 30_000;
+
+/** Raised when an upstream accepts a request but never sends response headers. */
+export class UpstreamHeadersTimeoutError extends Error {
+	readonly code = "UND_ERR_HEADERS_TIMEOUT";
+
+	constructor(timeoutMs: number) {
+		super(`upstream response headers timeout after ${timeoutMs}ms`);
+		this.name = "UpstreamHeadersTimeoutError";
+	}
+}
+
+export interface FetchWithHeadersTimeoutOptions extends RequestInit {
+	timeoutMs?: number;
+	fetchImpl?: typeof fetch;
+	dispatcher?: Dispatcher;
+}
 
 export function isRetryableStatus(status: number, retryStatuses: readonly number[] = DEFAULT_RETRY_STATUSES): boolean {
 	return retryStatuses.includes(status);
@@ -22,6 +39,7 @@ export function isRetryableStatus(status: number, retryStatuses: readonly number
 
 export function isRetryableFetchError(error: unknown): boolean {
 	if (error instanceof DOMException && error.name === "AbortError") return true;
+	if (error instanceof UpstreamHeadersTimeoutError) return true;
 	return error instanceof TypeError;
 }
 
@@ -45,6 +63,59 @@ function createTimeoutSignal(timeoutMs: number | undefined, inputSignal: AbortSi
 	const timeoutSignal = AbortSignal.timeout(timeoutMs);
 	if (!inputSignal) return timeoutSignal;
 	return AbortSignal.any([inputSignal, timeoutSignal]);
+}
+
+/**
+ * Fetch a response while bounding only the time spent waiting for its headers.
+ * Once headers arrive, the caller owns the response body and its stream-level
+ * idle/backpressure guards continue to apply.
+ */
+export async function fetchWithHeadersTimeout(
+	input: RequestInfo | URL,
+	options: FetchWithHeadersTimeoutOptions = {},
+): Promise<Response> {
+	const {
+		timeoutMs = DEFAULT_HEADERS_TIMEOUT_MS,
+		fetchImpl = fetch,
+		dispatcher,
+		signal: inputSignal,
+		...init
+	} = options;
+
+	if (!timeoutMs || timeoutMs <= 0) {
+		return fetchImpl(input, {
+			...init,
+			dispatcher,
+			signal: inputSignal,
+		} as RequestInitWithDispatcher);
+	}
+
+	const timeoutController = new AbortController();
+	let timedOut = false;
+	const timeout = setTimeout(() => {
+		timedOut = true;
+		timeoutController.abort();
+	}, timeoutMs);
+	const requestSignal = inputSignal
+		? AbortSignal.any([inputSignal, timeoutController.signal])
+		: timeoutController.signal;
+
+	try {
+		return await fetchImpl(input, {
+			...init,
+			dispatcher,
+			signal: requestSignal,
+		} as RequestInitWithDispatcher);
+	} catch (error) {
+		// A client cancellation must retain its original error and must not cause
+		// the rotator to retry work the client no longer wants.
+		if (timedOut && !inputSignal?.aborted) {
+			throw new UpstreamHeadersTimeoutError(timeoutMs);
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeout);
+	}
 }
 
 /**

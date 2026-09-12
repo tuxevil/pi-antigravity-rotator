@@ -5,7 +5,10 @@ import type { AccountRuntime } from "../../types.js";
 import type { ForwardedResponse, RequestBody } from "../../proxy.js";
 import type { StreamAccumulator, TokenUsage } from "../adapter.js";
 import { getAccountProxyDispatcher } from "../proxy-dispatcher.js";
-import type { RequestInitWithDispatcher } from "../../fetch-with-retry.js";
+import {
+  fetchWithHeadersTimeout,
+  type RequestInitWithDispatcher,
+} from "../../fetch-with-retry.js";
 import { getOpenCodeZenApiKey, OPENCODE_ZEN_PROVIDER_ID } from "./credentials.js";
 import {
   isOpenCodeZenResponsesModel,
@@ -282,7 +285,7 @@ export async function forwardRequest(
   forwardHeaders["Accept"] = payload.stream === true ? "text/event-stream" : "application/json";
 
   const endpoint = usesResponses ? OPENCODE_ZEN_RESPONSES_URL : OPENCODE_ZEN_CHAT_URL;
-  const response = await fetch(endpoint, {
+  const response = await fetchWithHeadersTimeout(endpoint, {
     method: "POST",
     headers: forwardHeaders,
     body: JSON.stringify(payload),

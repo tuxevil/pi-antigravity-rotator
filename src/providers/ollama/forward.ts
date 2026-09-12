@@ -18,7 +18,10 @@ import {
 } from "../google-antigravity/translators.js";
 import type { StreamAccumulator, TokenUsage } from "../adapter.js";
 import { getAccountProxyDispatcher } from "../proxy-dispatcher.js";
-import type { RequestInitWithDispatcher } from "../../fetch-with-retry.js";
+import {
+  fetchWithHeadersTimeout,
+  type RequestInitWithDispatcher,
+} from "../../fetch-with-retry.js";
 
 const OLLAMA_BENCHMARK_MODEL = "gpt-oss:20b";
 
@@ -146,7 +149,7 @@ export async function forwardRequest(
   delete forwardHeaders["content-length"];
 
   const endpoint = OLLAMA_CHAT_ENDPOINTS[0] || "https://ollama.com/api/chat";
-  const response = await fetch(endpoint, {
+  const response = await fetchWithHeadersTimeout(endpoint, {
     method: "POST",
     headers: forwardHeaders,
     body: requestBody,

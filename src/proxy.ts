@@ -762,7 +762,7 @@ function isFetchTransportError(err: unknown): boolean {
     return true;
   }
   if (err && typeof err === "object" && "code" in err) {
-    return ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(
+    return ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET"].includes(
       String(err.code),
     );
   }

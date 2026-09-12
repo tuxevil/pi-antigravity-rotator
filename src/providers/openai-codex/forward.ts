@@ -2,7 +2,10 @@ import type { AccountRuntime, ProviderCredential } from "../../types.js";
 import type { ForwardedResponse, RequestBody } from "../../proxy.js";
 import type { StreamAccumulator, TokenUsage } from "../adapter.js";
 import { getAccountProxyDispatcher } from "../proxy-dispatcher.js";
-import type { RequestInitWithDispatcher } from "../../fetch-with-retry.js";
+import {
+  fetchWithHeadersTimeout,
+  type RequestInitWithDispatcher,
+} from "../../fetch-with-retry.js";
 import { getCodexAccountId, getCodexCredential, getCodexTokenState } from "./credentials.js";
 import { DEFAULT_CODEX_BASE_URL, CODEX_PROVIDER_ID } from "./oauth.js";
 
@@ -148,7 +151,7 @@ export async function forwardCodexRequest(
   signal?: AbortSignal,
 ): Promise<ForwardedResponse> {
   const payload = buildCodexPayload(body);
-  const response = await fetch(codexResponsesEndpoint(), {
+  const response = await fetchWithHeadersTimeout(codexResponsesEndpoint(), {
     method: "POST",
     headers: forwardHeaders(originalHeaders, account, payload),
     body: JSON.stringify(payload),

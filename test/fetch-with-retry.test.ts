@@ -2,9 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
 	calculateBackoffMs,
+	fetchWithHeadersTimeout,
 	fetchWithRetry,
 	isRetryableFetchError,
 	isRetryableStatus,
+	UpstreamHeadersTimeoutError,
 } from "../src/fetch-with-retry.js";
 
 describe("fetchWithRetry", () => {
@@ -17,7 +19,44 @@ describe("fetchWithRetry", () => {
 
 	it("classifies transport errors as retryable", () => {
 		assert.equal(isRetryableFetchError(new TypeError("fetch failed")), true);
+		assert.equal(isRetryableFetchError(new UpstreamHeadersTimeoutError(30_000)), true);
 		assert.equal(isRetryableFetchError(new Error("bad input")), false);
+	});
+
+	it("bounds time waiting for response headers without timing out the body", async () => {
+		let aborted = false;
+		await assert.rejects(
+			fetchWithHeadersTimeout("https://example.test", {
+				timeoutMs: 10,
+				fetchImpl: async (_input, init) => new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () => {
+						aborted = true;
+						reject(new DOMException("aborted", "AbortError"));
+					}, { once: true });
+				}),
+				}),
+			UpstreamHeadersTimeoutError,
+		);
+		assert.equal(aborted, true);
+	});
+
+	it("preserves caller cancellation instead of converting it to a header timeout", async () => {
+		const controller = new AbortController();
+		const request = fetchWithHeadersTimeout("https://example.test", {
+			timeoutMs: 100,
+				signal: controller.signal,
+			fetchImpl: async (_input, init) => new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => {
+					reject(new DOMException("aborted", "AbortError"));
+				}, { once: true });
+			}),
+		});
+		controller.abort();
+		await assert.rejects(request, (error: unknown) => {
+			assert.equal(error instanceof DOMException, true);
+			assert.equal((error as DOMException).name, "AbortError");
+			return true;
+		});
 	});
 
 	it("calculates bounded exponential backoff with jitter", () => {
